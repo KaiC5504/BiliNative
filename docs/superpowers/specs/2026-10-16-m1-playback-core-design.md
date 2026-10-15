@@ -27,7 +27,7 @@ engine before any real screens are built.
 |---|---|---|
 | Platform | Native Swift app, no Flutter | KaiC |
 | Device and OS | KaiC's phone: iPhone 17 Pro Max on iOS 27. Deployment target iOS 26, built with Xcode 26.6 (stable), so it also runs on other phones once public | KaiC |
-| Audience | Private now, public later, so own name and icon, no copied code, no Bilibili logo | KaiC |
+| Audience | Personal use now, published later, so own name and icon, no copied code, no Bilibili logo. The GitHub repo is public from day one for free Mac builds | KaiC |
 | Player | AVPlayer fed by an in-app HLS server that uses the BTR engine (option A), with direct CDN playback as automatic fallback (option C) | KaiC approved Claude's recommendation |
 | Login | Bilibili's own web login page inside the app (password, SMS or QR) | Claude, KaiC asked for account login rather than QR only |
 | First milestone | Playback core only, prove speed before UI | KaiC |
@@ -327,7 +327,7 @@ understood from evidence instead of guess-and-retry. Claude reads the files dire
 
 ## 13. Build and ship
 
-- New private GitHub repo, set up with the ios-testflight skill: XcodeGen `project.yml`, bundle id
+- New public GitHub repo (public from the start so GitHub Actions Mac builds are free; decided 2026-10-16), set up with the ios-testflight skill: XcodeGen `project.yml`, bundle id
   `com.kaichuan.<slug>` once the name is picked, App Store Connect app record, `testflight`
   environment secrets, TestFlight internal testing.
 - Runner image `macos-26` with its default Xcode 26.6 (iOS 26 SDK), deployment target iOS 26.
