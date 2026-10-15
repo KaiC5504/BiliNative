@@ -1,0 +1,66 @@
+# BiliNative
+
+A native Swift iOS client for Bilibili that looks and feels like the official app, with a Swift port of the
+Bilibili Thread Ripper (BTR) multi-node download engine underneath. Built screen by screen in milestones.
+Working name; the display name and icon are picked in plan Task 2.
+
+## Read before working
+
+1. `docs/superpowers/specs/2026-10-16-m1-playback-core-design.md`: the approved milestone 1 design (what and why).
+2. `docs/superpowers/plans/2026-10-16-m1-playback-core.md`: the implementation plan, 29 tasks with full code.
+3. `docs/background.md`: how the project got here, prior art, and what real Bilibili CDN nodes do. Read it
+   before tuning the engine or debugging slow playback.
+
+## Status
+
+- 2026-10-16: spec approved, plan written and committed. No code yet; the GitHub repo is created in Task 1.
+- Next: KaiC picks the execution method (subagent-driven was recommended: the engine tasks depend tightly on
+  each other, so a review after every task is worth it), then start at Task 1.
+- Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
+  stop before building more screens (spec section 5).
+- Update this section when a task or milestone finishes.
+
+## Rules for this repo
+
+- The repo is public from the first push (free GitHub Actions Mac minutes). Never commit secrets, cookies,
+  signed playurl responses or anything under `logs/` or `local/`.
+- No code copied from ATV-Bilibili-demo (GPL-2.0) or PiliPlus (GPL-3.0); read them for endpoints and
+  formats only. The BTR port keeps BTR's MIT notice (`ios/Packages/BiliCore/Sources/Ripper/LICENSE-BTR.txt`).
+- No Bilibili logo or wordmark in the app; layout and colours may follow the official app.
+- UI text is Simplified Chinese.
+- The network log sink is compiled only with `DEV_TOOLS` and never ships in a public release build.
+- `ios/Packages/BiliCore` is Foundation-only, no third-party packages, Swift 5 language mode, and must build
+  and pass `swift test` on Windows as well as macOS. Logic goes there whenever it does not need iOS.
+- The app target is Swift 5 language mode, SwiftUI, no third-party dependencies, iOS 26 deployment target,
+  built on GitHub's `macos-26` runners (newest Xcode on the image).
+- Anything about building, signing or TestFlight: load the `ios-testflight` skill first.
+- Do not build the spec's deferred "hurry mode" unless the milestone 1 phone logs show startup or seeks are slow.
+
+## How to test
+
+- Engine and everything else in the package, on the PC: `swift test --package-path ios/Packages/BiliCore`
+- PC log receiver: `python -m unittest discover -s tools -p "test_*.py"`
+- Live speed test from the PC: `swift run --package-path ios/Packages/BiliCore ripper-bench --bv BV… --mb 8`
+  (Task 20). If Bilibili refuses API calls from the PC, save a playurl response from the browser to
+  `local/playurl.json` (gitignored) and pass `--playurl local/playurl.json`.
+- App code: only in CI ("iOS compile check" workflow: core tests, simulator build, unit and integration
+  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac.
+- On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (Task 29).
+
+## Debugging from evidence
+
+The app streams structured logs to the PC: KaiC runs `uv run tools/logserver.py`, turns on 设置 → 开发者 →
+发送日志到电脑, and every event lands in `logs/<date>/<session>.jsonl`. Read those files before guessing:
+they hold every API call, every engine piece (node, range, first byte, speed, outcome), every request
+AVPlayer made to the in-app server, and AVPlayer's own access and error logs.
+
+## Environment facts (KaiC's Windows PC)
+
+- The Swift toolchain is not installed yet (plan Task 1 installs it, after asking KaiC).
+- Sideloadly must keep being started from `D:\Tools\Sideloadly\Sideloadly (Swift-safe).cmd`: Swift's
+  `Foundation.dll` on PATH breaks Sideloadly's Apple login otherwise. Never put Sideloadly's `an\` folder
+  on the system PATH (that breaks Swift instead).
+- BTR's source, for reading the JS the engine is ported from: `D:\Repos\Apps\Bilibili-thread-ripper`.
+  Always read it at the tag the port follows, not the working branch:
+  `git -C D:\Repos\Apps\Bilibili-thread-ripper show 2026.10.8.1:src/idm-downloader.js`
+  (or https://github.com/MrTangLuyao/Bilibili-thread-ripper/tree/2026.10.8.1/src).

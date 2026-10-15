@@ -6,3 +6,4 @@ DerivedData/
 *.cookies
 *.cookies.txt
 .DS_Store
+local/

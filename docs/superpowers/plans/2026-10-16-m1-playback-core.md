@@ -111,6 +111,7 @@ ios/Generated/
 ios/build/
 __pycache__/
 design/icons/*.tmp.png
+local/
 ```
 
 - [ ] **Step 3: Create the package manifest**
@@ -3556,7 +3557,7 @@ git commit -m "Add HLS codec mapping and playlist builder"
 ---
 ### Task 12: Ripper part 1, node catalog and media URL rules
 
-The Ripper module is the Swift port of BTR's download core (`src/range-core.js`, `src/cdn-resolver.js`, `src/idm-downloader.js` in BTR 2026.10.8.1, checked out at `D:\Repos\Apps\Bilibili-thread-ripper`). When a rule below is unclear, read the matching JS function; the port follows it unless this plan says otherwise.
+The Ripper module is the Swift port of BTR's download core (`src/range-core.js`, `src/cdn-resolver.js`, `src/idm-downloader.js` in BTR 2026.10.8.1). When a rule below is unclear, read the matching JS function at that tag: `git -C D:\Repos\Apps\Bilibili-thread-ripper show 2026.10.8.1:src/idm-downloader.js` (the working branch there may differ), or https://github.com/MrTangLuyao/Bilibili-thread-ripper/tree/2026.10.8.1/src. The port follows the JS unless this plan says otherwise. `docs/background.md` has the measured CDN behaviour behind these rules.
 
 **Files:**
 - Modify: `Package.swift`
@@ -6911,7 +6912,7 @@ Run: `swift build --package-path ios/Packages/BiliCore --product ripper-bench`
 Expected: builds on Windows.
 
 Run: `swift run --package-path ios/Packages/BiliCore ripper-bench --bv BV1GJ411x7h7 --mb 8`
-Expected: either the two result lines plus per-node lines, or an HTTP 412 / decoding error from the API. If the API refuses (it refused non-browser requests from this PC in 2026-09), ask KaiC to save a playurl response from his browser (DevTools → Network → `playurl` → Copy response) into `scratchpad/playurl.json` and run with `--playurl` instead. The signed URLs in that file expire after a few hours; do not commit it. Report both numbers to KaiC; they are the first real evidence for or against the engine.
+Expected: either the two result lines plus per-node lines, or an HTTP 412 / decoding error from the API. If the API refuses (it refused non-browser requests from this PC in 2026-09), ask KaiC to save a playurl response from his browser (DevTools → Network → `playurl` → Copy response) into `local/playurl.json` (gitignored) and run with `--playurl local/playurl.json` instead. The signed URLs in that file expire after a few hours; do not commit it. Report both numbers to KaiC; they are the first real evidence for or against the engine.
 
 - [ ] **Step 5: Commit**
 
@@ -7330,7 +7331,7 @@ This task needs a Mac only through GitHub Actions. **Load the `ios-testflight` s
 **Files:**
 - Create: `ios/project.yml`, `ios/Sources/App/BiliNativeApp.swift`, `ios/Sources/App/RootView.swift`, `ios/Sources/App/AppInfo.swift`, `ios/Resources/Localizable.xcstrings`, `ios/Resources/Assets.xcassets/...` (via `scripts/icons.py --apply`), `ios/Tests/AppTests/SmokeTests.swift`
 - Create: `.github/workflows/ios-compile.yml`, `.github/workflows/testflight.yml`, `scripts/testflight.py`, `scripts/testflight-requirements.txt` (the last three copied from the skill's templates/scripts and filled in)
-- Modify: `CLAUDE.md` (create it) with the skill's `templates/CLAUDE-section.md`
+- Modify: `CLAUDE.md` (append the skill's `templates/CLAUDE-section.md`)
 
 **Interfaces:**
 - Produces: app target `BiliNative`, unit-test target `BiliNativeTests` hosted in the app, scheme `BiliNative` that builds both and tests `BiliNativeTests`; compile condition `DEV_TOOLS` in all configurations; `AppInfo.displayName`, `AppInfo.version`.
@@ -7628,7 +7629,7 @@ Later tasks add `shoot` lines and the integration test media step.
 
 - [ ] **Step 5: Add the TestFlight workflow, script and CLAUDE.md**
 
-Copy `templates/testflight.yml` to `.github/workflows/testflight.yml`, `scripts/testflight.py` and `templates/testflight-requirements.txt` to `scripts/`, and `templates/CLAUDE-section.md` into a new `CLAUDE.md`, replacing the placeholders from the table above. Pin every action to a commit SHA as the template says (look up the current release SHAs with `gh api repos/actions/checkout/releases/latest` etc.). Keep the XcodeGen variant (not the "Make the project ours" fork variant).
+Copy `templates/testflight.yml` to `.github/workflows/testflight.yml`, `scripts/testflight.py` and `templates/testflight-requirements.txt` to `scripts/`, and append `templates/CLAUDE-section.md` to the existing `CLAUDE.md` (keep what is there), replacing the placeholders from the table above. Pin every action to a commit SHA as the template says (look up the current release SHAs with `gh api repos/actions/checkout/releases/latest` etc.). Keep the XcodeGen variant (not the "Make the project ours" fork variant).
 
 - [ ] **Step 6: Push and check the compile workflow**
 
