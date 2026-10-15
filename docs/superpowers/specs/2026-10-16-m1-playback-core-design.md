@@ -220,10 +220,10 @@ Adapted for AVPlayer and native code:
   Pieces are sized from measured node speed, 64 KiB to 1 MiB.
 - Deadlines: like BTR's browser mode, each segment has a playback time, so the engine always
   serves the most urgent request first.
-- Hurry mode (behind a setting, off by default): segments under 10 s ahead of the playhead are
-  spread across known-good nodes, with smaller pieces and earlier backup copies. This is the rule
-  set KaiC measured on 2026-09-19 (startup and seeks, BTR PR 11). It is turned on only if the
-  logs show the plain upstream rules leave startup or seeks slow.
+- Hurry mode (deferred, not built in milestone 1's first pass): segments under 10 s ahead of the
+  playhead would be spread across known-good nodes, with smaller pieces and earlier backup copies.
+  This is the rule set KaiC measured on 2026-09-19 (startup and seeks, BTR PR 11). It is built only
+  if the milestone 1 phone logs show the plain upstream rules leave startup or seeks slow.
 - Prefetch: after serving a segment, the engine fetches the next segments ahead of AVPlayer up to
   a memory cap (64 MB for video, 8 MB for audio), so AVPlayer's next request is a cache hit.
   The cache is in memory only and dropped when playback ends or memory warnings arrive.
