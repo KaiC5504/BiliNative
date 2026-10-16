@@ -68,6 +68,12 @@ The app streams structured logs to the PC: KaiC runs `uv run tools/logserver.py`
 they hold every API call, every engine piece (node, range, first byte, speed, outcome), every request
 AVPlayer made to the in-app server, and AVPlayer's own access and error logs.
 
+Crashes and hangs arrive the same way, as `app` events with message `crash` or `hang` (MetricKit, DEV_TOOLS only).
+iOS hands a crash over on a later launch, so the events sit in that launch's session file, not the one that
+crashed. A big stack is split into parts that share a `report` id (`part`/`parts`); join their `stack` fields in
+order. Each frame reads `binary +offset (address)`, and the `binaries` lines give the UUIDs for symbolicating with
+the build's dSYM. 设置 → 开发者 → 测试崩溃 crashes on purpose to check the path.
+
 ## Environment facts (KaiC's Windows PC)
 
 - Swift 6.4.1 is installed at `D:\Tools\Swift` (PATH and SDKROOT are set in the User environment).

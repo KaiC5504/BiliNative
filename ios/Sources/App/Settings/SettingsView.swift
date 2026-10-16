@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var discovery = LogServerDiscovery()
     @State private var networkState = ""
     @State private var exportURL: URL?
+    @State private var confirmCrash = false
     #endif
 
     private enum ClearAction: String {
@@ -84,6 +85,15 @@ struct SettingsView: View {
                     } else {
                         Button("准备导出日志") { exportURL = DevLogSetup.exportFile() }
                     }
+                    Button("测试崩溃", role: .destructive) { confirmCrash = true }
+                        .confirmationDialog("让应用立即崩溃？", isPresented: $confirmCrash, titleVisibility: .visible) {
+                            Button("崩溃", role: .destructive) {
+                                Logger.shared.warn(.ui, "test crash")
+                                fatalError("开发者测试崩溃")
+                            }
+                        } message: {
+                            Text("重新打开后，崩溃报告会作为 crash 事件发送到电脑。")
+                        }
                 } header: {
                     Text("开发者")
                 } footer: {

@@ -22,6 +22,9 @@ enum DevLogSetup {
         }
         Logger.shared.info(.app, "launch", DeviceInfo.fields())
         DeviceInfo.watchNetwork()
+        #if DEV_TOOLS
+        CrashReporter.install()
+        #endif
     }
 
     static func apply(_ settings: AppSettings) {
