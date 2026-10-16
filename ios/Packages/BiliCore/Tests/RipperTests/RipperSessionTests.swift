@@ -417,6 +417,25 @@ final class RipperSessionTests: XCTestCase {
         }
     }
 
+    /// AVPlayer's seek request and the close of its old one are two connections, so either can arrive first.
+    func testASeekReadArrivingBeforeTheOldReadersCancelStillCancelsThePrefetch() async throws {
+        let (session, transport, all) = try await makeSlowPrefetchSession()
+        let reader = Task { try await self.read(session, all[1].range) }
+        try await waitUntil { session.mediaRequestCount == 2 }
+        XCTAssertEqual(session.prefetchesRunning(.video), 0, "the read took the prefetch over")
+        try await sleepMs(100)
+        let generation = session.seekGeneration(.video)
+        let seekRead = Task { try await self.read(session, all[9].range) }
+        try await waitUntil { session.seekGeneration(.video) > generation }
+        reader.cancel()
+        _ = await reader.result
+        try await waitUntil { session.readsRunning == 1 }
+        XCTAssertEqual(session.prefetchesRunning(.video), 0, "the prefetch the old reader gave back after the seek is cancelled")
+        _ = try await seekRead.value
+        XCTAssertEqual(deliveredBytes(transport), 2 * segmentLength, "segments 0 and 9 arrived; segment 1's download was cancelled")
+        session.close()
+    }
+
     func testCloseCancelsAPrefetchItsReaderWasStillWaitingOn() async throws {
         let (session, transport, all) = try await makeSlowPrefetchSession()
         let reader = Task { try await self.read(session, all[1].range) }

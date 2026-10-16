@@ -95,17 +95,19 @@ final class NodeStatsTests: XCTestCase {
         XCTAssertFalse(ctx.nodes.isBusy(silent))
     }
 
-    func testCopyCancelledBeforeAnyByteRaisesTheFirstByteTime() async throws {
+    func testOutrunCopyCancelledBeforeAnyByteRaisesTheFirstByteTime() async throws {
         var config = TestEngine.slowConfig
         config.firstByteTimeoutMs = 5_000
         let cdn = SimCDN(size: 300_000, behaviors: [TestEngine.cosov: .init(firstByteMs: 2_000)])
         let ctx = TestEngine.context(cdn, config: config)
         let url = AttemptTests.url(TestEngine.cosov)
         ctx.nodes.begin(url); ctx.nodes.firstByte(url, ms: 10); ctx.nodes.end(url, receiving: true)
-        let task = Task { try await AttemptTests.run(ctx, node: TestEngine.cosov, range: ByteRange(start: 0, end: 99_999)!) }
+        let progress = AttemptProgress()
+        let task = Task { try await AttemptTests.run(ctx, node: TestEngine.cosov, range: ByteRange(start: 0, end: 99_999)!, progress: progress) }
         let giveUp = ProcessInfo.processInfo.systemUptime + 5
         while ctx.nodes.inflight(url) == 0, ProcessInfo.processInfo.systemUptime < giveUp { try await sleepMs(5) }
         try await sleepMs(200)
+        progress.markOutrun()
         task.cancel()
         do {
             _ = try await task.value
@@ -117,7 +119,7 @@ final class NodeStatsTests: XCTestCase {
         XCTAssertEqual(ctx.nodes.inflight(url), 0)
     }
 
-    func testCopyCancelledWhileCrawlingLowersTheSpeed() async throws {
+    func testOutrunCopyCancelledWhileCrawlingLowersTheSpeed() async throws {
         let cdn = SimCDN(size: 300_000, behaviors: [TestEngine.cosov: .init(bytesPerSecond: 100_000)])
         let ctx = TestEngine.context(cdn, config: TestEngine.slowConfig)
         let url = AttemptTests.url(TestEngine.cosov)
@@ -132,6 +134,7 @@ final class NodeStatsTests: XCTestCase {
         }
         XCTAssertEqual(ctx.nodes.inflight(url), 1)
         XCTAssertTrue(ctx.nodes.isBusy(url))
+        progress.markOutrun()
         task.cancel()
         do {
             _ = try await task.value
@@ -143,6 +146,49 @@ final class NodeStatsTests: XCTestCase {
         XCTAssertGreaterThan(ctx.nodes.bps(url), 0)
         XCTAssertEqual(ctx.nodes.inflight(url), 0)
         XCTAssertFalse(ctx.nodes.isBusy(url))
+    }
+
+    /// A seek, a closed session or a cancelled player read ends a copy without any other copy having won.
+    func testCopyCancelledForAnyOtherReasonLeavesTheNodeEstimatesAlone() async throws {
+        var config = TestEngine.slowConfig
+        config.firstByteTimeoutMs = 5_000
+        let cdn = SimCDN(size: 300_000, behaviors: [TestEngine.cosov: .init(firstByteMs: 2_000), TestEngine.aliov: .init(bytesPerSecond: 100_000)])
+        let ctx = TestEngine.context(cdn, config: config)
+        let waiting = AttemptTests.url(TestEngine.cosov)
+        let crawling = AttemptTests.url(TestEngine.aliov)
+        ctx.nodes.begin(waiting); ctx.nodes.firstByte(waiting, ms: 10); ctx.nodes.end(waiting, receiving: true)
+        ctx.nodes.begin(crawling); ctx.nodes.firstByte(crawling, ms: 5)
+        ctx.nodes.body(crawling, bytes: 4_000_000, ms: 1_000); ctx.nodes.end(crawling, receiving: true)
+
+        let waitingProgress = AttemptProgress()
+        let waitingTask = Task {
+            try await AttemptTests.run(ctx, node: TestEngine.cosov, range: ByteRange(start: 0, end: 99_999)!, progress: waitingProgress)
+        }
+        let crawlingProgress = AttemptProgress()
+        let crawlingTask = Task {
+            try await AttemptTests.run(ctx, node: TestEngine.aliov, range: ByteRange(start: 0, end: 299_999)!, progress: crawlingProgress)
+        }
+        let giveUp = ProcessInfo.processInfo.systemUptime + 5
+        while ProcessInfo.processInfo.systemUptime < giveUp {
+            if crawlingProgress.timing.gotHeaders, crawlingProgress.received > 0, ctx.clock.nowMs() - crawlingProgress.headersAt >= 400,
+               waitingProgress.isStarted { break }
+            try await sleepMs(5)
+        }
+        try await sleepMs(200)
+        waitingTask.cancel()
+        crawlingTask.cancel()
+        for task in [waitingTask, crawlingTask] {
+            do {
+                _ = try await task.value
+                XCTFail("expected cancellation")
+            } catch {
+                XCTAssertTrue(error is CancellationError, "\(error)")
+            }
+        }
+        XCTAssertEqual(ctx.nodes.ttfbMs(waiting), 10, accuracy: 0.01)
+        XCTAssertEqual(ctx.nodes.bps(crawling), 4_000_000, accuracy: 1)
+        XCTAssertEqual(ctx.nodes.inflight(waiting), 0)
+        XCTAssertEqual(ctx.nodes.inflight(crawling), 0)
     }
 
     func testNetworkChangeForgetsNodeStats() async throws {

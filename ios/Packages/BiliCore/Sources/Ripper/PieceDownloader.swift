@@ -108,16 +108,12 @@ final class PieceDownloader: @unchecked Sendable {
                         guard try await self.waitForCopy(position, previous: copies[position - 1], previousURL: urls[position - 1],
                                                          copyURL: url, pieceLength: piece.length, resolver: resolver, mode: mode,
                                                          hasDeadline: hasDeadline, deadline: deadline, hurry: hurry) else { return nil }
-                        if mode != .probe {
-                            self.ctx.logger.debug(.engine, "copy", ["node": .init(NodeCatalog.nodeKey(of: url)), "range": .init(piece.description),
-                                                                    "copy": .init(position + 1)])
-                        }
                     }
                     do {
                         return try await self.runner.run(
                             url: url, piece: piece, progress: progress, resolver: resolver,
                             priority: priority + (position > 0 ? 20 : 0), queueClass: mode.queueClass, deadline: deadline,
-                            resumeBase: {
+                            copy: mode == .probe ? 1 : position + 1, resumeBase: {
                                 let live = copies[..<position].map { $0.prefix() }.max { $0.bytes < $1.bytes }
                                 return Self.resumeBase(prefix: prefix.current, live: live, pieceLength: piece.length)
                             })
@@ -136,6 +132,7 @@ final class PieceDownloader: @unchecked Sendable {
                 do {
                     guard let result = try await group.next() else { break }
                     if let output = result {
+                        copies.forEach { $0.markOutrun() }
                         group.cancelAll()
                         return output
                     }

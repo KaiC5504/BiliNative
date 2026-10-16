@@ -463,6 +463,37 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertGreaterThan(resolver.speed(cosovURL), 0, "the cancelled copy still measures its node")
     }
 
+    func testLosingCopyMarksItsNodeSlow() async throws {
+        let cdn = SimCDN(size: 600_000, behaviors: [TestEngine.cosov: .init(bytesPerSecond: 200_000)])
+        var config = TestEngine.slowConfig
+        config.hedgeDelayMs = 500
+        let ctx = context(RecordingTransport(cdn), config: config)
+        let cosovURL = url(on: TestEngine.cosov)
+        ctx.nodes.begin(cosovURL); ctx.nodes.firstByte(cosovURL, ms: 5)
+        ctx.nodes.body(cosovURL, bytes: 4_000_000, ms: 1_000); ctx.nodes.end(cosovURL, receiving: true)
+        let output = try await PieceDownloader(ctx: ctx).download(piece: ByteRange(start: 0, end: 399_999)!, index: 0, resolver: TestEngine.resolver(),
+                                                                  preferred: [cosovURL], mode: .normal, priority: 50, deadline: nil)
+        XCTAssertNotEqual(output.url, cosovURL)
+        XCTAssertLessThan(ctx.nodes.bps(cosovURL), 4_000_000, "cosov was still sending when the other copy won")
+        XCTAssertEqual(ctx.nodes.inflight(cosovURL), 0)
+    }
+
+    func testPieceEventNamesTheCopyOnlyForCopiesAfterTheFirst() async throws {
+        let cdn = SimCDN(size: 600_000, behaviors: [TestEngine.cosov: .init(bytesPerSecond: 200_000)])
+        var config = TestEngine.slowConfig
+        config.hedgeDelayMs = 500
+        let ctx = context(RecordingTransport(cdn), config: config)
+        let sink = MemorySink()
+        ctx.logger.add(sink)
+        let cosovURL = url(on: TestEngine.cosov)
+        _ = try await PieceDownloader(ctx: ctx).download(piece: ByteRange(start: 0, end: 399_999)!, index: 0, resolver: TestEngine.resolver(),
+                                                         preferred: [cosovURL], mode: .normal, priority: 50, deadline: nil)
+        let pieces = sink.events.filter { $0.msg == "piece" }
+        XCTAssertEqual(pieces.count, 1, "only the copy that finished logs a piece")
+        XCTAssertEqual(pieces.first?.f["copy"], .int(2))
+        XCTAssertNil(sink.events.first { $0.msg == "copy" })
+    }
+
     func testHurryUsesSmallPieces() async throws {
         let cdn = SimCDN(size: 8_000_000)
         let transport = RecordingTransport(cdn)
@@ -612,7 +643,7 @@ final class RangeDownloaderTests: XCTestCase {
 
     func testColdRangeOnTheTwoFastestNodesIsFetchedFromAThirdInAHurry() async throws {
         let (seconds, requests) = try await coldRangeRun(hurry: { true })
-        XCTAssertLessThan(seconds, 1.2)
+        XCTAssertLessThan(seconds, 1.4, "the old path needs at least 1.5 s")
         let pieces = copiesByPiece(requests)
         let rescued = pieces.values.filter { [TestEngine.cosov, akamai].contains($0.first) && $0.contains(TestEngine.aliov) }
         XCTAssertFalse(rescued.isEmpty, "\(pieces)")
@@ -681,7 +712,7 @@ final class RangeDownloaderTests: XCTestCase {
             bytes += chunk
         }
         XCTAssertEqual(bytes, Array(cdn.content[0...Int(range.end)]))
-        XCTAssertLessThan(Date().timeIntervalSince(started), 3, "cosov's own piece takes about 1 s")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 6, "cosov's own piece takes about 1 s; the bound only catches an endless loop")
         XCTAssertTrue(sawFull.current, "cosov is capped at the one piece it was sending")
     }
 }

@@ -42,6 +42,7 @@ final class AttemptProgress: @unchecked Sendable {
         var seenBytes: Int64 = 0
         var seenAt: Double = 0
         var failed = false
+        var outrun = false
     }
 
     let state = Locked(State())
@@ -74,6 +75,9 @@ final class AttemptProgress: @unchecked Sendable {
     }
 
     func markFailed() { state.withLock { $0.failed = true } }
+    /// Set by the race that is about to cancel this copy because another copy won.
+    func markOutrun() { state.withLock { $0.outrun = true } }
+    var wasOutrun: Bool { state.withLock { $0.outrun } }
     var failed: Bool { state.withLock { $0.failed } }
     var isStarted: Bool { state.withLock { $0.started } }
     var received: Int64 { state.withLock { $0.received } }
@@ -93,7 +97,8 @@ struct AttemptRunner: Sendable {
     /// BTR's three timeouts, checks the 206 Content-Range and the length, and reports the outcome to
     /// the resolver, meter, stats and automatic connection count.
     func run(url: String, piece: ByteRange, progress: AttemptProgress, resolver: Resolver, priority: Double,
-             queueClass: QueueClass, deadline: (@Sendable () -> Double)?, resumeBase: @Sendable () -> Prefix) async throws -> AttemptOutput {
+             queueClass: QueueClass, deadline: (@Sendable () -> Double)?, copy: Int = 1,
+             resumeBase: @Sendable () -> Prefix) async throws -> AttemptOutput {
         let permit = try await ctx.pool.acquire(priority: priority, queueClass: queueClass, deadline: deadline)
         defer { permit.release() }
         try Task.checkCancellation()
@@ -126,9 +131,11 @@ struct AttemptRunner: Sendable {
             ctx.meter.record(bytes: part.length, elapsedMs: elapsed)
             ctx.nodes.body(url, bytes: part.length, ms: ctx.clock.nowMs() - progress.headersAt)
             resolver.success(url, bps: part.length >= Meter.sampleMinBytes ? Double(part.length) * 1000 / elapsed : 0)
-            ctx.logger.debug(.engine, "piece", ["node": .init(node), "range": .init(part.description),
-                                                "firstByteMs": .init((progress.headersAt - started).rounded()),
-                                                "bytes": .init(part.length), "ms": .init(elapsed.rounded()), "resumed": .init(base.bytes)])
+            var fields: [String: LogValue] = ["node": .init(node), "range": .init(part.description),
+                                              "firstByteMs": .init((progress.headersAt - started).rounded()),
+                                              "bytes": .init(part.length), "ms": .init(elapsed.rounded()), "resumed": .init(base.bytes)]
+            if copy > 1 { fields["copy"] = .init(copy) }
+            ctx.logger.debug(.engine, "piece", fields)
             return output
         } catch {
             let received = progress.received
@@ -136,10 +143,14 @@ struct AttemptRunner: Sendable {
             let cancelled = Task.isCancelled || error is CancellationError
             let gotHeaders = progress.timing.gotHeaders
             if cancelled {
-                if gotHeaders {
-                    ctx.nodes.crawl(url, bytes: received, ms: ctx.clock.nowMs() - progress.headersAt)
-                } else {
-                    ctx.nodes.outrun(url, waitedMs: elapsed)
+                // BTR PR 11: only a copy that lost a duplicate race says anything about its node. A seek or a
+                // cancelled read would blend a queued request's whole wait into the estimate.
+                if progress.wasOutrun {
+                    if gotHeaders {
+                        ctx.nodes.crawl(url, bytes: received, ms: ctx.clock.nowMs() - progress.headersAt)
+                    } else {
+                        ctx.nodes.outrun(url, waitedMs: elapsed)
+                    }
                 }
                 // A copy that lost the race still measured its node; without this a slow node is never measured.
                 if received >= Meter.sampleMinBytes { resolver.sample(url, bps: Double(received) * 1000 / elapsed) }

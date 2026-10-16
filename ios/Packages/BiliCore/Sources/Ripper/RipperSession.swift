@@ -35,6 +35,8 @@ public final class RipperSession: @unchecked Sendable {
         var segmentAt: [TrackKind: [Int64: Int]] = [:]
         var cache: [CacheKey: CacheEntry] = [:]
         var inflight: [CacheKey: Task<[UInt8], Error>] = [:]
+        /// Bumped by `dropPrefetch`; a reader that adopted a prefetch before a seek must not hand it back after.
+        var seekGeneration: [TrackKind: Int] = [:]
         /// Segments a player request is downloading or waiting on, with how many requests; prefetch leaves them alone.
         var playerPending: [CacheKey: Int] = [:]
         var reads: [UInt64: Task<Void, Never>] = [:]
@@ -219,6 +221,7 @@ public final class RipperSession: @unchecked Sendable {
         var seek = false
         var firstOfTrack = false
         var total: Int64?
+        var generation = 0
     }
 
     private func serve(_ track: TrackKind, _ range: ByteRange, emit: @escaping @Sendable ([UInt8]) -> Void) async throws {
@@ -243,6 +246,7 @@ public final class RipperSession: @unchecked Sendable {
             } else if let task = value.inflight.removeValue(forKey: key) {
                 // Taken out of `inflight`, so a seek cannot cancel it and its bytes do not also land in the cache.
                 request.plan = .inflight(task)
+                request.generation = value.seekGeneration[track, default: 0]
             } else if request.seek {
                 value.seeks += 1
             }
@@ -267,7 +271,7 @@ public final class RipperSession: @unchecked Sendable {
             source = "memory"
         case .inflight(let task):
             guard let result = await waitForPrefetch(task), !Task.isCancelled else {
-                returnPrefetch(task, for: key, endTime: request.segment?.endTime ?? 0)
+                returnPrefetch(task, for: key, endTime: request.segment?.endTime ?? 0, generation: request.generation)
                 throw CancellationError()
             }
             if case .success(let bytes) = result {
@@ -355,6 +359,7 @@ public final class RipperSession: @unchecked Sendable {
     /// would hold the cap and keep the new position from being prefetched.
     private func dropPrefetch(_ track: TrackKind) {
         let tasks = state.withLock { value -> [Task<[UInt8], Error>] in
+            value.seekGeneration[track, default: 0] += 1
             value.cache = value.cache.filter { $0.key.track != track }
             let keys = value.inflight.keys.filter { $0.track == track }
             return keys.compactMap { value.inflight.removeValue(forKey: $0) }
@@ -435,10 +440,11 @@ public final class RipperSession: @unchecked Sendable {
     }
 
     /// A reader that gives up on an adopted prefetch hands it back to `inflight`, so it still ends in the cache.
-    /// With the session closed, or the segment scheduled again meanwhile, nobody wants it.
-    private func returnPrefetch(_ task: Task<[UInt8], Error>, for key: CacheKey, endTime: Double) {
+    /// With the session closed, a seek since the reader took it, or the segment scheduled again meanwhile,
+    /// nobody wants it.
+    private func returnPrefetch(_ task: Task<[UInt8], Error>, for key: CacheKey, endTime: Double, generation: Int) {
         let returned = state.withLock { value -> Bool in
-            guard !value.closed, value.inflight[key] == nil else { return false }
+            guard !value.closed, value.seekGeneration[key.track, default: 0] == generation, value.inflight[key] == nil else { return false }
             value.inflight[key] = task
             return true
         }
@@ -470,6 +476,7 @@ extension RipperSession {
         let segment = state.withLock { value in value.segmentAt[track]?[range.start].flatMap { value.segments[track]?[$0] } }
         return hurry(for: segment, startup: false)()
     }
+    func seekGeneration(_ track: TrackKind) -> Int { state.withLock { $0.seekGeneration[track, default: 0] } }
     func prefetchesRunning(_ track: TrackKind) -> Int { state.withLock { value in value.inflight.keys.filter { $0.track == track }.count } }
     var readsRunning: Int { state.withLock { $0.reads.count } }
 }
