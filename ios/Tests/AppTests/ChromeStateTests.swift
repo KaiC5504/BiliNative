@@ -109,8 +109,8 @@ final class ChromeStateTests: XCTestCase {
         let model = VideoPageModel(route: VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0), client: client,
                                    settings: AppSettings(defaults: UserDefaults(suiteName: suite)!),
                                    account: { .loggedOut },
-                                   makeController: { item in
-                                       let fake = FakePlayback(item: item)
+                                   makeController: { item, player in
+                                       let fake = FakePlayback(item: item, player: player)
                                        box.fake = fake
                                        return fake
                                    })

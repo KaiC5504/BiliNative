@@ -72,6 +72,7 @@ struct HomeView: View {
                 }
             }
             .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
+            .restoresKeptVideoPage()
             .sheet(isPresented: $showLogin) { LoginView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),

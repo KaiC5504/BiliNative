@@ -178,7 +178,7 @@ final class DanmakuSendTests: XCTestCase {
         addTeardownBlock { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
         let page = VideoPageModel(route: VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: position), client: client,
-                                  settings: settings, account: { .loggedOut }, makeController: { FakePlayback(item: $0) })
+                                  settings: settings, account: { .loggedOut }, makeController: { FakePlayback(item: $0, player: $1) })
         await page.load()
         let danmaku = DanmakuController(client: client, settings: settings, ownHash: { nil })
         danmaku.load(cid: F.cidA1, bvid: F.bvidA, durationMs: 200_000)
