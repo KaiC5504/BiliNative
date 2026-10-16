@@ -9,7 +9,8 @@ public final class BiliClient: @unchecked Sendable {
     /// DASH | HDR | 4K | Dolby audio | Dolby Vision | 8K | AV1.
     public static let dashFnval = 4048
 
-    private static let api = "https://api.bilibili.com"
+    public static let api = "https://api.bilibili.com"
+    private static let origin = "https://www.bilibili.com"
 
     private let transport: HTTPTransport
     public let cookies: CookieJar
@@ -24,9 +25,14 @@ public final class BiliClient: @unchecked Sendable {
         self.logger = logger
     }
 
+    /// The cookie every write call must echo back as the `csrf` form field.
+    public var csrf: String? {
+        cookies.value("bili_jct").flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// A logged-out reply (-101) still carries the WBI keys, so it is returned, not thrown.
     public func nav() async throws -> NavInfo {
-        let envelope: BiliEnvelope<NavInfo> = try await get("/x/web-interface/nav", query: [:], signed: false)
+        let envelope: BiliEnvelope<NavInfo> = try await getEnvelope("/x/web-interface/nav", query: [:], signed: false)
         guard let nav = envelope.data else {
             throw BiliError.api(code: envelope.code, message: envelope.message ?? "")
         }
@@ -41,19 +47,19 @@ public final class BiliClient: @unchecked Sendable {
     /// The web API answers 412 to requests without the website's fingerprint cookies.
     public func ensureRiskCookies() async throws {
         guard cookies.value("buvid3") == nil || cookies.value("buvid4") == nil else { return }
-        let envelope: BiliEnvelope<SPIInfo> = try await get("/x/frontend/finger/spi", query: [:], signed: false)
+        let envelope: BiliEnvelope<SPIInfo> = try await getEnvelope("/x/frontend/finger/spi", query: [:], signed: false)
         let spi = try checked(envelope)
         if cookies.value("buvid3") == nil { cookies.set("buvid3", spi.b3) }
         if cookies.value("buvid4") == nil { cookies.set("buvid4", spi.b4) }
     }
 
     public func view(bvid: String) async throws -> VideoView {
-        let envelope: BiliEnvelope<VideoView> = try await get("/x/web-interface/view", query: ["bvid": bvid], signed: false)
+        let envelope: BiliEnvelope<VideoView> = try await getEnvelope("/x/web-interface/view", query: ["bvid": bvid], signed: false)
         return try checked(envelope)
     }
 
     public func view(aid: Int64) async throws -> VideoView {
-        let envelope: BiliEnvelope<VideoView> = try await get("/x/web-interface/view", query: ["aid": String(aid)], signed: false)
+        let envelope: BiliEnvelope<VideoView> = try await getEnvelope("/x/web-interface/view", query: ["aid": String(aid)], signed: false)
         return try checked(envelope)
     }
 
@@ -79,7 +85,7 @@ public final class BiliClient: @unchecked Sendable {
 
     public func playURL(bvid: String, cid: Int64, quality: Int) async throws -> PlayURLInfo {
         let query = ["bvid": bvid, "cid": String(cid), "qn": String(quality), "fnval": String(Self.dashFnval), "fnver": "0", "fourk": "1"]
-        let envelope: BiliEnvelope<PlayURLInfo> = try await get("/x/player/wbi/playurl", query: query, signed: true)
+        let envelope: BiliEnvelope<PlayURLInfo> = try await getEnvelope("/x/player/wbi/playurl", query: query, signed: true)
         let info = try checked(envelope)
         guard info.dash != nil else { throw BiliError.notDash }
         return info
@@ -106,7 +112,77 @@ public final class BiliClient: @unchecked Sendable {
         return data
     }
 
-    private func get<T: Decodable>(_ path: String, query: [String: String], signed: Bool, retried: Bool = false) async throws -> BiliEnvelope<T> {
+    public func get<T: Decodable>(_ path: String, query: [String: String], signed: Bool,
+                                  host: String = BiliClient.api) async throws -> T {
+        let envelope: BiliEnvelope<T> = try await getEnvelope(path, query: query, signed: signed, host: host)
+        return try checked(envelope)
+    }
+
+    /// For endpoints that do not answer with the JSON envelope, such as the protobuf danmaku segments.
+    public func getData(_ path: String, query: [String: String], signed: Bool,
+                        host: String = BiliClient.api) async throws -> Data {
+        let sent = try await send(method: "GET", path: path, query: query, signed: signed, host: host,
+                                  form: nil, referer: nil, accept: "*/*")
+        logger.info(.api, path, ["status": .init(sent.response.status), "ms": .init(sent.ms.rounded())])
+        return sent.response.body
+    }
+
+    public func post<T: Decodable>(_ path: String, form: [String: String], referer: String? = nil,
+                                   host: String = BiliClient.api) async throws -> T {
+        let envelope: BiliEnvelope<T> = try await postEnvelope(path, form: form, referer: referer, host: host)
+        return try checked(envelope)
+    }
+
+    /// For writes whose success carries no data (`data` may be null).
+    public func post(_ path: String, form: [String: String], referer: String? = nil,
+                     host: String = BiliClient.api) async throws {
+        let envelope: BiliEnvelope<Ignored> = try await postEnvelope(path, form: form, referer: referer, host: host)
+        guard envelope.code == 0 else { throw BiliError.api(code: envelope.code, message: envelope.message ?? "") }
+    }
+
+    private struct Ignored: Decodable {
+        init(from decoder: Decoder) throws {}
+    }
+
+    private func getEnvelope<T: Decodable>(_ path: String, query: [String: String], signed: Bool,
+                                           host: String = BiliClient.api) async throws -> BiliEnvelope<T> {
+        let sent = try await send(method: "GET", path: path, query: query, signed: signed, host: host,
+                                  form: nil, referer: nil, accept: "application/json")
+        return try decodeEnvelope(sent, path: path)
+    }
+
+    private func postEnvelope<T: Decodable>(_ path: String, form: [String: String], referer: String?,
+                                            host: String) async throws -> BiliEnvelope<T> {
+        let sent = try await send(method: "POST", path: path, query: [:], signed: false, host: host,
+                                  form: form, referer: referer, accept: "application/json")
+        return try decodeEnvelope(sent, path: path)
+    }
+
+    private func decodeEnvelope<T: Decodable>(_ sent: (response: HTTPResponse, ms: Double), path: String) throws -> BiliEnvelope<T> {
+        do {
+            let envelope = try JSONDecoder().decode(BiliEnvelope<T>.self, from: sent.response.body)
+            logger.info(.api, path, ["status": .init(sent.response.status), "code": .init(envelope.code), "ms": .init(sent.ms.rounded())])
+            return envelope
+        } catch {
+            logger.error(.api, "\(path) decode failed", ["error": .init(String(describing: error))])
+            throw BiliError.decoding(String(describing: error))
+        }
+    }
+
+    /// Logs the path only: the query and form can carry the csrf token or a comment the user typed.
+    private func send(method: String, path: String, query: [String: String], signed: Bool, host: String,
+                      form: [String: String]?, referer: String?, accept: String,
+                      retried: Bool = false) async throws -> (response: HTTPResponse, ms: Double) {
+        var body: Data?
+        var headers = ["User-Agent": Self.userAgent, "Referer": referer ?? Self.referer, "Accept": accept]
+        if let form {
+            guard let token = csrf else { throw BiliError.api(code: -101, message: "账号未登录") }
+            var fields = form
+            fields["csrf"] = token
+            body = FormEncoding.encode(fields)
+            headers["Origin"] = Self.origin
+            headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
+        }
         let queryString: String
         if signed {
             let key = try await mixinKey()
@@ -114,15 +190,19 @@ public final class BiliClient: @unchecked Sendable {
         } else {
             queryString = WBI.encodeQuery(query)
         }
-        guard let url = URL(string: Self.api + path + (queryString.isEmpty ? "" : "?" + queryString)) else {
+        guard let url = URL(string: host + path + (queryString.isEmpty ? "" : "?" + queryString)) else {
             throw BiliError.invalidLink
         }
-        var headers = ["User-Agent": Self.userAgent, "Referer": Self.referer, "Accept": "application/json"]
-        if let cookie = cookies.headerValue { headers["Cookie"] = cookie }
+        // The session cookies and the csrf token must never leave Bilibili's own hosts.
+        if BiliHosts.isBilibili(url.host ?? "") {
+            if let cookie = cookies.headerValue { headers["Cookie"] = cookie }
+        } else if form != nil {
+            throw BiliError.invalidLink
+        }
         let started = Date()
         let response: HTTPResponse
         do {
-            response = try await transport.send(HTTPRequest(url: url, headers: headers))
+            response = try await transport.send(HTTPRequest(url: url, headers: headers, method: method, body: body))
         } catch {
             logger.error(.api, path, ["error": .init(error.localizedDescription)])
             throw error
@@ -135,17 +215,11 @@ public final class BiliClient: @unchecked Sendable {
                 cookies.remove("buvid3")
                 cookies.remove("buvid4")
                 try await ensureRiskCookies()
-                return try await get(path, query: query, signed: signed, retried: true)
+                return try await send(method: method, path: path, query: query, signed: signed, host: host,
+                                      form: form, referer: referer, accept: accept, retried: true)
             }
             throw BiliError.http(response.status)
         }
-        do {
-            let envelope = try JSONDecoder().decode(BiliEnvelope<T>.self, from: response.body)
-            logger.info(.api, path, ["status": .init(response.status), "code": .init(envelope.code), "ms": .init(ms.rounded())])
-            return envelope
-        } catch {
-            logger.error(.api, "\(path) decode failed", ["error": .init(String(describing: error))])
-            throw BiliError.decoding(String(describing: error))
-        }
+        return (response, ms)
     }
 }
