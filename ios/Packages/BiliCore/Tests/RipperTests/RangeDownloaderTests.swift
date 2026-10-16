@@ -509,4 +509,129 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertFalse(warm.contains { $0.range == head(of: second) }, "\(warm.map(\.range))")
         XCTAssertEqual(warm.filter { $0.range.start == second.start }.count, 1, "one ordinary piece starts the range")
     }
+
+    func testHurryHedgeBudgets() {
+        let clock = ManualClock()
+        let pieces = PieceDownloader(ctx: EngineContext(transport: SimCDN(size: 1), pool: ConnectionPool(limit: 1), config: TestEngine.config,
+                                                        meter: Meter(), stats: EngineStats(), auto: nil, clock: clock.clock,
+                                                        logger: Logger(session: "test")))
+        let length: Int64 = 1_000_000
+        func copy(received: Int = 0, headers: Bool = false) -> AttemptProgress {
+            let progress = AttemptProgress()
+            progress.begin(at: 0, length: length, base: Prefix())
+            if headers { progress.headers(at: 0) }
+            if received > 0 { progress.append([UInt8](repeating: 0, count: received), at: 0) }
+            return progress
+        }
+        func due(_ progress: AttemptProgress, _ url: String, at ms: Double) -> Bool {
+            clock.set(ms)
+            return pieces.hurryHedgeDue(previous: progress, url: url, pieceLength: length)
+        }
+
+        // No first byte yet: twice the node's usual first byte, kept within 250-600 ms; 250 ms when unknown.
+        let unknown = url(on: TestEngine.cosov)
+        XCTAssertFalse(due(copy(), unknown, at: 200))
+        XCTAssertTrue(due(copy(), unknown, at: 260))
+        let ttfb = [100.0: url(on: TestEngine.aliov), 200: url(on: TestEngine.hk1), 400: url(on: TestEngine.hk3)]
+        for (ms, url) in ttfb { pieces.ctx.nodes.firstByte(url, ms: ms) }
+        XCTAssertFalse(due(copy(), ttfb[100]!, at: 240))
+        XCTAssertTrue(due(copy(), ttfb[100]!, at: 260), "budget 250")
+        XCTAssertFalse(due(copy(), ttfb[200]!, at: 390))
+        XCTAssertTrue(due(copy(), ttfb[200]!, at: 410), "budget 400")
+        XCTAssertFalse(due(copy(), ttfb[400]!, at: 590))
+        XCTAssertTrue(due(copy(), ttfb[400]!, at: 610), "budget 600, the cap")
+
+        // Bytes stopped arriving: 1 s since the last one, though 80% is in.
+        let stopped = copy(received: 800_000, headers: true)
+        XCTAssertFalse(due(stopped, unknown, at: 990))
+        XCTAssertTrue(due(stopped, unknown, at: 1_000))
+
+        // Slow: 100 ms first byte and 5 MB/s make 300 ms expected for the piece, so a copy is due from 600 ms
+        // while under 75% has arrived.
+        let measured = url(on: "cn-hk-eq-01-02.bilivideo.com")
+        let nodes = pieces.ctx.nodes
+        nodes.begin(measured); nodes.firstByte(measured, ms: 100); nodes.body(measured, bytes: 1_000_000, ms: 200); nodes.end(measured, receiving: true)
+        XCTAssertEqual(nodes.expectedMs(measured, pieceBytes: length)!, 300, accuracy: 0.5)
+        func slow(received: Int, at ms: Double) -> Bool {
+            let progress = copy(received: received, headers: true)
+            progress.append([], at: ms - 100)
+            return due(progress, measured, at: ms)
+        }
+        XCTAssertFalse(slow(received: 500_000, at: 550))
+        XCTAssertTrue(slow(received: 700_000, at: 610))
+        XCTAssertFalse(slow(received: 800_000, at: 610), "most of the piece is in")
+    }
+
+    /// Two fast nodes both slow over a part of the file they have not served lately, a third one normal.
+    let akamai = "upos-hz-mirrorakam.akamaized.net"
+    let coldSpan = Int64(2_000_000)...Int64(4_000_000)
+    let hurryRange = ByteRange(start: 2_000_000, end: 3_048_575)!
+
+    /// The first byte of a cold request takes 1.5 s and the transfer pauses between chunks; the timeouts leave
+    /// that to the copies.
+    var coldConfig: RipperConfig {
+        var config = TestEngine.slowConfig
+        config.firstByteTimeoutMs = 5_500
+        config.attemptTimeoutMs = 15_000
+        // Room for three copies of every 64 KiB piece of a 1 MiB range.
+        config.fixedConcurrency = 64
+        return config
+    }
+
+    func coldRangeRun(hurry: (@Sendable () -> Bool)?, config: RipperConfig? = nil) async throws
+        -> (seconds: Double, requests: [(node: String, range: ByteRange)]) {
+        let cdn = SimCDN(size: 6_000_000, behaviors: [
+            TestEngine.cosov: .init(coldRange: coldSpan, coldRangeFirstByteMs: 1_500, coldRangeBytesPerSecond: 100_000),
+            akamai: .init(coldRange: coldSpan, coldRangeFirstByteMs: 1_500, coldRangeBytesPerSecond: 100_000),
+            TestEngine.aliov: .init(bytesPerSecond: 4_000_000),
+        ])
+        let transport = RecordingTransport(cdn)
+        let cosovURL = url(on: TestEngine.cosov)
+        let resolver = Resolver(primary: cosovURL, backups: [],
+                                mode: .custom([NodeAddress(host: TestEngine.cosov), NodeAddress(host: akamai), NodeAddress(host: TestEngine.aliov)]),
+                                bans: BanList())
+        XCTAssertEqual(resolver.urls().map(NodeCatalog.nodeKey(of:)), [TestEngine.cosov, akamai, TestEngine.aliov])
+        let downloader = RangeDownloader(ctx: context(transport, config: config ?? coldConfig))
+        for try await _ in downloader.stream(mebibyte, resolver: resolver, startup: false, priority: 50, deadline: nil) {}
+        XCTAssertGreaterThan(resolver.speed(url(on: TestEngine.cosov)), resolver.speed(url(on: TestEngine.aliov)))
+        let asked = transport.requests.current.count
+        let started = Date()
+        var bytes: [UInt8] = []
+        for try await chunk in downloader.stream(hurryRange, resolver: resolver, startup: false, priority: 50, deadline: nil, hurry: hurry) {
+            bytes += chunk
+        }
+        let seconds = Date().timeIntervalSince(started)
+        XCTAssertEqual(bytes, Array(cdn.content[Int(hurryRange.start)...Int(hurryRange.end)]))
+        return (seconds, Array(transport.requests.current.dropFirst(asked)))
+    }
+
+    /// Requests per piece, by the piece's end: a backup copy resumes partway, but ends where the piece ends.
+    func copiesByPiece(_ requests: [(node: String, range: ByteRange)]) -> [Int64: [String]] {
+        requests.reduce(into: [:]) { $0[$1.range.end, default: []].append($1.node) }
+    }
+
+    func testColdRangeOnTheTwoFastestNodesIsFetchedFromAThirdInAHurry() async throws {
+        let (seconds, requests) = try await coldRangeRun(hurry: { true })
+        XCTAssertLessThan(seconds, 1.2)
+        let pieces = copiesByPiece(requests)
+        let rescued = pieces.values.filter { [TestEngine.cosov, akamai].contains($0.first) && $0.contains(TestEngine.aliov) }
+        XCTAssertFalse(rescued.isEmpty, "\(pieces)")
+        XCTAssertTrue(pieces.values.contains { $0.count == 3 }, "a third copy reached aliov: \(pieces)")
+        XCTAssertTrue(pieces.values.allSatisfy { $0.count <= 3 }, "\(pieces)")
+    }
+
+    /// Review focus 4: outside a hurry a piece never gets a third copy.
+    func testWithoutHurryNoThirdCopyStarts() async throws {
+        let (_, requests) = try await coldRangeRun(hurry: nil)
+        let pieces = copiesByPiece(requests)
+        XCTAssertTrue(pieces.values.allSatisfy { $0.count <= 2 }, "\(pieces)")
+    }
+
+    func testHurryOffInConfigKeepsTheOldTiming() async throws {
+        var config = coldConfig
+        config.hurry = false
+        let (seconds, requests) = try await coldRangeRun(hurry: { true }, config: config)
+        XCTAssertGreaterThanOrEqual(seconds, 1.5)
+        XCTAssertTrue(copiesByPiece(requests).values.allSatisfy { $0.count <= 2 }, "\(requests.map { "\($0.node) \($0.range)" })")
+    }
 }

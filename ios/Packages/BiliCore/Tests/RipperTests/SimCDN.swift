@@ -29,6 +29,11 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         /// Bytes this node's copy lacks, as Akamai's copy of one file lacked 109972 through the end of its first
         /// MiB on 2026-10-16: a request starting inside gets no response, one running into it is cut off there.
         var missing: ClosedRange<Int64>?
+        /// A request starting inside this span waits `coldRangeFirstByteMs` for its first byte and then runs at
+        /// `coldRangeBytesPerSecond`, as an edge does over a part of the file it has not served lately.
+        var coldRange: ClosedRange<Int64>?
+        var coldRangeFirstByteMs: Double = 0
+        var coldRangeBytesPerSecond: Double?
     }
 
     struct ConnectionLost: Error {}
@@ -66,7 +71,9 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
             map[node, default: 0] += 1
             return map[node, default: 0] <= behavior.coldRequests
         }
-        try await sleepMs(cold ? behavior.coldFirstByteMs : behavior.firstByteMs)
+        let coldSpan = behavior.coldRange?.contains(range.start) ?? false
+        try await sleepMs(coldSpan ? behavior.coldRangeFirstByteMs : cold ? behavior.coldFirstByteMs : behavior.firstByteMs)
+        let bytesPerSecond = coldSpan ? behavior.coldRangeBytesPerSecond ?? behavior.bytesPerSecond : behavior.bytesPerSecond
         if (ProcessInfo.processInfo.systemUptime - born) * 1000 < behavior.failForMs { throw ConnectionLost() }
         if behavior.status != 206 { return TransportResponse(status: behavior.status, headers: [:], body: empty) }
         guard range.end < Int64(content.count) else { return TransportResponse(status: 416, headers: [:], body: empty) }
@@ -99,7 +106,7 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
                         end = min(end, cutAt - 1)
                     }
                     continuation.yield(Array(content[Int(offset)...Int(end)]))
-                    let ms = Double(end - offset + 1) / behavior.bytesPerSecond * 1000
+                    let ms = Double(end - offset + 1) / bytesPerSecond * 1000
                     if ms >= 1 { try? await sleepMs(ms) } else { await Task.yield() }
                     offset = end + 1
                 }

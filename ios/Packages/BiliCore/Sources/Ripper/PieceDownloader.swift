@@ -53,9 +53,10 @@ final class PieceDownloader: @unchecked Sendable {
         runner = AttemptRunner(ctx: ctx)
     }
 
-    /// One piece, in up to `pieceRounds` rounds. Each round walks the candidates two at a time: the
-    /// first copy starts at once, the backup copy once the first is late (see `hedgeDue`); the first
-    /// to finish wins and the other is cancelled. Bytes already received survive into the next try.
+    /// One piece, in up to `pieceRounds` rounds. Each round walks the candidates three at a time: the
+    /// first copy starts at once, the backup copy once the first is late (see `hedgeDue`), and in a hurry
+    /// a third once the backup is late too (see `hurryHedgeDue`); the first to finish wins and the others
+    /// are cancelled. Bytes already received survive into the next try.
     func download(piece: ByteRange, index: Int, resolver: Resolver, preferred: [String], mode: PieceMode, priority: Double,
                   deadline: (@Sendable () -> Double)?, hurry: (@Sendable () -> Bool)? = nil) async throws -> AttemptOutput {
         let started = ctx.clock.nowMs()
@@ -67,19 +68,19 @@ final class PieceDownloader: @unchecked Sendable {
             }
             let candidates = Self.candidates(preferred: preferred, resolver: resolver, pieceIndex: index, round: round)
             let limit = min(8, candidates.count)
-            let width = mode == .probe ? limit : 2
+            let width = mode == .probe ? limit : 3
             var tried = Set<String>()
             while tried.count < limit {
                 try Task.checkCancellation()
                 let untried = candidates.filter { !tried.contains($0) }
                 let allowed = untried.filter(resolver.allows)
                 let whole = allowed.filter { !resolver.avoids($0, piece) }
-                let pair = Array((!whole.isEmpty ? whole : !allowed.isEmpty ? allowed : untried).prefix(width))
-                if pair.isEmpty { break }
-                pair.forEach { tried.insert($0) }
+                let group = Array((!whole.isEmpty ? whole : !allowed.isEmpty ? allowed : untried).prefix(width))
+                if group.isEmpty { break }
+                let copies = group.map { _ in AttemptProgress() }
                 do {
-                    let output = try await race(pair, piece: piece, resolver: resolver, mode: mode, priority: priority,
-                                                deadline: deadline, prefix: prefix)
+                    let output = try await race(group, copies: copies, piece: piece, resolver: resolver, mode: mode, priority: priority,
+                                                deadline: deadline, hurry: hurry, prefix: prefix)
                     ctx.auto?.delivered(piece.length)
                     ctx.stats.delivered(piece.length)
                     return output
@@ -87,39 +88,62 @@ final class PieceDownloader: @unchecked Sendable {
                     if Task.isCancelled { throw CancellationError() }
                     lastError = error
                 }
+                // A copy that never sent its request leaves its node to a later group of this round.
+                tried.insert(group[0])
+                for (url, copy) in zip(group, copies) where copy.isStarted { tried.insert(url) }
             }
         }
         throw lastError
     }
 
-    private func race(_ pair: [String], piece: ByteRange, resolver: Resolver, mode: PieceMode, priority: Double,
-                      deadline: (@Sendable () -> Double)?, prefix: Locked<Prefix>) async throws -> AttemptOutput {
-        let first = AttemptProgress()
+    /// Copy k waits on copy k - 1; a copy that is never needed returns nil without sending a request.
+    private func race(_ urls: [String], copies: [AttemptProgress], piece: ByteRange, resolver: Resolver, mode: PieceMode, priority: Double,
+                      deadline: (@Sendable () -> Double)?, hurry: (@Sendable () -> Bool)?, prefix: Locked<Prefix>) async throws -> AttemptOutput {
         let hasDeadline = deadline.map { $0().isFinite } ?? false
-        return try await withThrowingTaskGroup(of: AttemptOutput.self) { group -> AttemptOutput in
-            for (position, url) in pair.enumerated() {
+        return try await withThrowingTaskGroup(of: AttemptOutput?.self) { group -> AttemptOutput in
+            for (position, url) in urls.enumerated() {
                 group.addTask {
-                    let progress = position == 0 ? first : AttemptProgress()
+                    let progress = copies[position]
                     if position > 0 {
-                        try await self.waitForCopy(first: first, copyURL: url, resolver: resolver, mode: mode,
-                                                   hasDeadline: hasDeadline, deadline: deadline)
+                        guard try await self.waitForCopy(position, previous: copies[position - 1], previousURL: urls[position - 1],
+                                                         copyURL: url, pieceLength: piece.length, resolver: resolver, mode: mode,
+                                                         hasDeadline: hasDeadline, deadline: deadline, hurry: hurry) else { return nil }
+                        if mode != .probe {
+                            self.ctx.logger.debug(.engine, "copy", ["node": .init(NodeCatalog.nodeKey(of: url)), "range": .init(piece.description),
+                                                                    "copy": .init(position + 1)])
+                        }
                     }
                     do {
                         return try await self.runner.run(
                             url: url, piece: piece, progress: progress, resolver: resolver,
                             priority: priority + (position > 0 ? 20 : 0), queueClass: mode.queueClass, deadline: deadline,
-                            resumeBase: { Self.resumeBase(prefix: prefix.current, live: position > 0 ? first.prefix() : nil, pieceLength: piece.length) })
+                            resumeBase: {
+                                let live = copies[..<position].map { $0.prefix() }.max { $0.bytes < $1.bytes }
+                                return Self.resumeBase(prefix: prefix.current, live: live, pieceLength: piece.length)
+                            })
                     } catch {
                         let kept = progress.prefix()
                         if kept.bytes < piece.length {
                             prefix.withLock { if kept.bytes > $0.bytes { $0 = kept } }
                         }
-                        if position == 0 { first.markFailed() }
+                        progress.markFailed()
                         throw error
                     }
                 }
             }
-            return try await firstSuccess(&group)
+            var lastError: Error = RipperError.noNodes
+            while true {
+                do {
+                    guard let result = try await group.next() else { break }
+                    if let output = result {
+                        group.cancelAll()
+                        return output
+                    }
+                } catch {
+                    lastError = error
+                }
+            }
+            throw lastError
         }
     }
 
@@ -129,18 +153,29 @@ final class PieceDownloader: @unchecked Sendable {
         return base.bytes >= pieceLength ? Prefix() : base
     }
 
-    private func waitForCopy(first: AttemptProgress, copyURL: String, resolver: Resolver, mode: PieceMode,
-                             hasDeadline: Bool, deadline: (@Sendable () -> Double)?) async throws {
-        if mode == .probe { return }
+    /// Whether copy `position` sends its request. In a hurry it goes once the copy before it is late or has
+    /// failed. Otherwise the second copy follows `hedgeDue` or the delay, and a third waits for a hurry: when
+    /// the second fails first, the round's walk moves on instead.
+    private func waitForCopy(_ position: Int, previous: AttemptProgress, previousURL: String, copyURL: String, pieceLength: Int64,
+                             resolver: Resolver, mode: PieceMode, hasDeadline: Bool, deadline: (@Sendable () -> Double)?,
+                             hurry: (@Sendable () -> Bool)?) async throws -> Bool {
+        if mode == .probe { return true }
         let measured = ctx.meter.hedgeDelayMs(configured: ctx.config.hedgeDelayMs)
         let delay = mode == .startup ? min(hasDeadline ? 200 : 250, measured) : measured
         let waitStarted = ctx.clock.nowMs()
         while true {
-            if first.failed { return }
-            if hasDeadline, let deadline {
-                if first.isStarted && hedgeDue(first: first, delayMs: delay, deadlineAt: deadline(), copyBps: resolver.speed(copyURL)) { return }
-            } else if ctx.clock.nowMs() - waitStarted >= delay {
-                return
+            let hurried = hurry?() == true
+            if previous.failed { return hurried || position == 1 }
+            if hurried {
+                if previous.isStarted && hurryHedgeDue(previous: previous, url: previousURL, pieceLength: pieceLength) { return true }
+            } else if position == 1 {
+                if hasDeadline, let deadline {
+                    if previous.isStarted && hedgeDue(first: previous, delayMs: delay, deadlineAt: deadline(), copyBps: resolver.speed(copyURL)) {
+                        return true
+                    }
+                } else if ctx.clock.nowMs() - waitStarted >= delay {
+                    return true
+                }
             }
             try await sleepMs(50)
         }
@@ -164,6 +199,23 @@ final class PieceDownloader: @unchecked Sendable {
             if copyBps > rate * 1.5 { return true }
             if !(usual > 0) || rate < usual * 0.6 { return true }
             return !(copyBps > 0)
+        }
+    }
+
+    /// BTR PR 11 `overdue` with little buffered: a second copy costs less than the wait, since a node can take
+    /// seconds over a part of the file it has not served lately. Due when the copy before is late to its first
+    /// byte (twice its node's usual, within 250-600 ms), has stopped for 1 s, or is past twice its node's
+    /// expected time with under three quarters in.
+    func hurryHedgeDue(previous: AttemptProgress, url: String, pieceLength: Int64) -> Bool {
+        let now = ctx.clock.nowMs()
+        let ttfb = ctx.nodes.ttfbMs(url)
+        let expected = ctx.nodes.expectedMs(url, pieceBytes: pieceLength) ?? ctx.config.hedgeDelayMs
+        return previous.state.withLock { value in
+            let elapsed = now - value.startedAt
+            if !value.gotHeaders { return elapsed >= (ttfb > 0 ? min(600, max(250, ttfb * 2)) : 250) }
+            if now - value.lastProgressAt >= 1_000 { return true }
+            let arrived = Double(value.base.bytes + value.received)
+            return elapsed >= max(400, expected * 2) && arrived < Double(pieceLength) * 0.75
         }
     }
 
