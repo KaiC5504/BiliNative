@@ -316,7 +316,10 @@ final class DanmakuSlot {
 
     func view(for model: VideoPageModel, settings: AppSettings) -> DanmakuView {
         if let made { return made }
-        let view = DanmakuView(controller: model.danmaku, settings: settings, player: { [weak model] in model?.controller?.player })
+        // While the next part loads, the page's player still shows the last part's final frame.
+        let view = DanmakuView(controller: model.danmaku, settings: settings, player: { [weak model] in
+            model?.controller.flatMap { $0.phase == .playing ? $0.player : nil }
+        })
         made = view
         return view
     }

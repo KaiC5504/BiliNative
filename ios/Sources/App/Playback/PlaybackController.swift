@@ -107,7 +107,8 @@ final class PlaybackController {
     /// A local server that stops again this soon after being restarted is left for direct mode.
     private static let serverRestartSeconds = 30.0
 
-    let player = AVPlayer()
+    /// The page's player, shared by every part it plays, so the layer and picture in picture stay attached.
+    let player: AVPlayer
     private(set) var mode: Mode = .ripper
     private(set) var phase: Phase = .idle
     private(set) var qualities: [QualityOption] = []
@@ -177,9 +178,13 @@ final class PlaybackController {
     @ObservationIgnored private var firstFrameTimed = true
     @ObservationIgnored private var loggedPlayURL = false
     @ObservationIgnored private var loadedAt: Date?
+    /// The item this controller put on the player. Until it loads one, the player may still hold the previous
+    /// part's last frame, which is not this controller's to play or measure.
+    @ObservationIgnored private var loadedItem: AVPlayerItem?
 
-    init(environment: PlaybackEnvironment, quality: Int, codec: VideoCodec, btrEnabled: Bool) {
+    init(environment: PlaybackEnvironment, quality: Int, codec: VideoCodec, btrEnabled: Bool, player: AVPlayer = AVPlayer()) {
         self.environment = environment
+        self.player = player
         selectedQuality = quality
         self.codec = codec
         self.btrEnabled = btrEnabled
@@ -188,8 +193,13 @@ final class PlaybackController {
 
     var playingQuality: Int? { playing?.quality }
 
+    private var ownsItem: Bool {
+        guard let loadedItem else { return false }
+        return player.currentItem === loadedItem
+    }
+
     var currentSeconds: Double {
-        guard player.currentItem != nil else { return heldPosition }
+        guard ownsItem else { return heldPosition }
         let seconds = player.currentTime().seconds
         return seconds.isFinite ? seconds : 0
     }
@@ -208,7 +218,7 @@ final class PlaybackController {
         playWhenLoaded = true
         // The page loads paused, seeks to the resume point and plays at once: that is still startup time.
         if !sawFirstFrame, let loadedAt, Date().timeIntervalSince(loadedAt) < 2 { firstFrameTimed = true }
-        guard player.currentItem != nil else { return }
+        guard ownsItem else { return }
         player.play()
         isPlaying = true
     }
@@ -222,7 +232,7 @@ final class PlaybackController {
     func seek(to seconds: Double) async {
         let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
         position = target
-        guard player.currentItem != nil else {
+        guard ownsItem else {
             heldPosition = target
             return
         }
@@ -267,9 +277,19 @@ final class PlaybackController {
     }
 
     func stop() {
+        stop(keepingFrame: false)
+    }
+
+    /// Stops for the next part on the same player: the last frame stays up, and picture in picture with it,
+    /// until the next part's item replaces it.
+    func handOver() {
+        stop(keepingFrame: true)
+    }
+
+    private func stop(keepingFrame: Bool) {
         heldPosition = currentSeconds
         advance()
-        teardownPlayback()
+        teardownPlayback(keepingFrame: keepingFrame)
         pathMonitor?.cancel()
         pathMonitor = nil
         playing = nil
@@ -509,6 +529,7 @@ final class PlaybackController {
         if !playWhenLoaded, !sawFirstFrame { firstFrameTimed = false }
         attachObservers(item, epoch: current)
         player.replaceCurrentItem(with: item)
+        loadedItem = item
         loadedAt = Date()
         position = time
         player.defaultRate = rate
@@ -570,7 +591,7 @@ final class PlaybackController {
 
     /// Reloads keep a user's pause. Not used for failed items: AVPlayer stops for those by itself.
     private func rememberPause() {
-        if player.currentItem != nil, phase == .playing { playWhenLoaded = player.rate > 0 }
+        if ownsItem, phase == .playing { playWhenLoaded = player.rate > 0 }
     }
 
     private func fallBackToDirect(reason: String, epoch current: Int) async {
@@ -1016,14 +1037,15 @@ final class PlaybackController {
         guard current == epoch else { throw CancellationError() }
     }
 
-    private func teardownPlayback() {
+    private func teardownPlayback(keepingFrame: Bool = false) {
         refreshTask?.cancel()
         statsTask?.cancel()
         seekTimer.cancel()
         work.values.forEach { $0.cancel() }
         player.pause()
         detachObservers()
-        player.replaceCurrentItem(with: nil)
+        if !keepingFrame { player.replaceCurrentItem(with: nil) }
+        loadedItem = nil
         teardownSession()
         if let directToken { environment.directLoader.unregister(directToken) }
         directToken = nil

@@ -29,6 +29,8 @@ protocol PlaybackControlling: AnyObject {
 
     func start(at time: Double, autoplay: Bool) async
     func stop()
+    /// Stops for the next part, leaving the last frame on the page's player until the next item replaces it.
+    func handOver()
     func play()
     func pause()
     func seek(to seconds: Double) async

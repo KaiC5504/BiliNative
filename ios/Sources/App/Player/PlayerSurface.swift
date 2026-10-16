@@ -9,11 +9,14 @@ struct PlayerSurface: UIViewRepresentable {
     var onGesture: (PlayerGestureEvent) -> Void = { _ in }
     /// The danmaku renderer's view, drawn above the video and under the controls.
     var danmaku: UIView? = nil
+    /// A host view to show instead of a new one. Picture in picture is tied to its layer, so a page brought back
+    /// from the small window shows the view it left with.
+    var host: PlayerHostView? = nil
     /// Hands out the host view once, for callers that drive it directly (小窗播放 calls `startPiP`).
     var onHost: ((PlayerHostView) -> Void)? = nil
 
     func makeUIView(context: Context) -> PlayerHostView {
-        let view = PlayerHostView()
+        let view = host ?? PlayerHostView()
         apply(to: view)
         onHost?(view)
         return view
