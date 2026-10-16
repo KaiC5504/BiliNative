@@ -198,6 +198,7 @@ jobs:
           shoot player-landscape-actions 12 -DemoData YES -DemoScreen player-landscape-actions
           shoot coin-dialog 11 -DemoData YES -DemoScreen coin-dialog
           shoot favourite-sheet 11 -DemoData YES -DemoScreen favourite-sheet
+          shoot composer-emotes 15 -DemoData YES -DemoScreen composer-emotes
 
       - name: Release build (no tests)
         if: env.FULL_RUN == 'true'

@@ -22,6 +22,7 @@ struct VideoPageView: View {
     @State private var tabs = PageTabsState()
     /// Made once the video's aid is known, and again for each video the page switches to.
     @State private var comments: CommentsModel?
+    @State private var composer: ComposerModel?
     @State private var loginRequested = false
     @State private var tvLoginRequested = false
     @State private var actions: ActionsModel?
@@ -52,7 +53,7 @@ struct VideoPageView: View {
         ZStack {
             if let model {
                 PageLayout(model: model, chrome: chrome, panel: panel, tabs: tabs, comments: comments, danmaku: danmakuView(for: model),
-                           danmakuEnabled: env.settings.danmaku.enabled, ignoresKeyboard: sendBarOpen,
+                           danmakuEnabled: env.settings.danmaku.enabled, ignoresKeyboard: sendBarOpen || composer != nil,
                            onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar,
                            onNeedLogin: presentLogin, onCompose: compose, onComments: showComments)
                     .environment(actions)
@@ -71,6 +72,10 @@ struct VideoPageView: View {
             }
             if sendBarOpen, let sender {
                 sendBar(sender)
+            }
+            if let composer {
+                composerView(composer)
+                    .zIndex(2)
             }
         }
         .animation(.easeOut(duration: 0.2), value: comments?.viewing)
@@ -102,11 +107,12 @@ struct VideoPageView: View {
                 sendBarOpen = true
             }
             // Reads the state each time: the comments model only exists once the video has loaded.
-            CommentsDemo.stage(page: page, tabs: tabs) { comments }
+            CommentsDemo.stage(page: page, tabs: tabs, comments: { comments }, compose: compose)
             #endif
         }
         .onDisappear {
             sendBarOpen = false
+            composer = nil
             lifecycle.disappeared()
         }
         .onChange(of: sender?.needsLogin) { _, needsLogin in
@@ -120,6 +126,7 @@ struct VideoPageView: View {
         }
         .onChange(of: model?.detail?.aid, initial: true) { _, aid in
             guard let aid, let detail = model?.detail, comments?.aid != aid else { return }
+            composer = nil
             comments = makeComments(aid: aid, upMid: detail.owner.mid)
         }
         .onChange(of: model?.detail?.isVertical) { _, vertical in
@@ -149,7 +156,7 @@ struct VideoPageView: View {
             if let volume = note.userInfo?["volume"] as? Double { chrome.showHardwareVolume(volume) }
         }
         .onChange(of: OrientationController.shared.presentation) { _, presentation in
-            if presentation == .inline { sendBarOpen = false }
+            if presentation == .inline { sendBarOpen = false } else { composer = nil }
         }
         .onChange(of: panel.wrappedValue == nil) { _, closed in
             chrome.panelOpen = !closed || sendBarOpen
@@ -187,10 +194,22 @@ struct VideoPageView: View {
         }
     }
 
-    /// The bottom bar and 回复. Task 25's composer opens from here.
+    /// The bottom bar and 回复: the composer for that target, on the emote panel when the emote button was tapped.
     private func compose(_ target: ReplyTarget, emotes: Bool) {
         guard Self.loggedIn(env.account) else { return presentLogin() }
-        comments?.toast = "发评论即将上线"
+        guard let comments else { return }
+        let model = ComposerModel(client: env.client, aid: comments.aid, target: target, comments: comments)
+        model.showingEmotes = emotes
+        composer = model
+    }
+
+    @ViewBuilder
+    private func composerView(_ model: ComposerModel) -> some View {
+        #if DEBUG
+        Composer(model: model, onClose: { composer = nil }, demo: CommentsDemo.isComposerDemo)
+        #else
+        Composer(model: model, onClose: { composer = nil })
+        #endif
     }
 
     /// The 评论 icon in full screen: back to the page, on the 评论 tab.
@@ -231,6 +250,7 @@ struct VideoPageView: View {
     private func presentLogin() {
         sender?.needsLogin = false
         sendBarOpen = false
+        composer = nil
         loginRequested = true
     }
 
