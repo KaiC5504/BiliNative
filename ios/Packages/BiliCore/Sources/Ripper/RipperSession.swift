@@ -265,8 +265,10 @@ public final class RipperSession: @unchecked Sendable {
             served = true
             source = "memory"
         case .inflight(let task):
-            let result = await withTaskCancellationHandler { await task.result } onCancel: { task.cancel() }
-            try Task.checkCancellation()
+            guard let result = await waitForPrefetch(task), !Task.isCancelled else {
+                returnPrefetch(task, for: key, endTime: request.segment?.endTime ?? 0)
+                throw CancellationError()
+            }
             if case .success(let bytes) = result {
                 ctx.stats.cache(hit: true)
                 emit(bytes)
@@ -397,6 +399,41 @@ public final class RipperSession: @unchecked Sendable {
                                                          "error": .init(String(describing: error))])
         }
     }
+
+    /// Nil as soon as the caller is cancelled. `Task.result` alone would keep the caller parked until the
+    /// prefetch ends, and the prefetch is not the caller's to cancel.
+    private func waitForPrefetch(_ task: Task<[UInt8], Error>) async -> Result<[UInt8], Error>? {
+        let (results, feed) = AsyncStream<Result<[UInt8], Error>>.makeStream()
+        Task {
+            feed.yield(await task.result)
+            feed.finish()
+        }
+        return await withTaskCancellationHandler {
+            var iterator = results.makeAsyncIterator()
+            return await iterator.next()
+        } onCancel: {
+            feed.finish()
+        }
+    }
+
+    /// A reader that gives up on an adopted prefetch hands it back to `inflight`, so it still ends in the cache.
+    /// With the session closed, or the segment scheduled again meanwhile, nobody wants it.
+    private func returnPrefetch(_ task: Task<[UInt8], Error>, for key: CacheKey, endTime: Double) {
+        let returned = state.withLock { value -> Bool in
+            guard !value.closed, value.inflight[key] == nil else { return false }
+            value.inflight[key] = task
+            return true
+        }
+        guard returned else {
+            task.cancel()
+            return
+        }
+        // The task may have finished while it was out of `inflight`, after the watcher from `schedulePrefetch` gave up.
+        Task { [weak self] in
+            let result = await task.result
+            self?.prefetchFinished(key, task: task, result: result, endTime: endTime)
+        }
+    }
 }
 
 /// For tests.
@@ -411,4 +448,5 @@ extension RipperSession {
         state.withLock { value in value.cache.filter { $0.key.track == track }.reduce(Int64(0)) { $0 + Int64($1.value.bytes.count) } }
     }
     func prefetchesRunning(_ track: TrackKind) -> Int { state.withLock { value in value.inflight.keys.filter { $0.track == track }.count } }
+    var readsRunning: Int { state.withLock { $0.reads.count } }
 }
