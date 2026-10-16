@@ -209,7 +209,7 @@ struct VideoPageView: View {
 }
 
 private struct PageLayout: View {
-    @Bindable var model: VideoPageModel
+    let model: VideoPageModel
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
     let tabs: PageTabsState
@@ -253,7 +253,6 @@ private struct PageLayout: View {
         .statusBarHidden(presentation == .landscape)
         .preferredColorScheme(presentation == .vertical ? .dark : nil)
         .persistentSystemOverlays(inline ? .automatic : .hidden)
-        .navigationDestination(item: $model.pushedRoute) { VideoPageView(route: $0).id($0.id) }
         #if DEBUG
         .task { IntroDemo.stage(page: model, tabs: tabs) }
         #endif
