@@ -19,6 +19,8 @@ final class PageLifecycle {
     private weak var page: UIViewController?
     private weak var navigation: UINavigationController?
     private var settling = 0
+    /// Bumped by every event; follow-up looks of an older event stop.
+    private var checks = 0
     private var lastPlace: Place?
 
     init() {
@@ -44,15 +46,34 @@ final class PageLifecycle {
     /// Every event ends in the same check, and what it does is idempotent, so a missing or extra onAppear or
     /// onDisappear (SwiftUI sends an onAppear when a back swipe starts and none back if it is cancelled) cannot
     /// leave the page in the wrong state.
+    /// SwiftUI can also report before UIKit has begun the push or pop (the main thread is busy building the new
+    /// page), when the stack still shows the old place and no later event may follow. So each event is followed
+    /// by a few more looks until well after any transition it started.
     private func settleAndApply() {
         guard shown, model != nil else { return }
-        settle { place in
-            guard let model = self.model else { return }
-            switch place {
-            case .top: self.show(model, opened: false)
-            case .covered: self.hide(model, removed: false)
-            case .removed: self.hide(model, removed: true)
+        checks += 1
+        let check = checks
+        settle(apply)
+        Task { @MainActor in
+            for delay in [300, 1000, 2500] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard self.checks == check else { return }
+                self.settle(self.apply)
             }
+        }
+    }
+
+    /// The navigator's path changed: the stack is about to change under this page.
+    func stackChanged() {
+        settleAndApply()
+    }
+
+    private func apply(_ place: Place) {
+        guard let model else { return }
+        switch place {
+        case .top: show(model, opened: false)
+        case .covered: hide(model, removed: false)
+        case .removed: hide(model, removed: true)
         }
     }
 

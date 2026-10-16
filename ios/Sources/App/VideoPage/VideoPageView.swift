@@ -70,6 +70,7 @@ struct VideoPageView: View {
             sendBarOpen = false
             lifecycle.disappeared()
         }
+        .onChange(of: env.navigator.path) { lifecycle.stackChanged() }
         .onChange(of: sender?.needsLogin) { _, needsLogin in
             if needsLogin == true { presentLogin() }
         }
