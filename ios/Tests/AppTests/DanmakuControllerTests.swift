@@ -188,13 +188,18 @@ final class DanmakuControllerTests: XCTestCase {
         }
     }
 
-    /// Two danmaku of the same kind drawn over each other. Top and bottom ones may cross scrolling ones,
-    /// as in the official app.
-    private func overlap(_ shown: [(kind: LaneLayout.Kind, frame: CGRect)]) -> String? {
+    /// Two danmaku drawn over each other. The one exception, as in the official app: a scrolling danmaku that
+    /// was already passing when a top or bottom one appeared on its row.
+    private func overlap(_ shown: [(kind: LaneLayout.Kind, frame: CGRect, start: Double)]) -> String? {
         for (i, a) in shown.enumerated() {
-            for b in shown[(i + 1)...] where a.kind == b.kind {
-                if a.frame.insetBy(dx: 0.5, dy: 0.5).intersects(b.frame.insetBy(dx: 0.5, dy: 0.5)) {
-                    return "\(a.kind) \(a.frame) and \(b.frame)"
+            for b in shown[(i + 1)...] {
+                guard a.frame.insetBy(dx: 0.5, dy: 0.5).intersects(b.frame.insetBy(dx: 0.5, dy: 0.5)) else { continue }
+                if a.kind == b.kind || (a.kind != .scroll && b.kind != .scroll) {
+                    return "\(a.kind) \(a.frame) and \(b.kind) \(b.frame)"
+                }
+                let (scroll, still) = a.kind == .scroll ? (a, b) : (b, a)
+                if scroll.start > still.start {
+                    return "scrolling \(scroll.frame) from \(scroll.start) s ran into \(still.kind) \(still.frame) from \(still.start) s"
                 }
             }
         }

@@ -13,6 +13,7 @@ final class DanmakuView: UIView {
         /// Video time, in seconds, at which it entered.
         let start: Double
         let width: CGFloat
+        let height: CGFloat
         let y: CGFloat
     }
 
@@ -54,13 +55,16 @@ final class DanmakuView: UIView {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         backgroundColor = .clear
-        images.countLimit = 400
+        // A 3x text image is ~150 KB; bounded by bytes so a busy video never pins much memory.
+        images.totalCostLimit = 16 << 20
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// Live danmaku and where they are (tests).
-    var visibleFrames: [(kind: LaneLayout.Kind, frame: CGRect)] { items.map { (kind: $0.kind, frame: $0.layer.frame) } }
+    var visibleFrames: [(kind: LaneLayout.Kind, frame: CGRect, start: Double)] {
+        items.map { (kind: $0.kind, frame: $0.layer.frame, start: $0.start) }
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -149,7 +153,22 @@ final class DanmakuView: UIView {
         // Re-laid after a seek: one that would already have left is not drawn at all.
         guard time - start < (kind == .scroll ? scrollDuration : Self.staticDuration) else { return }
         let image = image(for: danmaku)
-        guard let lane = layout.place(kind, width: Double(image.size.width), at: start) else { return }
+        var placed: Int?
+        if kind == .scroll {
+            // LaneLayout keeps each kind to itself. A lane where this one would run into a top or bottom danmaku
+            // still showing is left marked as taken, which keeps the next few off it as well, and the next lane
+            // is tried.
+            for _ in 0...lanes {
+                guard let lane = layout.place(.scroll, width: Double(image.size.width), at: start) else { break }
+                if !runsIntoStatic(y: CGFloat(lane) * laneHeight + laneHeight / 2, size: image.size, start: start) {
+                    placed = lane
+                    break
+                }
+            }
+        } else {
+            placed = layout.place(kind, width: Double(image.size.width), at: start)
+        }
+        guard let lane = placed else { return }
         let top = kind == .bottom ? bounds.height - CGFloat(lanes - lane) * laneHeight : CGFloat(lane) * laneHeight
         let y = top + laneHeight / 2
         let layer = spare.popLast() ?? makeLayer()
@@ -157,8 +176,23 @@ final class DanmakuView: UIView {
         layer.contentsScale = image.scale
         layer.bounds = CGRect(origin: .zero, size: image.size)
         layer.position = CGPoint(x: bounds.width / 2, y: y)
+        // Top and bottom danmaku stay readable over the ones that were already passing when they appeared.
+        layer.zPosition = kind == .scroll ? 0 : 1
         layer.isHidden = false
-        items.append(Item(layer: layer, kind: kind, reverse: danmaku.elem.mode == 6, start: start, width: image.size.width, y: y))
+        items.append(Item(layer: layer, kind: kind, reverse: danmaku.elem.mode == 6, start: start,
+                          width: image.size.width, height: image.size.height, y: y))
+    }
+
+    /// Whether a scrolling danmaku entering at `start` on row `y` reaches a centred top or bottom one on that row
+    /// before it disappears.
+    private func runsIntoStatic(y: CGFloat, size: CGSize, start: Double) -> Bool {
+        let screen = bounds.width
+        let speed = (screen + size.width) / CGFloat(scrollDuration)
+        for item in items where item.kind != .scroll && abs(item.y - y) < (item.height + size.height) / 2 {
+            let reaches = start + Double((screen - item.width) / 2 / speed)
+            if reaches < item.start + Self.staticDuration { return true }
+        }
+        return false
     }
 
     /// x = W - (t - start) × (W + w) / D for a scrolling danmaku, mirrored for reverse ones.
@@ -220,7 +254,7 @@ final class DanmakuView: UIView {
         let key = "\(pointSize)|\(color)|\(danmaku.isOwn)|\(danmaku.text)" as NSString
         if let cached = images.object(forKey: key) { return cached }
         let made = Self.render(danmaku.text, font: font(ofSize: pointSize), color: color, own: danmaku.isOwn)
-        images.setObject(made, forKey: key)
+        images.setObject(made, forKey: key, cost: Int(made.size.width * made.size.height * made.scale * made.scale) * 4)
         return made
     }
 
