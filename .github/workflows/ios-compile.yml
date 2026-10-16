@@ -125,18 +125,23 @@ jobs:
           shoot 03-page 10 -DemoData YES -DemoScreen page
           shoot 22-danmaku-send 12 -DemoData YES -DemoScreen danmaku-send
           shoot 23-danmaku-style 12 -DemoData YES -DemoScreen danmaku-style
+          shoot danmaku-portrait 14 -DemoData YES -DemoScreen danmaku-portrait -DemoPauseAt 26
+          shoot danmaku-landscape 14 -DemoData YES -DemoScreen danmaku-landscape -DemoPauseAt 26
           shoot 11-panel-quality 16 -DemoData YES -DemoScreen page -DemoPanel quality
           shoot 11-panel-speed 16 -DemoData YES -DemoScreen page -DemoPanel speed
           shoot 11-panel-more 16 -DemoData YES -DemoScreen page -DemoPanel more
           shoot 11-panel-more-portrait 12 -DemoData YES -DemoScreen page -DemoPanel more -DemoPortrait YES
-          shoot danmaku-portrait 14 -DemoData YES -DemoScreen danmaku-portrait -DemoPauseAt 26
-          shoot danmaku-landscape 14 -DemoData YES -DemoScreen danmaku-landscape -DemoPauseAt 26
           shoot 04-player-portrait 12 -DemoData YES -DemoScreen player-portrait
           shoot 05-player-landscape 12 -DemoData YES -DemoScreen player-landscape
           shoot 06-player-vertical 12 -DemoData YES -DemoScreen player-vertical
           shoot 07-hud-speed 9 -DemoData YES -DemoScreen hud-speed
           shoot 08-end-portrait 12 -DemoData YES -DemoScreen end-portrait
           shoot 09-end-landscape 12 -DemoData YES -DemoScreen end-landscape
+          shoot panel-danmaku 16 -DemoData YES -DemoScreen page -DemoPanel danmaku
+          shoot panel-danmaku-more 16 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoDanmakuMore YES
+          shoot block-words 16 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoBlockWords YES
+          shoot panel-danmaku-portrait 12 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoPortrait YES
+          shoot block-words-portrait 12 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoPortrait YES -DemoBlockWords YES
 
       - name: Release build (no tests)
         run: |

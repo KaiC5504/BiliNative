@@ -1,7 +1,7 @@
 #if DEBUG
 import Foundation
 
-/// `-DemoPanel quality|codec|speed|more|episodes` opens the video page with that panel showing. The page turns to
+/// `-DemoPanel quality|codec|speed|more|episodes|danmaku` opens the video page with that panel showing. The page turns to
 /// landscape first, unless `-DemoPortrait YES` asks for the bottom sheet.
 enum DemoPanel {
     static var requested: PlayerPanel? {
@@ -11,6 +11,7 @@ enum DemoPanel {
         case "speed": .speed
         case "more": .more
         case "episodes": .episodes
+        case "danmaku": .danmakuSettings
         default: nil
         }
     }

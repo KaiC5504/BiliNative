@@ -29,6 +29,8 @@ final class AppEnvironment {
     @ObservationIgnored let transport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
     @ObservationIgnored let directTransport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
     @ObservationIgnored let codecMemory = CodecMemory()
+    /// Shared by every video page; `logout()` empties it.
+    let blockRules: BlockRuleStore
     private(set) var account: Account = .unknown
     /// The logged-in account's uid; its hash marks one's own danmaku.
     private(set) var mid: Int64?
@@ -51,10 +53,20 @@ final class AppEnvironment {
         case .notFound: break
         case .failed: blocked.withLock { $0 = true }
         }
-        jar.onChange = { [weak jar] _ in
-            queue.async {
-                guard let jar, !blocked.current else { return }
-                KeychainStore.saveCookies(jar.all)
+        #if DEBUG
+        let demo = DemoFixtures.isEnabled
+        #else
+        let demo = false
+        #endif
+        if demo {
+            // Demo screens act as a signed-in account: the write calls need a csrf cookie. Nothing is persisted.
+            jar.replaceAll(["SESSDATA": "demo", "bili_jct": "demo"])
+        } else {
+            jar.onChange = { [weak jar] _ in
+                queue.async {
+                    guard let jar, !blocked.current else { return }
+                    KeychainStore.saveCookies(jar.all)
+                }
             }
         }
         persistQueue = queue
@@ -65,7 +77,9 @@ final class AppEnvironment {
         #else
         let http: HTTPTransport = URLSessionHTTPTransport()
         #endif
-        client = BiliClient(transport: http, cookies: jar)
+        let client = BiliClient(transport: http, cookies: jar)
+        self.client = client
+        blockRules = BlockRuleStore(client: client)
         let router = PlaybackRouter()
         let server = LocalServer(router: router)
         // Set before the listener starts: onStop is read on the server's queue. A controller acts on the
@@ -140,6 +154,7 @@ final class AppEnvironment {
     func logout() async {
         persistBlocked.withLock { $0 = false }
         cookies.removeAll()
+        blockRules.clear()
         persistQueue.async { KeychainStore.deleteCookies() }
         await WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         accountCheckFailed = false

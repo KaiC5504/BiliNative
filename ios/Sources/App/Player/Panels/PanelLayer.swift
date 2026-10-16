@@ -58,7 +58,7 @@ struct PanelLayer: View {
             }
         case .danmakuSettings:
             SidePanel(identifier: panel.identifier, dismiss: close) {
-                Color.clear.frame(height: 1)
+                DanmakuSettingsPanel(onNeedLogin: { loginPresented = true })
             }
         }
     }

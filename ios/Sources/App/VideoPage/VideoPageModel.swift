@@ -28,6 +28,7 @@ final class VideoPageModel {
 
     @ObservationIgnored let client: BiliClient
     @ObservationIgnored let settings: AppSettings
+    @ObservationIgnored let blockRules: BlockRuleStore?
     @ObservationIgnored let danmaku: DanmakuController
     @ObservationIgnored private let account: @MainActor () -> Account
     @ObservationIgnored private let makeController: @MainActor (PlayItem) -> PlaybackControlling
@@ -38,6 +39,7 @@ final class VideoPageModel {
     /// The player surface's host view, handed over by the page so 小窗播放 can start picture in picture on it.
     @ObservationIgnored weak var host: PlayerHostView?
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var followingRules = false
     @ObservationIgnored private var appeared = false
     /// Set by disappear: the controller was stopped because another page covered this one.
     @ObservationIgnored private var covered = false
@@ -57,7 +59,8 @@ final class VideoPageModel {
     @ObservationIgnored private var chaptersTask: Task<Void, Never>?
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
 
-    init(route: VideoRoute, client: BiliClient, settings: AppSettings, account: @escaping @MainActor () -> Account,
+    init(route: VideoRoute, client: BiliClient, settings: AppSettings, blockRules: BlockRuleStore? = nil,
+         account: @escaping @MainActor () -> Account,
          makeController: @escaping @MainActor (PlayItem) -> PlaybackControlling,
          sleep: @escaping (Double) async -> Void = { seconds in _ = try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000)) },
          onlineInterval: Double = 30,
@@ -66,6 +69,7 @@ final class VideoPageModel {
         self.route = route
         self.client = client
         self.settings = settings
+        self.blockRules = blockRules
         danmaku = DanmakuController(client: client, settings: settings, ownHash: ownHash)
         self.account = account
         self.makeController = makeController
@@ -92,7 +96,31 @@ final class VideoPageModel {
 
     func load() async {
         started = true
+        followBlockRules()
+        // Not awaited: the rules only matter once danmaku arrives, and a slow answer must not delay the video.
+        Task { await blockRules?.refresh() }
         await open(bvid: route.bvid, cid: route.cid, start: route.startSeconds)
+    }
+
+    /// Keeps the danmaku filter on the shared store's rules, so a rule added from the panel mid-video applies at once.
+    private func followBlockRules() {
+        guard let blockRules else { return }
+        danmaku.rules = blockRules.rules
+        guard !followingRules else { return }
+        followingRules = true
+        observeBlockRules(blockRules)
+    }
+
+    private func observeBlockRules(_ store: BlockRuleStore) {
+        withObservationTracking {
+            _ = store.rules
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.danmaku.rules = store.rules
+                self.observeBlockRules(store)
+            }
+        }
     }
 
     /// 重试 in the player box: the failed open, or the failed playback at its position.
