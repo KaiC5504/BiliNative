@@ -77,14 +77,6 @@ jobs:
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$UDID"
 
-      # Xcode's compilation cache is keyed by content, not file times, so a fresh checkout can reuse it.
-      - name: Restore the compilation cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/xcode-cas
-          key: xcode-cas-${{ runner.os }}-${{ github.sha }}
-          restore-keys: xcode-cas-${{ runner.os }}-
-
       - name: Build for the simulator
         run: |
           set -o pipefail
