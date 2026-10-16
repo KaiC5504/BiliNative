@@ -26,14 +26,23 @@ final class PrimaryAssigner: @unchecked Sendable {
             known = urls.map(speed)
         }
         let unknown = urls.indices.filter { known[$0] == 0 }.map { urls[$0] }
-        var trials = min(unknown.count * 2, count / 4)
-        var trialState = state.withLock { $0.trials[trialKey] } ?? TrialState()
-        // Small ranges never have a piece to spare; every fourth one gives up its last piece for a trial.
-        if trials == 0 && !unknown.isEmpty && count >= 2 {
-            trialState.waited += 1
-            if trialState.waited >= 4 { trials = 1 }
+        let spare = min(unknown.count * 2, count / 4)
+        let pieceCount = count
+        // One lock section for the whole read-modify-write: the video and audio ranges assign concurrently.
+        let (trials, trialCursor) = state.withLock { value -> (Int, Int) in
+            var trialState = value.trials[trialKey] ?? TrialState()
+            var trials = spare
+            // Small ranges never have a piece to spare; every fourth one gives up its last piece for a trial.
+            if trials == 0 && !unknown.isEmpty && pieceCount >= 2 {
+                trialState.waited += 1
+                if trialState.waited >= 4 { trials = 1 }
+            }
+            if trials > 0 { trialState.waited = 0 }
+            let cursor = trialState.cursor
+            trialState.cursor = (trialState.cursor + trials) % 4096
+            value.trials[trialKey] = trialState
+            return (trials, cursor)
         }
-        if trials > 0 { trialState.waited = 0 }
         if !unknown.isEmpty {
             urls = urls.indices.filter { known[$0] > 0 }.map { urls[$0] }
             known = urls.map(speed)
@@ -54,11 +63,8 @@ final class PrimaryAssigner: @unchecked Sendable {
             primaries.append(urls[best])
         }
         for index in 0..<trials {
-            primaries.append(unknown[(index + trialState.cursor) % unknown.count])
+            primaries.append(unknown[(index + trialCursor) % unknown.count])
         }
-        trialState.cursor = (trialState.cursor + trials) % 4096
-        let finalState = trialState
-        state.withLock { $0.trials[trialKey] = finalState }
         return primaries
     }
 }

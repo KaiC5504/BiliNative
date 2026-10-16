@@ -1,4 +1,6 @@
 import XCTest
+import Foundation
+import BiliShared
 @testable import Ripper
 
 final class PrimaryAssignerTests: XCTestCase {
@@ -32,5 +34,18 @@ final class PrimaryAssignerTests: XCTestCase {
             results.append(assigner.assign(urls: ["A", "C"], count: 2, speed: { speeds[$0] ?? 0 }, trialKey: ObjectIdentifier(owner)))
         }
         XCTAssertEqual(results, [["A", "A"], ["A", "A"], ["A", "A"], ["A", "C"]])
+    }
+
+    func testConcurrentRangesNeverLoseATrialTurn() {
+        let assigner = PrimaryAssigner()
+        let owner = Key()
+        let key = ObjectIdentifier(owner)
+        let trials = Locked(0)
+        DispatchQueue.concurrentPerform(iterations: 400) { _ in
+            let result = assigner.assign(urls: ["A", "C"], count: 2, speed: { $0 == "A" ? 10 : 0 }, trialKey: key)
+            if result.last == "C" { trials.withLock { $0 += 1 } }
+        }
+        XCTAssertEqual(trials.current, 100)
+        withExtendedLifetime(owner) {}
     }
 }

@@ -189,6 +189,134 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertTrue(cdn.requests.current.contains(TestEngine.cosov))
     }
 
+    func testMismatchedPieceIsNeverYielded() async throws {
+        let cdn = SimCDN(size: 2_000_000, behaviors: [TestEngine.cosov: .init(totalSize: 2_000_001)])
+        let transport = RecordingTransport(cdn)
+        var config = TestEngine.config
+        // No backup copies: every piece is served by the node it was assigned to.
+        config.hedgeDelayMs = 60_000
+        let downloader = RangeDownloader(ctx: context(transport, config: config))
+        var yielded: Int64 = 0
+        do {
+            for try await chunk in downloader.stream(mebibyte, resolver: TestEngine.resolver(), startup: false, priority: 50, deadline: nil,
+                                                     expectedTotal: 2_000_000) {
+                yielded += Int64(chunk.count)
+            }
+            XCTFail("expected totalMismatch")
+        } catch {
+            XCTAssertEqual(error as? RipperError, .totalMismatch)
+        }
+        let firstLie = transport.requests.current.filter { $0.node == TestEngine.cosov }.map(\.range.start).min()
+        XCTAssertNotNil(firstLie)
+        XCTAssertLessThanOrEqual(yielded, firstLie ?? 0, "no byte from the mismatched piece or after it")
+    }
+
+    func testStartupHeadIsCheckedAgainstTheExpectedTotal() async {
+        var behaviors: [String: SimCDN.Behavior] = [:]
+        for node in NodeCatalog.overseas { behaviors[node] = .init(totalSize: 2_000_001) }
+        let downloader = RangeDownloader(ctx: TestEngine.context(SimCDN(size: 2_000_000, behaviors: behaviors)))
+        var yielded = 0
+        do {
+            for try await chunk in downloader.stream(mebibyte, resolver: TestEngine.resolver(), startup: true, priority: 50, deadline: nil,
+                                                     expectedTotal: 2_000_000) {
+                yielded += chunk.count
+            }
+            XCTFail("expected totalMismatch")
+        } catch {
+            XCTAssertEqual(error as? RipperError, .totalMismatch)
+        }
+        XCTAssertEqual(yielded, 0)
+    }
+
+    func testHedgeDueRules() {
+        let clock = ManualClock()
+        func downloader(usualBps: Double) -> PieceDownloader {
+            let meter = Meter()
+            if usualBps > 0 { meter.record(bytes: Int64(usualBps), elapsedMs: 1_000) }
+            return PieceDownloader(ctx: EngineContext(transport: SimCDN(size: 1), pool: ConnectionPool(limit: 1), config: TestEngine.config,
+                                                      meter: meter, stats: EngineStats(), auto: nil, clock: clock.clock,
+                                                      logger: Logger(session: "test")))
+        }
+        func copy(received: Int) -> AttemptProgress {
+            let progress = AttemptProgress()
+            clock.set(0)
+            progress.begin(at: 0, length: 1_000_000, base: Prefix())
+            if received > 0 { progress.append([UInt8](repeating: 0, count: received), at: 0) }
+            return progress
+        }
+        let unknownUsual = downloader(usualBps: 0)
+
+        let silent = copy(received: 0)
+        clock.set(100)
+        XCTAssertFalse(unknownUsual.hedgeDue(first: silent, delayMs: 250, deadlineAt: 60_000, copyBps: 0), "before the delay")
+        clock.set(300)
+        XCTAssertTrue(unknownUsual.hedgeDue(first: silent, delayMs: 250, deadlineAt: 60_000, copyBps: 0), "no bytes after the delay")
+
+        let stuck = copy(received: 100_000)
+        clock.set(100)
+        _ = unknownUsual.hedgeDue(first: stuck, delayMs: 250, deadlineAt: 60_000, copyBps: 0)
+        clock.set(400)
+        XCTAssertTrue(unknownUsual.hedgeDue(first: stuck, delayMs: 250, deadlineAt: 60_000, copyBps: 0), "no progress for a whole delay")
+
+        // 500,000 of 1,000,000 bytes in 300 ms: done at 600 ms.
+        func onPace(_ pieces: PieceDownloader, deadlineAt: Double, copyBps: Double) -> Bool {
+            let progress = copy(received: 500_000)
+            clock.set(300)
+            return pieces.hedgeDue(first: progress, delayMs: 250, deadlineAt: deadlineAt, copyBps: copyBps)
+        }
+        XCTAssertFalse(onPace(unknownUsual, deadlineAt: 2_200, copyBps: 10_000_000), "on pace with 1.5 s to spare")
+        XCTAssertTrue(onPace(unknownUsual, deadlineAt: 1_000, copyBps: 4_000_000), "the copy's node is over 1.5x faster")
+        XCTAssertTrue(onPace(downloader(usualBps: 10_000_000), deadlineAt: 1_000, copyBps: 2_000_000), "under 0.6x the usual connection")
+        XCTAssertFalse(onPace(downloader(usualBps: 2_000_000), deadlineAt: 1_000, copyBps: 2_000_000), "the copy's node is no faster")
+        XCTAssertTrue(onPace(downloader(usualBps: 2_000_000), deadlineAt: 1_000, copyBps: 0), "an unmeasured node is worth a try")
+    }
+
+    func testFiniteDeadlineHedgesASlowFirstByte() async throws {
+        let cdn = SimCDN(size: 2_000_000, behaviors: [TestEngine.cosov: .init(firstByteMs: 2_000)])
+        var config = TestEngine.config
+        // Only a backup copy, not the first-byte timeout, can rescue cosov's pieces.
+        config.firstByteTimeoutMs = 5_000
+        let deadlineAt = MonotonicClock.system.nowMs() + 10_000
+        let started = Date()
+        var bytes: [UInt8] = []
+        for try await chunk in RangeDownloader(ctx: TestEngine.context(cdn, config: config))
+            .stream(mebibyte, resolver: TestEngine.resolver(), startup: false, priority: 50, deadline: { deadlineAt }) {
+            bytes += chunk
+        }
+        XCTAssertEqual(bytes, Array(cdn.content[0...1_048_575]))
+        XCTAssertTrue(cdn.requests.current.contains(TestEngine.cosov))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5, "cosov's pieces are hedged, not waited out")
+    }
+
+    func testCancellingTheConsumerStopsAllWork() async throws {
+        var behaviors: [String: SimCDN.Behavior] = [:]
+        for node in NodeCatalog.overseas { behaviors[node] = .init(bytesPerSecond: 250_000) }
+        let cdn = SimCDN(size: 2_000_000, behaviors: behaviors)
+        let ctx = TestEngine.context(cdn, config: TestEngine.slowConfig)
+        let downloader = RangeDownloader(ctx: ctx)
+        let received = Locked<Int64>(0)
+        // Startup mode yields the 64 KiB head long before the rest of the range is in.
+        let consumer = Task {
+            for try await chunk in downloader.stream(mebibyte, resolver: TestEngine.resolver(), startup: true, priority: 50, deadline: nil) {
+                received.withLock { $0 += Int64(chunk.count) }
+            }
+        }
+        let waitStarted = Date()
+        while received.current == 0 && Date().timeIntervalSince(waitStarted) < 5 { try await sleepMs(5) }
+        consumer.cancel()
+        _ = try? await consumer.value
+        XCTAssertGreaterThan(received.current, 0)
+        XCTAssertLessThan(received.current, mebibyte.length)
+
+        let idleStarted = Date()
+        while ctx.pool.active > 0 && Date().timeIntervalSince(idleStarted) < 3 { try await sleepMs(10) }
+        XCTAssertEqual(ctx.pool.active, 0)
+        XCTAssertEqual(ctx.pool.queued, 0)
+        let asked = cdn.requestCount()
+        try await sleepMs(500)
+        XCTAssertEqual(cdn.requestCount(), asked, "no new requests once the consumer is gone")
+    }
+
     func testUrgentRangeOvertakesQueuedWork() async throws {
         var behaviors: [String: SimCDN.Behavior] = [:]
         for node in NodeCatalog.overseas { behaviors[node] = .init(bytesPerSecond: 250_000) }

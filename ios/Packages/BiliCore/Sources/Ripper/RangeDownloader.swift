@@ -44,12 +44,15 @@ final class RangeDownloader: @unchecked Sendable {
     }
 
     /// The bytes of `range` in file order, each piece yielded as soon as it and all before it are in.
+    /// Every piece's advertised file size must equal `expectedTotal` (when given) and each other's;
+    /// a piece that disagrees fails the range before any of its bytes are yielded.
     func stream(_ range: ByteRange, resolver: Resolver, startup: Bool, priority: Double,
-                deadline: (@Sendable () -> Double)?) -> AsyncThrowingStream<[UInt8], Error> {
+                deadline: (@Sendable () -> Double)?, expectedTotal: Int64? = nil) -> AsyncThrowingStream<[UInt8], Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.run(range, resolver: resolver, startup: startup, priority: priority, deadline: deadline) {
+                    try await self.run(range, resolver: resolver, startup: startup, priority: priority, deadline: deadline,
+                                       expectedTotal: expectedTotal) {
                         continuation.yield($0)
                     }
                     continuation.finish()
@@ -62,8 +65,13 @@ final class RangeDownloader: @unchecked Sendable {
     }
 
     private func run(_ range: ByteRange, resolver: Resolver, startup: Bool, priority: Double,
-                     deadline: (@Sendable () -> Double)?, emit: @escaping @Sendable ([UInt8]) -> Void) async throws {
-        var totals: [Int64] = []
+                     deadline: (@Sendable () -> Double)?, expectedTotal: Int64?, emit: @escaping @Sendable ([UInt8]) -> Void) async throws {
+        var knownTotal = expectedTotal
+        func check(_ output: AttemptOutput) throws {
+            guard let total = output.total else { return }
+            if let knownTotal, knownTotal != total { throw RipperError.totalMismatch }
+            knownTotal = total
+        }
         var preferred = resolver.rangeCandidates()
         var assignable = preferred
         var remaining = range
@@ -75,8 +83,8 @@ final class RangeDownloader: @unchecked Sendable {
             guard let head = ByteRange(start: range.start, end: range.start + headLength - 1) else { return }
             let result = try await pieces.download(piece: head, index: 0, resolver: resolver, preferred: preferred, mode: .probe,
                                                    priority: 220, deadline: deadline)
+            try check(result)
             emit(result.bytes)
-            if let total = result.total { totals.append(total) }
             guard head.end < range.end, let rest = ByteRange(start: head.end + 1, end: range.end) else { return }
             remaining = rest
             preferred = [result.url] + preferred.filter { $0 != result.url }
@@ -107,16 +115,13 @@ final class RangeDownloader: @unchecked Sendable {
             var ready: [Int: AttemptOutput] = [:]
             var next = 0
             for try await (offset, output) in group {
+                try check(output)
                 ready[offset] = output
                 while let item = ready.removeValue(forKey: next) {
                     emit(item.bytes)
-                    if let total = item.total { totals.append(total) }
                     next += 1
                 }
             }
-        }
-        if let first = totals.first, totals.contains(where: { $0 != first }) {
-            throw RipperError.totalMismatch
         }
     }
 }
