@@ -34,6 +34,23 @@ final class HeartbeatScheduleTests: XCTestCase {
         XCTAssertEqual(s.tick(position: 25, playing: true), 25)
     }
 
+    func testNonFinitePositionsNeitherTrapNorFire() {
+        var s = HeartbeatSchedule()
+        XCTAssertNil(s.tick(position: .infinity, playing: true))
+        XCTAssertNil(s.tick(position: .nan, playing: true))
+        XCTAssertNil(s.tick(position: -.infinity, playing: true))
+        XCTAssertEqual(s.mark(position: .nan), 0)
+        XCTAssertEqual(s.mark(position: .infinity), 0)
+        XCTAssertNil(s.tick(position: 14, playing: true))
+        XCTAssertEqual(s.tick(position: 15, playing: true), 15)
+    }
+
+    func testNegativePositionIsNotTheFinishedMarker() {
+        var s = HeartbeatSchedule()
+        XCTAssertEqual(s.mark(position: -3), 0)
+        XCTAssertNotEqual(s.mark(position: -1), HeartbeatSchedule.finished)
+    }
+
     func testFinishedIsMinusOne() {
         XCTAssertEqual(HeartbeatSchedule.finished, -1)
     }

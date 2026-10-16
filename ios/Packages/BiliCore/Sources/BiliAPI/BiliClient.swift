@@ -14,7 +14,7 @@ public final class BiliClient: @unchecked Sendable {
 
     private let transport: HTTPTransport
     public let cookies: CookieJar
-    private let now: @Sendable () -> Date
+    let now: @Sendable () -> Date
     private let logger: Logger
     private let wbiCache = Locked<(day: String, mixin: String)?>(nil)
 
@@ -116,6 +116,13 @@ public final class BiliClient: @unchecked Sendable {
                                   host: String = BiliClient.api) async throws -> T {
         let envelope: BiliEnvelope<T> = try await getEnvelope(path, query: query, signed: signed, host: host)
         return try checked(envelope)
+    }
+
+    /// For reads whose success may carry `data: null`, which is an empty result rather than an error.
+    func getIfPresent<T: Decodable>(_ path: String, query: [String: String], signed: Bool) async throws -> T? {
+        let envelope: BiliEnvelope<T> = try await getEnvelope(path, query: query, signed: signed)
+        guard envelope.code == 0 else { throw BiliError.api(code: envelope.code, message: envelope.message ?? "") }
+        return envelope.data
     }
 
     /// For endpoints that do not answer with the JSON envelope, such as the protobuf danmaku segments.
