@@ -3,23 +3,14 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showLogin = false
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section("账号") { AccountRow(showLogin: $showLogin) }
-                Section { Text("版本 \(AppInfo.version)") }
-            }
-            .navigationTitle(AppInfo.displayName)
-            .sheet(isPresented: $showLogin) { LoginView() }
-            .task { await env.refreshAccount() }
+        HomeView()
             .onChange(of: scenePhase) {
                 if scenePhase == .active, env.account == .unknown {
                     Task { await env.refreshAccount() }
                 }
             }
-        }
     }
 }
 

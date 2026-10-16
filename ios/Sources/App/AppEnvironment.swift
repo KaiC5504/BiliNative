@@ -19,6 +19,7 @@ final class AppEnvironment {
     }
 
     let settings = AppSettings()
+    let recents = RecentStore()
     @ObservationIgnored let cookies: CookieJar
     @ObservationIgnored let client: BiliClient
     @ObservationIgnored let auto = AutoConcurrency()
