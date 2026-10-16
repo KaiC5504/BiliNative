@@ -4,10 +4,12 @@ import Ripper
 struct StatsOverlay: View {
     let stats: OverlayStats
     let mode: PlaybackController.Mode
+    var quality: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             line("模式", mode.label)
+            line("画质", quality ?? "-")
             line("首帧", stats.firstFrameMs.map { String(format: "%.2f 秒", $0 / 1000) } ?? "-")
             line("跳转恢复", stats.lastSeekMs.map { String(format: "%.2f 秒", $0 / 1000) } ?? "-")
             line("卡顿", "\(stats.stalls) 次")

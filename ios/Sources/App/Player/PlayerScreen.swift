@@ -6,14 +6,14 @@ struct PlayerScreen: View {
     @Environment(AppEnvironment.self) private var env
     @State private var controller: PlaybackController?
     @State private var fullScreen = false
-    @State private var resumeAt: Double = 0
+    @State private var tasks = PlayerTasks()
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 Color.black
                 if let controller {
-                    VideoPlayerView(player: controller.player) { fullScreen = $0 }
+                    VideoPlayerView(player: controller.player, overlay: overlay(controller)) { fullScreen = $0 }
                         .transition(.opacity)
                 }
                 if controller == nil || controller?.phase == .loading {
@@ -25,17 +25,10 @@ struct PlayerScreen: View {
                 }
             }
             .aspectRatio(16 / 9, contentMode: .fit)
-            .overlay(alignment: .topLeading) {
-                if let controller, env.settings.showOverlay {
-                    StatsOverlay(stats: controller.overlay, mode: controller.mode)
-                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .topLeading)))
-                }
-            }
-            .animation(.smooth(duration: 0.25), value: env.settings.showOverlay)
             .animation(.smooth(duration: 0.25), value: controller?.phase)
             if let controller {
                 PlayerStatusBar(route: route, controller: controller)
-                PlayerControls(controller: controller)
+                PlayerControls(controller: controller, run: tasks.run)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 Spacer(minLength: 0)
@@ -49,13 +42,25 @@ struct PlayerScreen: View {
         .onDisappear(perform: disappear)
     }
 
-    /// Playback runs in its own task so a view-lifecycle cancellation can never leave it half started;
-    /// `stop()` is the only way it ends.
+    private func overlay(_ controller: PlaybackController) -> AnyView {
+        let show = env.settings.showOverlay
+        let quality = controller.playingQuality.flatMap { id in controller.qualities.first { $0.id == id }?.name }
+        return AnyView(
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                if show {
+                    StatsOverlay(stats: controller.overlay, mode: controller.mode, quality: quality)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .topLeading)))
+                }
+            }
+            .animation(.smooth(duration: 0.25), value: show)
+        )
+    }
+
     private func appear() {
         if let controller {
             if controller.phase == .idle {
-                let time = resumeAt
-                Task { await controller.start(at: time) }
+                tasks.run { await controller.start(at: controller.currentSeconds) }
             }
             return
         }
@@ -63,15 +68,37 @@ struct PlayerScreen: View {
         let next = PlaybackController(environment: env.playbackEnvironment(bvid: route.bvid, cid: route.cid),
                                       quality: settings.preferredQuality, codec: settings.preferredCodec, btrEnabled: settings.btrEnabled)
         controller = next
-        Task { await next.start() }
+        tasks.run { await next.start() }
     }
 
     /// Leaving the screen must stop the controller, or its RipperSession stays registered in the app-wide
     /// router. AVPlayerViewController's own full-screen presentation can hide this view without leaving it.
     private func disappear() {
         guard let controller, !fullScreen else { return }
-        resumeAt = controller.currentSeconds
+        tasks.cancelAll()
         controller.stop()
+    }
+}
+
+/// Starts and restarts requested by the screen. A task that has not begun when the screen goes away
+/// must not start playback after stop(), so each checks for cancellation before calling the controller.
+@MainActor
+final class PlayerTasks {
+    private var tasks: [Int: Task<Void, Never>] = [:]
+    private var count = 0
+
+    func run(_ body: @escaping @MainActor () async -> Void) {
+        count += 1
+        let id = count
+        tasks[id] = Task { [weak self] in
+            if !Task.isCancelled { await body() }
+            self?.tasks[id] = nil
+        }
+    }
+
+    func cancelAll() {
+        tasks.values.forEach { $0.cancel() }
+        tasks = [:]
     }
 }
 
@@ -141,6 +168,7 @@ private struct PlayerStatusBar: View {
 
 struct PlayerControls: View {
     let controller: PlaybackController
+    let run: @MainActor (@escaping @MainActor () async -> Void) -> Void
     @Environment(AppEnvironment.self) private var env
 
     var body: some View {
@@ -151,7 +179,7 @@ struct PlayerControls: View {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                     Button {
-                        Task { await controller.start(at: controller.currentSeconds) }
+                        run { await controller.start(at: controller.currentSeconds) }
                     } label: {
                         Label("重试", systemImage: "arrow.clockwise")
                     }
@@ -161,16 +189,16 @@ struct PlayerControls: View {
                 if controller.qualities.isEmpty {
                     LabeledContent("清晰度") { ProgressView() }
                 } else {
-                    Picker("清晰度", selection: Binding(get: { controller.selectedQuality }, set: { quality in
+                    Picker("清晰度", selection: Binding(get: { shownQuality }, set: { quality in
                         settings.preferredQuality = quality
-                        Task { await controller.setQuality(quality) }
+                        run { await controller.setQuality(quality) }
                     })) {
                         ForEach(controller.qualities, id: \.id) { Text($0.name).tag($0.id) }
                     }
                 }
                 Picker("编码", selection: Binding(get: { controller.codec }, set: { codec in
                     settings.preferredCodec = codec
-                    Task { await controller.setCodec(codec) }
+                    run { await controller.setCodec(codec) }
                 })) {
                     ForEach(VideoCodec.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
@@ -179,7 +207,7 @@ struct PlayerControls: View {
             Section {
                 Toggle(isOn: Binding(get: { controller.btrEnabled }, set: { enabled in
                     settings.btrEnabled = enabled
-                    Task { await controller.setBTR(enabled) }
+                    run { await controller.setBTR(enabled) }
                 })) {
                     Label("BTR 加速", systemImage: "bolt.horizontal.fill")
                 }
@@ -192,5 +220,14 @@ struct PlayerControls: View {
         .scrollContentBackground(.hidden)
         .animation(.snappy, value: controller.phase)
         .animation(.snappy, value: controller.qualities)
+    }
+
+    /// What is playing, once a stream was chosen; while loading, the quality asked for, as the highest
+    /// offered one not above it.
+    private var shownQuality: Int {
+        if let playing = controller.playingQuality, controller.phase != .loading { return playing }
+        let asked = controller.selectedQuality
+        let ids = controller.qualities.map(\.id)
+        return ids.filter { $0 <= asked }.max() ?? ids.min() ?? asked
     }
 }

@@ -105,6 +105,8 @@ final class PlaybackController {
     private(set) var phase: Phase = .idle
     private(set) var qualities: [QualityOption] = []
     private(set) var selectedQuality: Int
+    /// The quality of the stream actually chosen; selectedQuality is only the ceiling asked for.
+    private(set) var playingQuality: Int?
     private(set) var codec: VideoCodec
     private(set) var btrEnabled: Bool
     private(set) var overlay = OverlayStats()
@@ -218,6 +220,7 @@ final class PlaybackController {
             let ripper = try await ripperAvailable(epoch: current)
             let choice = try pickTracks(dash, skipHEV1: !ripper)
             self.choice = choice
+            playingQuality = choice.video.id
             Logger.shared.info(.player, "choice", ["quality": .init(choice.video.id), "codecs": .init(choice.video.codecs),
                                                    "audio": .init(choice.audio.id), "node": .init(NodeCatalog.nodeKey(of: choice.video.baseURL)),
                                                    "btr": .init(ripper)])

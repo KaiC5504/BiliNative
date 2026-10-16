@@ -32,7 +32,7 @@ struct HomeView: View {
                         Button("打开") { Task { await open(manualText) } }
                             .buttonStyle(.borderedProminent)
                             .buttonBorderShape(.capsule)
-                            .disabled(opening || manualText.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .disabled(opening || manualText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     if let errorText {
                         Label(errorText, systemImage: "exclamationmark.circle.fill")
@@ -71,7 +71,7 @@ struct HomeView: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                 }
             }
-            .navigationDestination(item: $route) { PlayerScreen(route: $0) }
+            .navigationDestination(item: $route) { PlayerScreen(route: $0).id($0.id) }
             .sheet(isPresented: $showLogin) { LoginView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),
@@ -92,7 +92,9 @@ struct HomeView: View {
                 }
             }
             .animation(.spring(duration: 0.3), value: opening)
-            .task { await env.refreshAccount() }
+            .task {
+                if env.account == .unknown { await env.refreshAccount() }
+            }
         }
         .tint(.pink)
     }
