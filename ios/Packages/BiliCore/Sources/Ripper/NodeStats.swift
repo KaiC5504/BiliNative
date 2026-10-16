@@ -86,7 +86,7 @@ final class NodeStats: @unchecked Sendable {
     /// A node that is sending other pieces is alive, whatever happened to this one.
     func isBusy(_ url: String) -> Bool { read(url) { $0.receiving > 0 } }
 
-    func isFull(_ url: String) -> Bool { read(url) { $0.inflight >= $0.limit } }
+    func isFull(_ url: String, extraInflight: Int = 0) -> Bool { read(url) { $0.inflight + extraInflight >= $0.limit } }
 
     func isKnown(_ url: String) -> Bool { read(url) { $0.bps > 0 } }
 

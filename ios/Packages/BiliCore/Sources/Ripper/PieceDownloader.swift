@@ -57,7 +57,7 @@ final class PieceDownloader: @unchecked Sendable {
     /// first copy starts at once, the backup copy once the first is late (see `hedgeDue`); the first
     /// to finish wins and the other is cancelled. Bytes already received survive into the next try.
     func download(piece: ByteRange, index: Int, resolver: Resolver, preferred: [String], mode: PieceMode, priority: Double,
-                  deadline: (@Sendable () -> Double)?) async throws -> AttemptOutput {
+                  deadline: (@Sendable () -> Double)?, hurry: (@Sendable () -> Bool)? = nil) async throws -> AttemptOutput {
         let started = ctx.clock.nowMs()
         let prefix = Locked(Prefix())
         var lastError: Error = RipperError.noNodes

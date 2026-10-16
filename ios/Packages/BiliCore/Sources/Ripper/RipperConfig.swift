@@ -13,6 +13,10 @@ public struct RipperConfig: Sendable {
     public var prefetchAheadSeconds = 45.0
     /// Base priority of player requests; prefetch runs at 10.
     public var priority = 50.0
+    /// Off restores the engine without hurry mode: the bench's baseline and a kill switch.
+    public var hurry = true
+    /// A segment starting less than this much playback ahead of the playhead is fetched in a hurry.
+    public var hurryAheadSeconds = 10.0
 
     public init() {}
 }

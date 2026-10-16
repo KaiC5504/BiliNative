@@ -429,4 +429,28 @@ final class RipperSessionTests: XCTestCase {
         XCTAssertEqual(new.stats().concurrency, shared.threads, "closing the old session must not unhook the new one")
         new.close()
     }
+
+    func testSegmentsNearThePlayheadAreInAHurry() async throws {
+        let segments = (0..<5).map { index in
+            let start = headerEnd + 1 + Int64(index) * segmentLength
+            return MediaSegment(index: index, range: ByteRange(start: start, end: start + segmentLength - 1)!,
+                                startTime: Double(index) * 4, duration: 4)
+        }
+        for hurry in [true, false] {
+            var config = TestEngine.config
+            config.hurry = hurry
+            let session = makeSession(SimCDN(size: size), config: config)
+            session.setSegments(.video, segments)
+            session.updatePlayhead(seconds: 0, rate: 1)
+            XCTAssertEqual(session.hurries(.video, segments[0].range), hurry)
+            XCTAssertEqual(session.hurries(.video, segments[2].range), hurry)
+            XCTAssertFalse(session.hurries(.video, segments[3].range))
+            // At double speed 10 s of playback cover 20 s of the video.
+            session.updatePlayhead(seconds: 0, rate: 2)
+            XCTAssertEqual(session.hurries(.video, segments[4].range), hurry)
+            // A range that is no segment hurries only as a startup or seek read.
+            XCTAssertFalse(session.hurries(.video, ByteRange(start: headerEnd + 5, end: headerEnd + 1_000)!))
+            session.close()
+        }
+    }
 }

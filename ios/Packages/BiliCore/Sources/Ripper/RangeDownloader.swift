@@ -47,12 +47,13 @@ final class RangeDownloader: @unchecked Sendable {
     /// Every piece's advertised file size must equal `expectedTotal` (when given) and each other's;
     /// a piece that disagrees fails the range before any of its bytes are yielded.
     func stream(_ range: ByteRange, resolver: Resolver, startup: Bool, priority: Double,
-                deadline: (@Sendable () -> Double)?, expectedTotal: Int64? = nil) -> AsyncThrowingStream<[UInt8], Error> {
+                deadline: (@Sendable () -> Double)?, expectedTotal: Int64? = nil,
+                hurry: (@Sendable () -> Bool)? = nil) -> AsyncThrowingStream<[UInt8], Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try await self.run(range, resolver: resolver, startup: startup, priority: priority, deadline: deadline,
-                                       expectedTotal: expectedTotal) {
+                                       expectedTotal: expectedTotal, hurry: hurry) {
                         continuation.yield($0)
                     }
                     continuation.finish()
@@ -64,8 +65,12 @@ final class RangeDownloader: @unchecked Sendable {
         }
     }
 
-    private func run(_ range: ByteRange, resolver: Resolver, startup: Bool, priority: Double,
-                     deadline: (@Sendable () -> Double)?, expectedTotal: Int64?, emit: @escaping @Sendable ([UInt8]) -> Void) async throws {
+    /// `hurry` says whether playback is about to need this range. It is read once here, to size and place the
+    /// pieces, and again by each piece while it waits to send another copy.
+    private func run(_ range: ByteRange, resolver: Resolver, startup: Bool, priority: Double, deadline: (@Sendable () -> Double)?,
+                     expectedTotal: Int64?, hurry: (@Sendable () -> Bool)?, emit: @escaping @Sendable ([UInt8]) -> Void) async throws {
+        let hurry = ctx.config.hurry ? hurry : nil
+        let hurried = hurry?() ?? false
         var knownTotal = expectedTotal
         func check(_ output: AttemptOutput) throws {
             guard let total = output.total else { return }
@@ -76,13 +81,14 @@ final class RangeDownloader: @unchecked Sendable {
         var assignable = preferred
         var remaining = range
         var indexOffset = 0
-        if startup {
+        // In a hurry with nodes already measured, placement by expected finish takes the place of the race.
+        if startup && !(hurried && preferred.contains(where: ctx.nodes.isKnown)) {
             // A small head piece raced over every candidate measures the nodes and gets the first bytes
             // to the player fast; the rest is then spread over the nodes that proved themselves.
             let headLength = min(range.length, max(64 * 1024, ctx.config.minChunkBytes))
             guard let head = ByteRange(start: range.start, end: range.start + headLength - 1) else { return }
             let result = try await pieces.download(piece: head, index: 0, resolver: resolver, preferred: preferred, mode: .probe,
-                                                   priority: 220, deadline: deadline)
+                                                   priority: 220, deadline: deadline, hurry: hurry)
             try check(result)
             emit(result.bytes)
             guard head.end < range.end, let rest = ByteRange(start: head.end + 1, end: range.end) else { return }
@@ -94,10 +100,16 @@ final class RangeDownloader: @unchecked Sendable {
         let concurrency = ctx.pool.limit
         let rescueReserve = concurrency >= 8 ? min(8, max(1, (concurrency + 7) / 8)) : 0
         let pieceConcurrency = max(1, concurrency - rescueReserve)
-        let minChunk = ctx.meter.adaptiveMinChunk(base: ctx.config.minChunkBytes, rangeLength: remaining.length,
-                                                  pieceLimit: pieceConcurrency, hostCount: preferred.count)
+        // In a hurry many small requests get through best: right after a seek a node can be slow over a part
+        // of the file it has not served lately, and a small piece is cheap to copy elsewhere (BTR PR 11).
+        let minChunk = hurried ? ctx.config.minChunkBytes
+            : ctx.meter.adaptiveMinChunk(base: ctx.config.minChunkBytes, rangeLength: remaining.length,
+                                         pieceLimit: pieceConcurrency, hostCount: preferred.count)
         let parts = remaining.split(concurrency: pieceConcurrency, minChunk: minChunk)
-        let primaries = assigner.assign(urls: assignable, count: parts.count, speed: resolver.speed, trialKey: ObjectIdentifier(resolver))
+        let primaries = hurried
+            ? HurryPlacement.assign(urls: preferred, count: parts.count, pieceBytes: parts.first?.length ?? 0, nodes: ctx.nodes,
+                                    delivered: { resolver.bans?.hasDelivered($0) ?? true })
+            : assigner.assign(urls: assignable, count: parts.count, speed: resolver.speed, trialKey: ObjectIdentifier(resolver))
         let mode: PieceMode = startup ? .startup : .normal
         let order = preferred
         try await withThrowingTaskGroup(of: (Int, AttemptOutput).self) { group in
@@ -108,7 +120,7 @@ final class RangeDownloader: @unchecked Sendable {
                 let piecePriority = startup ? 120 - Double(min(30, pieceIndex)) : priority - Double(min(20, pieceIndex))
                 group.addTask {
                     let output = try await self.pieces.download(piece: part, index: pieceIndex, resolver: resolver, preferred: piecePreferred,
-                                                                mode: mode, priority: piecePriority, deadline: deadline)
+                                                                mode: mode, priority: piecePriority, deadline: deadline, hurry: hurry)
                     return (offset, output)
                 }
             }

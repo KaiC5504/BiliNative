@@ -285,7 +285,8 @@ public final class RipperSession: @unchecked Sendable {
             }
             do {
                 for try await chunk in downloader.stream(range, resolver: resolver, startup: request.seek, priority: ctx.config.priority,
-                                                         deadline: deadline(for: request.segment), expectedTotal: request.total) {
+                                                         deadline: deadline(for: request.segment), expectedTotal: request.total,
+                                                         hurry: hurry(for: request.segment, startup: request.seek)) {
                     emit(chunk)
                 }
                 try Task.checkCancellation()
@@ -333,6 +334,21 @@ public final class RipperSession: @unchecked Sendable {
         }
     }
 
+    /// Whether playback is about to need the segment: startup and seek reads always are, others once the segment
+    /// starts less than `hurryAheadSeconds` of playback ahead. Re-read on every call, so a prefetch the playhead
+    /// approaches turns into a hurry.
+    private func hurry(for segment: MediaSegment?, startup: Bool) -> @Sendable () -> Bool {
+        let config = ctx.config
+        let playback = self.playback
+        return {
+            guard config.hurry else { return false }
+            if startup { return true }
+            guard let segment else { return false }
+            let (playhead, rate) = playback.current
+            return segment.startTime - playhead < config.hurryAheadSeconds * rate
+        }
+    }
+
     /// After a seek the track's prefetched segments belong to the old position; left in place they
     /// would hold the cap and keep the new position from being prefetched.
     private func dropPrefetch(_ track: TrackKind) {
@@ -368,11 +384,12 @@ public final class RipperSession: @unchecked Sendable {
                 if next.range.length > budget { break }
                 budget -= next.range.length
                 let deadline = deadline(for: next)
+                let hurry = hurry(for: next, startup: false)
                 let task = Task<[UInt8], Error> {
                     var bytes: [UInt8] = []
                     bytes.reserveCapacity(Int(next.range.length))
                     for try await chunk in downloader.stream(next.range, resolver: resolver, startup: false, priority: 10,
-                                                             deadline: deadline, expectedTotal: total) {
+                                                             deadline: deadline, expectedTotal: total, hurry: hurry) {
                         bytes += chunk
                     }
                     try Task.checkCancellation()
@@ -411,6 +428,10 @@ extension RipperSession {
     func prefetchedBytes(_ track: TrackKind) -> Int64 { state.withLock { Self.prefetchedBytes($0, track) } }
     func cachedBytes(_ track: TrackKind) -> Int64 {
         state.withLock { value in value.cache.filter { $0.key.track == track }.reduce(Int64(0)) { $0 + Int64($1.value.bytes.count) } }
+    }
+    func hurries(_ track: TrackKind, _ range: ByteRange) -> Bool {
+        let segment = state.withLock { value in value.segmentAt[track]?[range.start].flatMap { value.segments[track]?[$0] } }
+        return hurry(for: segment, startup: false)()
     }
     func prefetchesRunning(_ track: TrackKind) -> Int { state.withLock { value in value.inflight.keys.filter { $0.track == track }.count } }
 }

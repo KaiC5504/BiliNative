@@ -462,4 +462,51 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertEqual(ctx.stats.snapshot().failures, 0)
         XCTAssertGreaterThan(resolver.speed(cosovURL), 0, "the cancelled copy still measures its node")
     }
+
+    func testHurryUsesSmallPieces() async throws {
+        let cdn = SimCDN(size: 8_000_000)
+        let transport = RecordingTransport(cdn)
+        let downloader = RangeDownloader(ctx: context(transport))
+        let resolver = TestEngine.resolver()
+        for try await _ in downloader.stream(ByteRange(start: 0, end: 4 * 1_048_576 - 1)!, resolver: resolver, startup: false,
+                                             priority: 50, deadline: nil) {}
+        let asked = transport.requests.current.count
+        let range = ByteRange(start: 4 * 1_048_576, end: 6 * 1_048_576 - 1)!
+        var bytes: [UInt8] = []
+        for try await chunk in downloader.stream(range, resolver: resolver, startup: false, priority: 50, deadline: nil, hurry: { true }) {
+            bytes += chunk
+        }
+        XCTAssertEqual(bytes, Array(cdn.content[Int(range.start)...Int(range.end)]))
+        // 2 MiB over the 7 connections left beside the rescue slot, not the warm meter's larger pieces.
+        let pieces = transport.requests.current.dropFirst(asked).map(\.range)
+        XCTAssertGreaterThanOrEqual(Set(pieces.map(\.start)).count, 7, "\(pieces)")
+        for piece in pieces { XCTAssertLessThanOrEqual(piece.length, 300 * 1024, "\(piece)") }
+    }
+
+    func testWarmNodesSkipTheProbeHead() async throws {
+        let cdn = SimCDN(size: 4_000_000)
+        let transport = RecordingTransport(cdn)
+        let downloader = RangeDownloader(ctx: context(transport))
+        let resolver = TestEngine.resolver()
+        func read(_ range: ByteRange) async throws -> [(node: String, range: ByteRange)] {
+            let asked = transport.requests.current.count
+            var bytes: [UInt8] = []
+            for try await chunk in downloader.stream(range, resolver: resolver, startup: true, priority: 50, deadline: nil, hurry: { true }) {
+                bytes += chunk
+            }
+            XCTAssertEqual(bytes, Array(cdn.content[Int(range.start)...Int(range.end)]))
+            return Array(transport.requests.current.dropFirst(asked))
+        }
+        func head(of range: ByteRange) -> ByteRange { ByteRange(start: range.start, end: range.start + 65_535)! }
+
+        // Review focus 3: with no node known the head is still raced over every node.
+        let first = mebibyte
+        let cold = try await read(first)
+        XCTAssertGreaterThan(cold.filter { $0.range == head(of: first) }.count, 1, "\(cold.map(\.range))")
+
+        let second = ByteRange(start: 2_000_000, end: 3_048_575)!
+        let warm = try await read(second)
+        XCTAssertFalse(warm.contains { $0.range == head(of: second) }, "\(warm.map(\.range))")
+        XCTAssertEqual(warm.filter { $0.range.start == second.start }.count, 1, "one ordinary piece starts the range")
+    }
 }
