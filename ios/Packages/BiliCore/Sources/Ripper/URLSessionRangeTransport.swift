@@ -12,6 +12,8 @@ public final class URLSessionRangeTransport: NSObject, RangeTransport, URLSessio
         // Handed over with the response and not kept here: a caller that drops the body must cancel the request.
         var body: AsyncThrowingStream<[UInt8], Error>?
         let bodyContinuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+        // Set when this transport cancelled the task; any other URLError.cancelled is passed on as is.
+        var abandoned = false
 
         init(response: CheckedContinuation<TransportResponse, Error>) {
             self.response = response
@@ -47,7 +49,10 @@ public final class URLSessionRangeTransport: NSObject, RangeTransport, URLSessio
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TransportResponse, Error>) in
                 let handler = Handler(response: continuation)
-                handler.bodyContinuation.onTermination = { _ in task.cancel() }
+                handler.bodyContinuation.onTermination = { [handlers, weak handler] _ in
+                    handlers.withLock { _ in handler?.abandoned = true }
+                    task.cancel()
+                }
                 handlers.withLock { $0[task.taskIdentifier] = handler }
                 // onCancel may have run before the handler existed.
                 if Task.isCancelled {
@@ -69,18 +74,24 @@ public final class URLSessionRangeTransport: NSObject, RangeTransport, URLSessio
         if let removed { Self.end(removed, error: CancellationError()) }
     }
 
-    private func remove(_ id: Int) -> (Handler, CheckedContinuation<TransportResponse, Error>?)? {
+    private struct Removed {
+        let handler: Handler
+        let pending: CheckedContinuation<TransportResponse, Error>?
+        let abandoned: Bool
+    }
+
+    private func remove(_ id: Int) -> Removed? {
         handlers.withLock { map in
             guard let handler = map.removeValue(forKey: id) else { return nil }
             let pending = handler.response
             handler.response = nil
-            return (handler, pending)
+            return Removed(handler: handler, pending: pending, abandoned: handler.abandoned)
         }
     }
 
-    private static func end(_ removed: (Handler, CheckedContinuation<TransportResponse, Error>?), error: Error?) {
-        let (handler, pending) = removed
-        if let pending {
+    private static func end(_ removed: Removed, error: Error?) {
+        let handler = removed.handler
+        if let pending = removed.pending {
             pending.resume(throwing: error ?? RipperError.badResponse(status: 0))
         } else if let error {
             handler.bodyContinuation.finish(throwing: error)
@@ -118,7 +129,7 @@ public final class URLSessionRangeTransport: NSObject, RangeTransport, URLSessio
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let removed = remove(task.taskIdentifier) else { return }
-        let cancelled = (error as? URLError)?.code == .cancelled
-        Self.end(removed, error: cancelled ? CancellationError() : error)
+        let cancelledHere = removed.abandoned && (error as? URLError)?.code == .cancelled
+        Self.end(removed, error: cancelledHere ? CancellationError() : error)
     }
 }

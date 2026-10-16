@@ -81,12 +81,13 @@ struct Bench {
         }
         let video = choice.video
         print("video \(video.id) \(video.codecs) \(video.width)x\(video.height) \(video.bandwidth / 1000) kbps on \(NodeCatalog.nodeKey(of: video.baseURL))")
-        let transport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
         let target = Int64(options.megabytes) << 20
 
         let singleStart = Date()
         let singleRange = ByteRange(start: video.indexRange.end + 1, end: video.indexRange.end + target)!
-        let response = try await transport.fetch(URL(string: video.baseURL)!, range: singleRange)
+        // Each run gets its own URLSession so neither starts with the other's warm connections.
+        let response = try await URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
+            .fetch(URL(string: video.baseURL)!, range: singleRange)
         var singleBytes: Int64 = 0
         if response.status == 206 {
             for try await chunk in response.body { singleBytes += Int64(chunk.count) }
@@ -94,7 +95,7 @@ struct Bench {
         let singleSeconds = Date().timeIntervalSince(singleStart)
 
         let session = RipperSession(sources: [.video: (video.baseURL, video.backupURLs)], mode: options.mode,
-                                    transport: transport, auto: AutoConcurrency())
+                                    transport: URLSessionRangeTransport(headers: BiliClient.mediaHeaders), auto: AutoConcurrency())
         let rippedStart = Date()
         let headers = try await session.loadHeaders(.video, through: video.indexRange.end)
         guard let segments = SidxParser.parse(headers.bytes, absoluteStart: 0) else { throw BiliError.decoding("no sidx") }
