@@ -26,7 +26,7 @@ struct VideoPageView: View {
     @State private var loginRequested = false
     @State private var tvLoginRequested = false
     @State private var actions: ActionsModel?
-    @State private var actionToast: String?
+    @State private var signals = PageSignals()
     @State private var ownPrompts = ActionPrompts()
     #if DEBUG
     @State private var sendDemo: DanmakuSendBar.Demo?
@@ -82,7 +82,7 @@ struct VideoPageView: View {
         .toast(Binding(get: { comments?.toast }, set: { comments?.toast = $0 }))
         .background { PageProbe(lifecycle: lifecycle) }
         .toolbar(.hidden, for: .navigationBar)
-        .toast($actionToast)
+        .toast($signals.actionToast)
         .loginGate($loginRequested)
         .alert("确定不再关注？", isPresented: Binding(get: { prompts.unfollowAsked }, set: { prompts.unfollowAsked = $0 })) {
             Button("取消", role: .cancel) {}
@@ -118,6 +118,7 @@ struct VideoPageView: View {
         .onChange(of: sender?.needsLogin) { _, needsLogin in
             if needsLogin == true { presentLogin() }
         }
+        .onChange(of: signals.logins) { presentLogin() }
         .onChange(of: sendBarOpen) { _, open in
             chrome.panelOpen = open || panel.wrappedValue != nil
         }
@@ -128,6 +129,7 @@ struct VideoPageView: View {
             guard let aid, let detail = model?.detail, comments?.aid != aid else { return }
             composer = nil
             comments = makeComments(aid: aid, upMid: detail.owner.mid)
+            prompts.comments = comments
         }
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             guard let model else { return }
@@ -182,8 +184,9 @@ struct VideoPageView: View {
 
     private func makeComments(aid: Int64, upMid: Int64) -> CommentsModel {
         let env = self.env
+        let signals = self.signals
         return CommentsModel(client: env.client, aid: aid, upMid: upMid, isLoggedIn: { Self.loggedIn(env.account) },
-                             requestLogin: presentLogin, ownMid: { env.mid })
+                             requestLogin: { signals.logins += 1 }, ownMid: { env.mid })
     }
 
     /// Still checking the account: the server's answer decides.
@@ -258,15 +261,11 @@ struct VideoPageView: View {
     private func makeActions() {
         guard let model, let detail = model.detail, actions?.detail.bvid != detail.bvid else { return }
         let env = self.env
+        let signals = self.signals
         actions = ActionsModel(client: env.client, detail: detail, relation: model.relation, uploader: model.uploader,
-                               isLoggedIn: {
-                                   switch env.account {
-                                   case .loggedIn, .unknown: return true
-                                   case .loggedOut, .expired: return false
-                                   }
-                               },
-                               requestLogin: { presentLogin() },
-                               toast: { actionToast = $0 })
+                               isLoggedIn: { Self.loggedIn(env.account) },
+                               requestLogin: { signals.logins += 1 },
+                               toast: { signals.actionToast = $0 })
         prompts.close()
         prompts.actions = actions
     }
@@ -326,6 +325,15 @@ struct VideoPageView: View {
             prompts.unfollowAsked = true
         }
     }
+}
+
+/// What the page's models ask of the page. They hold this, never a closure over the page view: that would hold the
+/// page's state, and through it the models themselves, so a popped page would never be freed.
+@MainActor
+@Observable
+private final class PageSignals {
+    var logins = 0
+    var actionToast: String?
 }
 
 private struct PageLayout: View {

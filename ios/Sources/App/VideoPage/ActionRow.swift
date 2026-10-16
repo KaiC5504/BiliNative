@@ -28,12 +28,17 @@ struct ActionRow: View {
     @State private var ring: Double = 0
     @State private var burst = 0
     @State private var hold: Task<Void, Never>?
+    /// The last press got as far as the rings: letting go then is an aborted 三连, not a tap on 点赞.
+    @State private var ringStarted = false
 
     var body: some View {
         HStack(spacing: 0) {
             ActionCell(systemName: "hand.thumbsup.fill", active: actions.liked, label: "点赞", count: actions.likeCount)
                 .tripleRing(progress: ring, burst: burst)
-                .onTapGesture { Task { await actions.toggleLike() } }
+                .onTapGesture {
+                    guard !ringStarted else { return }
+                    Task { await actions.toggleLike() }
+                }
                 .onLongPressGesture(minimumDuration: TripleTiming.delay + TripleTiming.fill, maximumDistance: 24,
                                     perform: completeTriple, onPressingChanged: pressing)
                 .accessibilityAddTraits(.isButton)
@@ -62,6 +67,7 @@ struct ActionRow: View {
 
     private func pressing(_ down: Bool) {
         hold?.cancel()
+        if down { ringStarted = false }
         guard down else {
             if ring > 0 {
                 withAnimation(.easeOut(duration: 0.15)) { ring = 0 }
@@ -71,13 +77,15 @@ struct ActionRow: View {
         hold = Task {
             try? await Task.sleep(for: .seconds(TripleTiming.delay))
             guard !Task.isCancelled else { return }
+            ringStarted = true
             withAnimation(.linear(duration: TripleTiming.fill)) { ring = 1 }
         }
     }
 
     private func completeTriple() {
         hold?.cancel()
-        burst += 1
+        // Logged out the login sheet follows, and when all three are done only "已三连" shows.
+        if actions.tripleSends { burst += 1 }
         ring = 0
         Task { await actions.triple() }
     }

@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// What the page has put up for the actions: the coin dialog, the favourites sheet or the unfollow confirm.
-/// Tests hand the page their own instance and reach the page's actions through it.
+/// Tests hand the page their own instance and reach the page's actions and comments through it.
 @MainActor
 @Observable
 final class ActionPrompts {
@@ -17,6 +17,7 @@ final class ActionPrompts {
     var unfollowAsked = false
     /// The page's actions for the video on screen.
     var actions: ActionsModel?
+    @ObservationIgnored weak var comments: CommentsModel?
 
     func close() {
         overlay = nil

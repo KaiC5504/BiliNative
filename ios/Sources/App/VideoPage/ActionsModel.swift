@@ -36,8 +36,8 @@ final class ActionsModel {
     @ObservationIgnored private let signer: AppSigner?
     @ObservationIgnored private let loadAppToken: () -> String?
     @ObservationIgnored private let clearAppToken: () -> Void
-    /// Once the user has acted, a late relation answer must not overwrite what they did.
-    @ObservationIgnored private var touched = false
+    /// What the user has changed: a late relation answer must not overwrite those, but still fills in the rest.
+    @ObservationIgnored private var touched: Set<Field> = []
     @ObservationIgnored private var busy: Set<String> = []
 
     init(client: BiliClient, detail: VideoDetail, relation: VideoRelation?, uploader: UploaderCard?,
@@ -61,8 +61,11 @@ final class ActionsModel {
     }
 
     func apply(_ relation: VideoRelation) {
-        guard !touched else { return }
-        set(relation)
+        if !touched.contains(.liked) { liked = relation.like }
+        if !touched.contains(.disliked) { disliked = relation.dislike }
+        if !touched.contains(.favorited) { favorited = relation.favorite }
+        if !touched.contains(.following) { following = relation.attention }
+        if !touched.contains(.coins) { coins = relation.coins }
     }
 
     private func set(_ relation: VideoRelation) {
@@ -74,7 +77,7 @@ final class ActionsModel {
     }
 
     func apply(_ uploader: UploaderCard) {
-        guard !touched, uploader.mid == detail.owner.mid else { return }
+        guard !touched.contains(.following), uploader.mid == detail.owner.mid else { return }
         following = uploader.following
     }
 
@@ -98,6 +101,9 @@ final class ActionsModel {
     }
 
     var tripleDone: Bool { liked && coins > 0 && favorited }
+
+    /// Whether a 三连 now goes to the server, so the row bursts only for one that does.
+    var tripleSends: Bool { isLoggedIn() && !tripleDone && !busy.contains("triple") }
 
     // MARK: actions
 
@@ -155,7 +161,7 @@ final class ActionsModel {
     func coin(_ multiply: Int, alsoLike: Bool) async {
         guard isLoggedIn() else { return requestLogin() }
         guard multiply >= 1, multiply <= maxCoins else {
-            toast("已投满\(detail.copyright == 2 ? 1 : 2)个硬币")
+            toast(maxCoins == 0 ? "已投满\(detail.copyright == 2 ? 1 : 2)个硬币" : "最多还能投\(maxCoins)个硬币")
             return
         }
         await perform("coin", change: {
@@ -220,10 +226,24 @@ final class ActionsModel {
 
     // MARK: plumbing
 
+    private enum Field: CaseIterable {
+        case liked, disliked, favorited, following, coins
+    }
+
     private struct Snapshot {
         var liked, disliked, favorited, following: Bool
         var coins: Int
         var likeCount, coinCount, favCount: Int64
+
+        func changed(from other: Snapshot) -> Set<Field> {
+            var fields: Set<Field> = []
+            if liked != other.liked { fields.insert(.liked) }
+            if disliked != other.disliked { fields.insert(.disliked) }
+            if favorited != other.favorited { fields.insert(.favorited) }
+            if following != other.following { fields.insert(.following) }
+            if coins != other.coins { fields.insert(.coins) }
+            return fields
+        }
     }
 
     private var snapshot: Snapshot {
@@ -231,15 +251,21 @@ final class ActionsModel {
                  likeCount: likeCount, coinCount: coinCount, favCount: favCount)
     }
 
-    private func restore(_ saved: Snapshot) {
-        liked = saved.liked
-        disliked = saved.disliked
-        favorited = saved.favorited
-        following = saved.following
-        coins = saved.coins
-        likeCount = saved.likeCount
-        coinCount = saved.coinCount
-        favCount = saved.favCount
+    /// Takes back one action: only the fields it changed, and only those still showing its change. Actions run
+    /// side by side (点赞 and 关注 sit next to each other), and one failing must not undo another.
+    private func undo(from before: Snapshot, to after: Snapshot) {
+        func revert<Value: Equatable>(_ field: ReferenceWritableKeyPath<ActionsModel, Value>, _ saved: KeyPath<Snapshot, Value>) {
+            guard before[keyPath: saved] != after[keyPath: saved], self[keyPath: field] == after[keyPath: saved] else { return }
+            self[keyPath: field] = before[keyPath: saved]
+        }
+        revert(\.liked, \.liked)
+        revert(\.disliked, \.disliked)
+        revert(\.favorited, \.favorited)
+        revert(\.following, \.following)
+        revert(\.coins, \.coins)
+        revert(\.likeCount, \.likeCount)
+        revert(\.coinCount, \.coinCount)
+        revert(\.favCount, \.favCount)
     }
 
     /// Like clears dislike, as on the server.
@@ -267,7 +293,7 @@ final class ActionsModel {
     private func settleTriple(_ result: TripleResult, before: Snapshot, expected: Int) {
         liked = before.liked || result.like
         likeCount = before.likeCount + (liked && !before.liked ? 1 : 0)
-        if liked { disliked = false }
+        disliked = liked ? false : before.disliked
         favorited = before.favorited || result.favorite
         favCount = before.favCount + (favorited && !before.favorited ? 1 : 0)
         let spent = result.coin ? min(result.multiply, expected) : 0
@@ -282,15 +308,16 @@ final class ActionsModel {
         guard !busy.contains(name) else { return }
         busy.insert(name)
         defer { busy.remove(name) }
-        touched = true
-        let saved = snapshot
+        let before = snapshot
         change(self)
+        let after = snapshot
+        touched.formUnion(after.changed(from: before))
         do {
             try await call(client, detail)
         } catch is CancellationError {
-            restore(saved)
+            undo(from: before, to: after)
         } catch {
-            restore(saved)
+            undo(from: before, to: after)
             Logger.shared.warn(.api, "\(name) failed", ["error": .init(String(describing: error))])
             if intercept?(error) == true { return }
             if let error = error as? BiliError {

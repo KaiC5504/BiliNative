@@ -137,8 +137,11 @@ final class ActionsModelTests: XCTestCase {
         XCTAssertTrue(rig.model.liked)
         XCTAssertTrue(rig.http.body(of: "/x/web-interface/coin/add").contains("select_like=1"))
         await rig.model.coin(2, alsoLike: false)
-        XCTAssertEqual(rig.toasts, ["已投满2个硬币"])
-        XCTAssertEqual(rig.http.requests(to: "/x/web-interface/coin/add").count, 1)
+        XCTAssertEqual(rig.toasts, ["最多还能投1个硬币"])
+        await rig.model.coin(1, alsoLike: false)
+        await rig.model.coin(1, alsoLike: false)
+        XCTAssertEqual(rig.toasts, ["最多还能投1个硬币", "已投满2个硬币"])
+        XCTAssertEqual(rig.http.requests(to: "/x/web-interface/coin/add").count, 2)
     }
 
     func testALateRelationDoesNotUndoATap() async {
@@ -146,6 +149,77 @@ final class ActionsModelTests: XCTestCase {
         await rig.model.toggleLike()
         rig.model.apply(VideoRelation(like: false, dislike: false, favorite: false, attention: false, coins: 0))
         XCTAssertTrue(rig.model.liked)
+    }
+
+    func testALateRelationStillFillsInWhatWasNotTapped() async {
+        let rig = makeRig()
+        await rig.model.toggleFollow()
+        rig.model.apply(VideoRelation(like: true, dislike: false, favorite: true, attention: false, coins: 1))
+        XCTAssertTrue(rig.model.following, "the late answer undid the follow")
+        XCTAssertTrue(rig.model.liked)
+        XCTAssertTrue(rig.model.favorited)
+        XCTAssertEqual(rig.model.coins, 1)
+        XCTAssertTrue(rig.model.tripleDone)
+    }
+
+    /// 点赞 and 关注 sit side by side in full screen: a like that fails must not take back a follow that went through.
+    func testAFailedLikeLeavesAFollowInFlightAlone() async {
+        let http = PathGatedHTTP(refused: [likePath])
+        let rig = makeRig(http: http)
+        let like = Task { await rig.model.toggleLike() }
+        while http.requests(to: likePath).isEmpty { await Task.yield() }
+        let follow = Task { await rig.model.toggleFollow() }
+        while http.requests(to: followPath).isEmpty { await Task.yield() }
+        XCTAssertTrue(rig.model.liked)
+        XCTAssertTrue(rig.model.following)
+
+        http.open(likePath)
+        await like.value
+        XCTAssertFalse(rig.model.liked)
+        XCTAssertEqual(rig.model.likeCount, 9131)
+        XCTAssertTrue(rig.model.following, "the like's rollback undid the follow")
+        http.open(followPath)
+        await follow.value
+        XCTAssertTrue(rig.model.following)
+        XCTAssertEqual(rig.toasts, ["已赞过"])
+    }
+
+    /// Both fail, the earlier first: the later one's rollback must not bring back the earlier one's change.
+    func testTwoFailuresEachTakeBackOnlyTheirOwn() async {
+        let http = PathGatedHTTP(refused: [likePath, followPath])
+        let rig = makeRig(http: http)
+        let like = Task { await rig.model.toggleLike() }
+        while http.requests(to: likePath).isEmpty { await Task.yield() }
+        let follow = Task { await rig.model.toggleFollow() }
+        while http.requests(to: followPath).isEmpty { await Task.yield() }
+
+        http.open(likePath)
+        await like.value
+        http.open(followPath)
+        await follow.value
+        XCTAssertFalse(rig.model.liked, "the follow's rollback brought the failed like back")
+        XCTAssertEqual(rig.model.likeCount, 9131)
+        XCTAssertFalse(rig.model.following)
+    }
+
+    func testFailedTripleRollsBackAndKeepsTheDislike() async {
+        let rig = makeRig(http: RefusingHTTP(code: -352, message: "风控校验失败"),
+                          relation: VideoRelation(like: false, dislike: true, favorite: false, attention: true, coins: 0))
+        await rig.model.triple()
+        XCTAssertFalse(rig.model.liked)
+        XCTAssertTrue(rig.model.disliked)
+        XCTAssertFalse(rig.model.favorited)
+        XCTAssertTrue(rig.model.following)
+        XCTAssertEqual(rig.model.likeCount, 9131)
+        XCTAssertEqual(rig.model.favCount, 3907)
+        XCTAssertEqual(rig.toasts.count, 1)
+    }
+
+    func testTripleSendsOnlyWhenItWouldGoOut() async {
+        XCTAssertTrue(makeRig().model.tripleSends)
+        XCTAssertFalse(makeRig(loggedIn: false).model.tripleSends)
+        let done = makeRig(relation: VideoRelation(like: true, dislike: false, favorite: true, attention: false, coins: 2))
+        XCTAssertFalse(done.model.tripleSends)
     }
 
     func testShareLinkNamesThePartAfterTheFirst() {
@@ -183,6 +257,46 @@ final class ActionsModelTests: XCTestCase {
                 for await _ in gate.stream {}
             }
             return response
+        }
+    }
+
+    /// Holds each POST until its path is opened, and refuses the paths in `refused` with 已赞过.
+    private final class PathGatedHTTP: FixtureHTTP, @unchecked Sendable {
+        private let refused: Set<String>
+        private let lock = NSLock()
+        private var gates: [String: AsyncStream<Void>.Continuation] = [:]
+        private var streams: [String: AsyncStream<Void>] = [:]
+
+        init(refused: Set<String>) {
+            self.refused = refused
+            super.init()
+        }
+
+        func open(_ path: String) {
+            gate(path).continuation.finish()
+        }
+
+        private func gate(_ path: String) -> (stream: AsyncStream<Void>, continuation: AsyncStream<Void>.Continuation) {
+            lock.withLock {
+                if let stream = streams[path], let continuation = gates[path] { return (stream, continuation) }
+                let made = AsyncStream<Void>.makeStream(bufferingPolicy: .unbounded)
+                streams[path] = made.stream
+                gates[path] = made.continuation
+                return made
+            }
+        }
+
+        override func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+            let response = try await super.send(request)
+            if request.method == "POST" {
+                for await _ in gate(request.url.path).stream {}
+            }
+            return response
+        }
+
+        override func answer(_ request: HTTPRequest) -> (Int, Data) {
+            guard request.method == "POST", refused.contains(request.url.path) else { return super.answer(request) }
+            return (200, Data(#"{"code":65006,"message":"已赞过","ttl":1}"#.utf8))
         }
     }
 
