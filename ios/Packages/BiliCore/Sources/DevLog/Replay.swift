@@ -30,8 +30,14 @@ public final class AckStore: @unchecked Sendable {
 public enum ReplayPlanner {
     public static func unsent(files: [URL], currentSession: String, ack: AckStore) -> [LogEvent] {
         files
-            .filter { $0.deletingPathExtension().lastPathComponent != currentSession }
+            .filter { sessionName($0) != currentSession }
             .flatMap { FileSink.readEvents($0) }
-            .filter { $0.seq > ack.lastSeq($0.session) }
+            .filter { $0.session != currentSession && $0.seq > ack.lastSeq($0.session) }
+    }
+
+    /// `<session>.jsonl` or a sealed segment `<session>.<n>.jsonl`.
+    private static func sessionName(_ file: URL) -> String {
+        let name = file.deletingPathExtension().lastPathComponent
+        return name.split(separator: ".", maxSplits: 1).first.map(String.init) ?? name
     }
 }

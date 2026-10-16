@@ -72,6 +72,61 @@ final class RedactorTests: XCTestCase {
         XCTAssertEqual(Redactor.text("a \(signed); b \(signed)\"c"), "a \(kept); b \(kept)\"c")
     }
 
+    func testNamedSecretsInColonJSONAndDictionaryForms() {
+        let cases: [(String, String)] = [
+            (#"{"SESSDATA":"abc123","bili_jct":"ff00"}"#, #"{"SESSDATA":"[redacted]","bili_jct":"[redacted]"}"#),
+            (#"["SESSDATA": "abc123"]"#, #"["SESSDATA": "[redacted]"]"#),
+            ("<NSHTTPCookie version:0 name:SESSDATA value:abc123 domain:.bilibili.com>",
+             "<NSHTTPCookie version:0 name:SESSDATA value:[redacted] domain:.bilibili.com>"),
+            (#"{"name":"SESSDATA","value":"abc123"}"#, #"{"name":"SESSDATA","value":"[redacted]"}"#),
+            ("access_token=zzz refresh_token: qqq", "access_token=[redacted] refresh_token: [redacted]"),
+            ("password=hunter2", "password=[redacted]"),
+            (#"{"password":"hunter 2","ok":"fine"}"#, #"{"password":"[redacted]","ok":"fine"}"#),
+            (#"{\"SESSDATA\":\"abc\"}"#, #"{\"SESSDATA\":\"[redacted]\"}"#),
+            ("DedeUserID__ckMd5: 0a1b2c", "DedeUserID__ckMd5: [redacted]"),
+        ]
+        for (input, expected) in cases {
+            XCTAssertEqual(Redactor.text(input), expected, input)
+        }
+    }
+
+    func testBareBearerToken() {
+        XCTAssertEqual(Redactor.text("Bearer eyJhbGciOi.abc.def"), "Bearer [redacted]")
+        XCTAssertEqual(Redactor.text("got bearer abcdefgh12 back"), "got bearer [redacted] back")
+    }
+
+    func testJSONEscapedURLIsShortenedLikeAnyOther() {
+        XCTAssertEqual(
+            Redactor.text(#"https:\/\/upos-sz.bilivideo.com\/a.m4s?deadline=1&upsig=SECRET"#),
+            "https://upos-sz.bilivideo.com/a.m4s?deadline=1"
+        )
+        XCTAssertEqual(
+            Redactor.text(#"https://upos-sz.bilivideo.com/a.m4s?deadline=1&upsig=SECRET"#),
+            "https://upos-sz.bilivideo.com/a.m4s?deadline=1"
+        )
+    }
+
+    func testBenignTextIsLeftAlone() {
+        let text = "tokens: 5 speed=10 node=upos-sz buvid3 name:foo value:bar"
+        XCTAssertEqual(Redactor.text(text), text)
+    }
+
+    func testFieldKeysContainingSecretFragmentsAreRedacted() {
+        let keys = ["my_SESSDATA", "userCookie", "AuthorizationHeader", "api_token", "Password", "bili_jct2", "x-access_key",
+                    "refresh_token", "DedeUserID__ckMd5"]
+        let out = Redactor.fields(Dictionary(uniqueKeysWithValues: keys.map { ($0, LogValue.string("v")) }))
+        for key in keys {
+            XCTAssertEqual(out[key], .string("[redacted]"), key)
+        }
+    }
+
+    func testRegexPrefixesAreBoundedAgainstLongInput() {
+        let long = String(repeating: "a-", count: 20_000)
+        let start = Date()
+        _ = Redactor.text(long + "csrf")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
     func testUnparseableURLNeverKeepsItsQuery() {
         XCTAssertEqual(Redactor.url("not a url?upsig=S#f"), "not a url")
     }

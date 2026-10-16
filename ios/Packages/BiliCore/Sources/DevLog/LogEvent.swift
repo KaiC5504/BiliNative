@@ -43,7 +43,13 @@ public enum LogValue: Codable, Sendable, Equatable,
         switch self {
         case .string(let value): try container.encode(value)
         case .int(let value): try container.encode(value)
-        case .double(let value): try container.encode(value)
+        case .double(let value):
+            // JSONEncoder throws on non-finite numbers, which would drop the whole event.
+            if value.isFinite {
+                try container.encode(value)
+            } else {
+                try container.encode(value.isNaN ? "nan" : (value < 0 ? "-inf" : "inf"))
+            }
         case .bool(let value): try container.encode(value)
         }
     }

@@ -19,6 +19,60 @@ final class FileSinkTests: XCTestCase {
         XCTAssertEqual(FileSink.readEvents(sink.fileURL).map(\.msg), ["one", "two"])
     }
 
+    func testNonFiniteFieldDoesNotDropTheEvent() throws {
+        let dir = tempDir()
+        let sink = try FileSink(directory: dir, session: "nf")
+        let logger = Logger(session: "nf")
+        logger.add(sink)
+        logger.info(.engine, "speed", ["mbps": .double(.infinity)])
+        sink.flush()
+        let events = FileSink.readEvents(sink.fileURL)
+        XCTAssertEqual(events.map(\.msg), ["speed"])
+        XCTAssertEqual(events.first?.f["mbps"], .string("inf"))
+    }
+
+    func testFailedWriteDropsTheLineAndRecovers() throws {
+        let dir = tempDir()
+        let sink = try FileSink(directory: dir, session: "w")
+        let logger = Logger(session: "w")
+        logger.add(sink)
+        logger.info(.app, "before")
+        sink.flush()
+        sink.closeHandleForTesting()
+        logger.info(.app, "lost")
+        sink.flush()
+        XCTAssertEqual(sink.droppedLines, 1)
+        logger.info(.app, "after")
+        sink.flush()
+        XCTAssertEqual(FileSink.readEvents(sink.fileURL).map(\.msg), ["before", "after"])
+    }
+
+    func testLiveSessionIsRolledAndStaysUnderTheCap() throws {
+        let dir = tempDir()
+        let cap = 4000
+        let sink = try FileSink(directory: dir, session: "big", maxTotalBytes: cap)
+        let logger = Logger(session: "big")
+        logger.add(sink)
+        for index in 0..<300 {
+            logger.info(.engine, "event-\(index)", ["pad": "xxxxxxxxxxxxxxxxxxxxxxxx"])
+        }
+        sink.flush()
+
+        let files = sink.sessionFiles()
+        XCTAssertGreaterThan(files.count, 1)
+        let sizes = files.map { (try? Data(contentsOf: $0).count) ?? 0 }
+        XCTAssertLessThanOrEqual(sizes.reduce(0, +), cap)
+
+        let events = files.flatMap { FileSink.readEvents($0) }
+        XCTAssertEqual(events.last?.msg, "event-299")
+        XCTAssertNotEqual(events.first?.msg, "event-0")
+        XCTAssertEqual(events.map(\.seq), Array(events[0].seq...events[events.count - 1].seq))
+
+        let ack = AckStore(url: dir.appendingPathComponent("ack.json"))
+        XCTAssertTrue(ReplayPlanner.unsent(files: files, currentSession: "big", ack: ack).isEmpty)
+        XCTAssertFalse(ReplayPlanner.unsent(files: files, currentSession: "other", ack: ack).isEmpty)
+    }
+
     func testPrunesOldestSessionFiles() throws {
         let dir = tempDir()
         let filler = Data(repeating: 0x41, count: 600)

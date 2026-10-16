@@ -1,27 +1,40 @@
 import Foundation
 
 public enum Redactor {
-    static let secretNames: Set<String> = [
-        "sessdata", "bili_jct", "csrf", "cookie", "set-cookie", "authorization", "access_key", "refresh_token", "dedeuserid__ckmd5",
+    private static let secretKeyFragments = [
+        "sessdata", "bili_jct", "jct", "csrf", "cookie", "authorization", "access_key", "token", "password", "passwd", "pwd",
+        "dedeuserid__ckmd5",
     ]
     private static let idNames: Set<String> = ["mid", "dedeuserid"]
-    private static let urlPattern = try! NSRegularExpression(pattern: #"https?://[^\s"'<>]+"#)
+
+    // Prefixes are bounded so matching stays linear on long input.
+    private static let secretName =
+        #"(?:[\w-]{0,40}(?:sessdata|bili_jct|access_key|access_token|refresh_token|token|password|passwd|pwd|dedeuserid__ckmd5)"#
+        + #"|[\w-]{0,40}csrf[\w-]{0,40})"#
+    private static let quote = #"(?:\\?["'])"#
+    private static let separator = #"(?:\\?["'])?\s*[=:]\s*"#
+    // Group 1 is the opening quote of a quoted value, so the quote survives the replacement.
+    private static let value = #"(?:(\\?["'])[^"'\\]*|[^;&\s"'\\]+)"#
+
+    private static let urlPattern = try! NSRegularExpression(pattern: #"https?:(?:\\?/){2}[^\s"'<>]+"#)
     private static let urlTrailing = CharacterSet(charactersIn: ").,;!?]}")
     private static let authorizationPattern = try! NSRegularExpression(
         pattern: #"(?i)\b((?:proxy-)?authorization["']?\s*[:=]\s*["']?)[^\r\n"']+"#)
     private static let cookieHeaderPattern = try! NSRegularExpression(
         pattern: #"(?i)\b((?:set-)?cookie["']?\s*:\s*["']?)([^\r\n"']+)"#)
-    private static let csrfPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b([\w-]*csrf[\w-]*["']?\s*[=:]\s*["']?)[^;&\s"',]+"#)
-    private static let pairPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b(SESSDATA|bili_jct|csrf|access_key|refresh_token|DedeUserID__ckMd5)=([^;&\s"]+)"#)
+    private static let bearerPattern = try! NSRegularExpression(pattern: #"(?i)\b(bearer\s+)[\w.~+/=-]{6,}"#)
+    // `name:SESSDATA value:abc` (NSHTTPCookie) and `"name":"SESSDATA","value":"abc"` (cookie JSON).
+    private static let nameValuePattern = try! NSRegularExpression(
+        pattern: #"(?i)\b(name\#(separator)\#(quote)?\#(secretName)\#(quote)?[\s,;]+\#(quote)?value\#(separator))\#(value)"#)
+    private static let secretPairPattern = try! NSRegularExpression(
+        pattern: #"(?i)\b(\#(secretName)\#(separator))\#(value)"#)
     private static let cookieFlags: Set<String> = ["httponly", "secure", "partitioned"]
 
     public static func fields(_ fields: [String: LogValue]) -> [String: LogValue] {
         var result: [String: LogValue] = [:]
         for (key, value) in fields {
             let lowered = key.lowercased()
-            if secretNames.contains(lowered) || lowered.contains("csrf") {
+            if secretKeyFragments.contains(where: { lowered.contains($0) }) {
                 result[key] = .string("[redacted]")
             } else if idNames.contains(lowered) {
                 result[key] = .string(hashedID(value))
@@ -46,20 +59,19 @@ public enum Redactor {
             return url(core) + tail
         }
         output = replace(authorizationPattern, in: output) { _, groups in groups[0] + "[redacted]" }
+        output = replace(bearerPattern, in: output) { _, groups in groups[0] + "[redacted]" }
         output = replace(cookieHeaderPattern, in: output) { _, groups in groups[0] + redactCookieValues(groups[1]) }
-        output = replace(csrfPattern, in: output) { _, groups in groups[0] + "[redacted]" }
-        return replace(pairPattern, in: output) { match, _ in
-            let name = match.split(separator: "=", maxSplits: 1).first.map(String.init) ?? "secret"
-            return "\(name)=[redacted]"
-        }
+        output = replace(nameValuePattern, in: output) { _, groups in groups[0] + groups[1] + "[redacted]" }
+        return replace(secretPairPattern, in: output) { _, groups in groups[0] + groups[1] + "[redacted]" }
     }
 
     /// Keeps scheme, host, port, path and the `deadline` parameter: enough to see which node and
     /// when the signature expires, without the signature or the account id.
     public static func url(_ text: String) -> String {
-        guard let components = URLComponents(string: text), let host = components.host else {
+        let unescaped = text.replacingOccurrences(of: #"\/"#, with: "/").replacingOccurrences(of: #"\u0026"#, with: "&")
+        guard let components = URLComponents(string: unescaped), let host = components.host else {
             // Unparseable on some Foundation versions (odd characters); never pass the query through.
-            return String(text.prefix { $0 != "?" && $0 != "#" })
+            return String(unescaped.prefix { $0 != "?" && $0 != "#" })
         }
         var result = "\(components.scheme ?? "https")://\(host)"
         if let port = components.port { result += ":\(port)" }

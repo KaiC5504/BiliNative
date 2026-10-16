@@ -35,6 +35,37 @@ final class NetworkSinkTests: XCTestCase {
         XCTAssertEqual(acked.current["s"], 2)
     }
 
+    func testNonFiniteFieldIsDeliveredAndAcknowledged() async {
+        let bodies = Locked<[Data]>([])
+        let sink = NetworkSink(poster: { data in bodies.withLock { $0.append(data) } })
+        let acked = Locked<[String: Int64]>([:])
+        sink.onAcknowledged = { session, seq in acked.withLock { $0[session] = seq } }
+        sink.enqueue([LogEvent(t: 0, seq: 7, session: "s", level: .info, cat: .engine, msg: "inf", f: ["v": .double(.infinity)])])
+        let ok = await sink.flushOnce()
+        XCTAssertTrue(ok)
+        XCTAssertEqual(bodies.current.count, 1)
+        XCTAssertTrue(String(decoding: bodies.current[0], as: UTF8.self).contains("\"inf\""))
+        XCTAssertEqual(acked.current["s"], 7)
+    }
+
+    func testUnencodableEventIsNeverAcknowledged() async {
+        struct Unencodable: Error {}
+        let bodies = Locked<[Data]>([])
+        let sink = NetworkSink(poster: { data in bodies.withLock { $0.append(data) } })
+        sink.encodeOverride = { event in
+            if event.seq == 2 { throw Unencodable() }
+            return try JSONEncoder().encode(event)
+        }
+        let acked = Locked<[String: Int64]>([:])
+        sink.onAcknowledged = { session, seq in acked.withLock { $0[session] = seq } }
+        sink.enqueue([event(1), event(2), event(3)])
+        let ok = await sink.flushOnce()
+        XCTAssertTrue(ok)
+        XCTAssertEqual(String(decoding: bodies.current[0], as: UTF8.self).split(separator: "\n").count, 2)
+        XCTAssertEqual(sink.pending, 0)
+        XCTAssertEqual(acked.current["s"], 1)
+    }
+
     func testBufferCapDropsOldest() async {
         let bodies = Locked<[Data]>([])
         let sink = NetworkSink(poster: { data in bodies.withLock { $0.append(data) } }, maxBuffered: 3)

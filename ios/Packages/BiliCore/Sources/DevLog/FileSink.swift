@@ -1,26 +1,32 @@
 import Foundation
 import Dispatch
 
-/// One JSON-lines file per app session, pruned oldest first to stay under `maxTotalBytes`.
+/// JSON-lines files per app session, pruned oldest first to stay under `maxTotalBytes`.
+/// The live file `<session>.jsonl` is sealed as `<session>.<n>.jsonl` once it reaches a quarter of the
+/// cap, so the live session is bounded too.
 public final class FileSink: LogSink, @unchecked Sendable {
     public let directory: URL
     public let fileURL: URL
+    private let session: String
     private let maxTotalBytes: Int
     private let queue = DispatchQueue(label: "devlog.filesink")
-    private let handle: FileHandle?
-    private var writtenSincePrune = 0
+    private var handle: FileHandle?
+    private var liveBytes = 0
+    private var dropped = 0
     private let encoder = JSONEncoder()
 
     public init(directory: URL, session: String, maxTotalBytes: Int = 20 << 20) throws {
         self.directory = directory
+        self.session = session
         self.maxTotalBytes = maxTotalBytes
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         fileURL = directory.appendingPathComponent("\(session).jsonl")
         if !FileManager.default.fileExists(atPath: fileURL.path) {
-            FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+            _ = FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         }
-        handle = try FileHandle(forWritingTo: fileURL)
-        handle?.seekToEndOfFile()
+        let opened = try FileHandle(forWritingTo: fileURL)
+        liveBytes = Int(try opened.seekToEnd())
+        handle = opened
         prune()
     }
 
@@ -29,20 +35,13 @@ public final class FileSink: LogSink, @unchecked Sendable {
     }
 
     public func receive(_ event: LogEvent) {
-        guard var line = try? encoder.encode(event) else { return }
-        line.append(0x0A)
-        queue.async {
-            self.handle?.write(line)
-            self.writtenSincePrune += line.count
-            if self.writtenSincePrune > self.maxTotalBytes / 8 {
-                self.writtenSincePrune = 0
-                self.prune()
-            }
-        }
+        guard let encoded = try? encoder.encode(event) else { return }
+        let line = encoded + [0x0A]
+        queue.async { self.append(line) }
     }
 
     public func flush() {
-        queue.sync { handle?.synchronizeFile() }
+        queue.sync { try? handle?.synchronize() }
     }
 
     /// Oldest first.
@@ -54,7 +53,11 @@ public final class FileSink: LogSink, @unchecked Sendable {
         }
         return files
             .filter { $0.pathExtension == "jsonl" }
-            .sorted { (modified($0), $0.lastPathComponent) < (modified($1), $1.lastPathComponent) }
+            .sorted { lhs, rhs in
+                let (left, right) = (modified(lhs), modified(rhs))
+                if left != right { return left < right }
+                return lhs.lastPathComponent.compare(rhs.lastPathComponent, options: .numeric) == .orderedAscending
+            }
     }
 
     /// Concatenates every session file into one file for the share sheet.
@@ -75,13 +78,66 @@ public final class FileSink: LogSink, @unchecked Sendable {
         return data.split(separator: 0x0A).compactMap { try? decoder.decode(LogEvent.self, from: Data($0)) }
     }
 
+    var droppedLines: Int { queue.sync { dropped } }
+
+    func closeHandleForTesting() {
+        queue.sync { try? handle?.close() }
+    }
+
+    private var rollBytes: Int { max(maxTotalBytes / 4, 1) }
+
+    // A logger must never take the app down: write errors drop the line and the file is reopened next time.
+    private func append(_ line: Data) {
+        if liveBytes > 0, liveBytes + line.count > rollBytes { roll() }
+        if handle == nil { openLive() }
+        guard let handle else {
+            dropped += 1
+            return
+        }
+        do {
+            try handle.write(contentsOf: line)
+            liveBytes += line.count
+        } catch {
+            dropped += 1
+            try? handle.close()
+            self.handle = nil
+        }
+    }
+
+    private func openLive() {
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            _ = FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        }
+        handle = try? FileHandle(forWritingTo: fileURL)
+        liveBytes = Int((try? handle?.seekToEnd()) ?? 0)
+    }
+
+    private func roll() {
+        try? handle?.close()
+        handle = nil
+        let manager = FileManager.default
+        var index = 1
+        var sealed = directory.appendingPathComponent("\(session).\(index).jsonl")
+        while manager.fileExists(atPath: sealed.path) {
+            index += 1
+            sealed = directory.appendingPathComponent("\(session).\(index).jsonl")
+        }
+        if (try? manager.moveItem(at: fileURL, to: sealed)) == nil {
+            try? manager.removeItem(at: fileURL)
+        }
+        openLive()
+        prune()
+    }
+
+    /// Leaves room for the live file to grow to `rollBytes`, so the total never exceeds the cap.
     private func prune() {
         var files = sessionFiles()
         func size(_ url: URL) -> Int {
             (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
         }
         var total = files.reduce(0) { $0 + size($1) }
-        while total > maxTotalBytes, let oldest = files.first, oldest.lastPathComponent != fileURL.lastPathComponent {
+        let target = maxTotalBytes - rollBytes
+        while total > target, let oldest = files.first, oldest.lastPathComponent != fileURL.lastPathComponent {
             total -= size(oldest)
             try? FileManager.default.removeItem(at: oldest)
             files.removeFirst()
