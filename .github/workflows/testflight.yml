@@ -43,10 +43,8 @@ env:
   # third-party code could read it.
   APP_STORE_CONNECT_DISABLE_JWT_CACHE: "1"
   BUNDLE_ID: com.kaichuan.bilifast
-  # App Store Connect → the app → App Information → Apple ID. Placeholder until KaiC
-  # creates the app record (manual-steps §3); builds fail at "Pick the build number" until
-  # it is filled in.
-  ASC_APP_ID: "__ASC_APP_ID__"
+  # App Store Connect → the app → App Information → Apple ID.
+  ASC_APP_ID: "6823476667"
   PROJECT: ios/BiliNative.xcodeproj
   SCHEME: BiliNative
   # For an app that already shipped elsewhere: its highest build number. Installed apps

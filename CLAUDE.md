@@ -77,8 +77,7 @@ before touching signing, `testflight.yml`, `ios/project.yml` or the compile work
 
 Identity: display name `BiliFast`, app target and scheme `BiliNative`, bundle id `com.kaichuan.bilifast`
 (extensions: none). Repo `KaiC5504/BiliNative` (public). App Store Connect name:
-`BiliNative`, Apple ID: not created yet (`ASC_APP_ID` in `testflight.yml` is a placeholder
-until then).
+`BiliNative`, Apple ID: `6823476667` (`ASC_APP_ID` in `testflight.yml`).
 
 1. Work on `main` (this repo has no `dev` branch). Push. Wait for the compile check
    (`gh run list --limit 1`, then `gh run watch <id> --exit-status`), and look at the
