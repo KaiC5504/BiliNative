@@ -210,7 +210,9 @@ final class CommentsModel {
         if comments.count + (pinned == nil ? 0 : 1) < before { total = max(0, total - 1) }
         if thread != nil, let index = thread?.replies.firstIndex(where: { $0.rpid == comment.rpid }) {
             thread?.replies.remove(at: index)
-            thread?.total = max(0, (thread?.total ?? 1) - 1)
+            // Read first: an optional-chained write holds `thread` while its right side runs.
+            let total = thread?.total ?? 1
+            thread?.total = max(0, total - 1)
         }
         if comment.root != 0 {
             update(comment.root) { root in
