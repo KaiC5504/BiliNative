@@ -14,8 +14,8 @@ struct ChromeLayer: View {
     var danmakuEnabled = true
     var onToggleDanmaku: () -> Void = {}
     var onSendDanmaku: () -> Void = {}
-    /// The action icons and 关注 need build B's actions (Task 21).
-    var showsActions = false
+    /// The page's actions, for the full-screen icons, 关注 and the end screens.
+    @Environment(ActionsModel.self) private var actions: ActionsModel?
     var onComments: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
@@ -30,11 +30,11 @@ struct ChromeLayer: View {
                 case .inline:
                     PortraitControls(model: model, chrome: chrome, panel: $panel, onBack: back)
                 case .landscape:
-                    LandscapeChrome(model: model, chrome: chrome, panel: $panel, insets: insets, showsActions: showsActions,
+                    LandscapeChrome(model: model, chrome: chrome, panel: $panel, insets: insets, actions: actions,
                                     danmakuEnabled: danmakuEnabled, onToggleDanmaku: onToggleDanmaku,
                                     onSendDanmaku: onSendDanmaku, onBack: back, onComments: onComments)
                 case .vertical:
-                    VerticalChrome(model: model, chrome: chrome, panel: $panel, insets: insets, showsActions: showsActions,
+                    VerticalChrome(model: model, chrome: chrome, panel: $panel, insets: insets, actions: actions,
                                    danmakuEnabled: danmakuEnabled, onToggleDanmaku: onToggleDanmaku,
                                    onSendDanmaku: onSendDanmaku, onBack: back, onComments: onComments)
                 }
@@ -49,13 +49,13 @@ struct ChromeLayer: View {
     private func endScreen(_ presentation: OrientationController.Presentation) -> some View {
         switch presentation {
         case .inline:
-            EndScreenPortrait(model: model, panel: $panel, onBack: back, onOpen: open)
+            EndScreenPortrait(model: model, actions: actions, panel: $panel, onBack: back, onOpen: open)
         case .landscape:
-            EndScreenLandscape(model: model, insets: insets, showsActions: showsActions, onBack: back, onOpen: open)
+            EndScreenLandscape(model: model, insets: insets, actions: actions, onBack: back, onOpen: open)
         case .vertical:
             // The 竖屏 page keeps the small player's end screen, over the band where the video sits.
             GeometryReader { geometry in
-                EndScreenPortrait(model: model, panel: $panel, onBack: back, onOpen: open)
+                EndScreenPortrait(model: model, actions: actions, panel: $panel, onBack: back, onOpen: open)
                     .frame(width: geometry.size.width, height: geometry.size.width * 9 / 16)
                     .position(x: geometry.size.width / 2, y: geometry.size.height * VerticalLayout.videoCentre)
             }

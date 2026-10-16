@@ -20,7 +20,9 @@ struct VideoPageView: View {
     /// Made once the video's aid is known, and again for each video the page switches to.
     @State private var comments: CommentsModel?
     @State private var composer: ComposerModel?
-    @State private var showLogin = false
+    @State private var loginRequested = false
+    @State private var actions: ActionsModel?
+    @State private var actionToast: String?
     #if DEBUG
     @State private var sendDemo: DanmakuSendBar.Demo?
     #endif
@@ -46,6 +48,7 @@ struct VideoPageView: View {
                            danmakuEnabled: env.settings.danmaku.enabled, ignoresKeyboard: sendBarOpen || composer != nil,
                            onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar,
                            onNeedLogin: presentLogin, onCompose: compose, onComments: showComments)
+                    .environment(actions)
                 PanelLayer(panel: panel, model: model, onNeedLogin: presentLogin)
                     .ignoresSafeArea()
                 if let viewing = comments?.viewing {
@@ -68,7 +71,8 @@ struct VideoPageView: View {
         .toast(Binding(get: { comments?.toast }, set: { comments?.toast = $0 }))
         .background { PageProbe(lifecycle: lifecycle) }
         .toolbar(.hidden, for: .navigationBar)
-        .sheet(isPresented: $showLogin) { LoginView() }
+        .toast($actionToast)
+        .loginGate($loginRequested)
         .onAppear {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
@@ -76,6 +80,7 @@ struct VideoPageView: View {
             lifecycle.appeared(page)
             #if DEBUG
             ChromeDemo.stage(page: page, chrome: chrome)
+            ActionsDemo.stage(page: page, chrome: chrome)
             DanmakuSendDemo.stage(page: page, chrome: chrome) { demo in
                 sendDemo = demo
                 sendBarOpen = true
@@ -106,6 +111,20 @@ struct VideoPageView: View {
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             guard let model else { return }
             OrientationController.shared.setVideoIsVertical(vertical ?? false, owner: model)
+        }
+        .onChange(of: model?.detail?.bvid, initial: true) { makeActions() }
+        .onChange(of: model?.relation) { _, relation in
+            if let relation { actions?.apply(relation) }
+        }
+        .onChange(of: model?.uploader) { _, uploader in
+            if let uploader { actions?.apply(uploader) }
+        }
+        .onChange(of: env.account) { old, account in
+            guard case .loggedIn = account, old != account, let actions else { return }
+            Task { await actions.refreshRelation() }
+        }
+        .onChange(of: actions?.prompt) { _, prompt in
+            if let prompt, let actions { handle(prompt, for: actions) }
         }
         .onReceive(NotificationCenter.default.publisher(for: DeviceControls.hardwareVolumeChanged)) { note in
             if let volume = note.userInfo?["volume"] as? Double { chrome.showHardwareVolume(volume) }
@@ -202,17 +221,45 @@ struct VideoPageView: View {
         sendBarOpen = true
     }
 
-    /// Full screen is the same page rotated, so it goes back to inline before the sheet comes up.
     private func presentLogin() {
         sender?.needsLogin = false
         sendBarOpen = false
         composer = nil
-        let orientation = OrientationController.shared
-        let rotates = orientation.presentation != .inline
-        if rotates { orientation.exitToInline() }
-        Task {
-            if rotates { try? await Task.sleep(for: .milliseconds(450)) }
-            showLogin = true
+        loginRequested = true
+    }
+
+    /// One per video: autoplay into another 合集 episode brings another detail and a fresh set of actions.
+    private func makeActions() {
+        guard let model, let detail = model.detail, actions?.detail.bvid != detail.bvid else { return }
+        let env = self.env
+        actions = ActionsModel(client: env.client, detail: detail, relation: model.relation, uploader: model.uploader,
+                               isLoggedIn: {
+                                   switch env.account {
+                                   case .loggedIn, .unknown: return true
+                                   case .loggedOut, .expired: return false
+                                   }
+                               },
+                               requestLogin: { presentLogin() },
+                               toast: { actionToast = $0 })
+    }
+
+    /// Taps that open something first. Task 22 replaces the coin, favourites and unfollow cases with its dialog,
+    /// sheet and confirm; until then 投币 gives one coin at once, 收藏 does nothing and 已关注 unfollows at once.
+    private func handle(_ prompt: ActionsModel.Prompt, for actions: ActionsModel) {
+        actions.prompt = nil
+        switch prompt {
+        case .share:
+            guard let detail = model?.detail else { return }
+            let part = detail.pages.count > 1 ? model?.currentPage?.page : nil
+            SharePresenter.present(title: detail.title, url: ShareLinks.video(detail.bvid, part: part)) { completed in
+                if completed { Task { await actions.shared() } }
+            }
+        case .coin:
+            Task { await actions.coin(1, alsoLike: false) }
+        case .favourites:
+            break
+        case .unfollow:
+            Task { await actions.toggleFollow() }
         }
     }
 }
@@ -232,6 +279,7 @@ private struct PageLayout: View {
     let onNeedLogin: () -> Void
     let onCompose: (ReplyTarget, _ emotes: Bool) -> Void
     let onComments: () -> Void
+    @Environment(ActionsModel.self) private var actions: ActionsModel?
 
     var body: some View {
         let presentation = OrientationController.shared.presentation
@@ -242,7 +290,10 @@ private struct PageLayout: View {
                 if inline {
                     // Laid out as if the player were already the bar; each tab leaves the rest of its height free.
                     PageTabs(state: tabs, reserve: collapsing.reserve) {
-                        IntroTab(model: model, state: tabs, onNeedLogin: onNeedLogin) { EmptyView() }
+                        IntroTab(model: model, state: tabs, following: actions?.following, onFollow: { actions?.tapFollow() },
+                                 onNeedLogin: onNeedLogin) {
+                            if let actions { ActionRow(actions: actions) }
+                        }
                     } comments: {
                         if let comments {
                             CommentsTab(model: comments, tabs: tabs, onCompose: onCompose)
