@@ -51,10 +51,13 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
     }
 
     /// The Cookie header is set by hand, so URLSession would forward it to whatever host a redirect points at.
+    /// A 307/308 also keeps the method and body, which can be a form carrying the csrf token.
     static func redirectedRequest(_ request: URLRequest) -> URLRequest {
         guard !BiliHosts.isBilibili(request.url?.host ?? "") else { return request }
         var stripped = request
         stripped.setValue(nil, forHTTPHeaderField: "Cookie")
+        stripped.httpBody = nil
+        stripped.httpBodyStream = nil
         return stripped
     }
 

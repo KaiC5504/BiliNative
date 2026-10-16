@@ -174,6 +174,17 @@ final class BiliClientTests: XCTestCase {
         XCTAssertTrue(http.requests(to: playPath).isEmpty)
     }
 
+    func testRedirectDropsTheBodyOffBilibiliHosts() {
+        func redirected(_ urlString: String) -> URLRequest {
+            var request = URLRequest(url: URL(string: urlString)!)
+            request.httpMethod = "POST"
+            request.httpBody = Data("csrf=T".utf8)
+            return URLSessionHTTPTransport.redirectedRequest(request)
+        }
+        XCTAssertEqual(redirected("https://api.bilibili.com/x/v2/history/toview/add").httpBody, Data("csrf=T".utf8))
+        XCTAssertNil(redirected("https://evil.example/steal").httpBody)
+    }
+
     func testRedirectKeepsCookieOnBilibiliHostsOnly() {
         func redirected(_ urlString: String) -> String? {
             var request = URLRequest(url: URL(string: urlString)!)
