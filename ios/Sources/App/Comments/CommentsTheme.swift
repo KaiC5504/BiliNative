@@ -53,7 +53,8 @@ extension Theme {
         static let nameFont = Font.system(size: 13)
         static let textFont = Font.system(size: 15)
         static let textSize: CGFloat = 15
-        static let textLineSpacing: CGFloat = 4
+        /// 25 pt from line to line in 12.
+        static let textLineSpacing: CGFloat = 7
         static let metaFont = Font.system(size: 12)
         static let actionFont = Font.system(size: 12)
         static let thumbFont = Font.system(size: 15)

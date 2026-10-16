@@ -32,9 +32,8 @@ struct CommentsTab: View {
         }
         .scrollIndicators(.hidden)
         .collapsingPlayerScroll(tabs, tab: .comments)
-        // The tabs reach under the home indicator, so the bar keeps clear of it itself.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            CommentBar(bottomInset: ScreenInsets.current(merging: EdgeInsets()).bottom) { emotes in onCompose(.video, emotes) }
+            CommentBar { emotes in onCompose(.video, emotes) }
         }
         .background(Theme.Comments.background)
         .task {
@@ -140,8 +139,6 @@ private struct ClosedNotice: View {
 
 /// The fixed bar under the list and the thread: "哎呦，不错哦，发条评论吧" and the emote button (10).
 struct CommentBar: View {
-    /// Room for the home indicator when the bar's container ignores the safe area.
-    var bottomInset: CGFloat = 0
     /// True when the emote button was tapped.
     let onWrite: (Bool) -> Void
 
@@ -175,8 +172,7 @@ struct CommentBar: View {
         }
         .buttonStyle(.plain)
         .padding(.leading, Theme.Metrics.gutter)
-        .padding(.top, T.barTop)
-        .padding(.bottom, T.barTop + bottomInset)
+        .padding(.vertical, T.barTop)
         .background(T.background.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) {
             Rectangle()

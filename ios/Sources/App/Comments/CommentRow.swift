@@ -359,7 +359,7 @@ struct ReplyPreview: View {
     private func line(_ reply: Comment) -> some View {
         HStack(alignment: .lastTextBaseline, spacing: 0) {
             RichTextView(runs: RichTextView.markingReplyTarget(reply.runs), font: T.previewFont, fontSize: T.previewSize,
-                         color: T.previewText, lineSpacing: 5, lineLimit: 2,
+                         color: T.previewText, lineSpacing: 6.5, lineLimit: 2,
                          prefix: Text("\(Text(verbatim: reply.member.name + ": ").foregroundStyle(T.name))"))
                 .layoutPriority(1)
             if reply.likes > 0 {
