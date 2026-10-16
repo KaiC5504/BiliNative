@@ -122,6 +122,8 @@ final class VideoPageModel {
                 self.detail = detail
                 fetchRelated(bvid: bvid)
             }
+            // Bangumi and other PGC pages answer view with a redirect; their playurl is another API.
+            guard detail.redirectURL == nil else { throw PageError.unsupported }
             guard let first = detail.pages.first else { throw PageError.noParts }
             var info: PlayerInfo?
             let chosen: Int64
@@ -401,11 +403,15 @@ final class VideoPageModel {
     }
 
     enum PageError: Error {
-        case noParts
+        case noParts, unsupported
     }
 
     static func message(for error: Error) -> String {
-        if case PageError.noParts? = error as? PageError { return "该视频没有可播放的分P" }
+        switch error as? PageError {
+        case .noParts?: return "该视频没有可播放的分P"
+        case .unsupported?: return "暂不支持播放此类视频"
+        case nil: break
+        }
         if let error = error as? BiliError { return error.userMessage }
         if error is URLError { return "网络连接失败，请检查网络后重试" }
         return "加载失败，请稍后重试"
