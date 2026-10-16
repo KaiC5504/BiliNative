@@ -1,5 +1,6 @@
 import Foundation
 import AppLogic
+import Danmaku
 
 extension AppEnvironment {
     func makeController(for item: PlayItem) -> PlaybackControlling {
@@ -14,6 +15,7 @@ extension AppEnvironment {
     func makeVideoPageModel(route: VideoRoute) -> VideoPageModel {
         VideoPageModel(route: route, client: client, settings: settings,
                        account: { self.account },
-                       makeController: { self.makeController(for: $0) })
+                       makeController: { self.makeController(for: $0) },
+                       ownHash: { self.mid.map { MidHash.of(uid: $0) } })
     }
 }

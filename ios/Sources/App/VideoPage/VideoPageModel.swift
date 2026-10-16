@@ -26,6 +26,7 @@ final class VideoPageModel {
 
     @ObservationIgnored let client: BiliClient
     @ObservationIgnored let settings: AppSettings
+    @ObservationIgnored let danmaku: DanmakuController
     @ObservationIgnored private let account: @MainActor () -> Account
     @ObservationIgnored private let makeController: @MainActor (PlayItem) -> PlaybackControlling
     @ObservationIgnored private let sleep: (Double) async -> Void
@@ -56,10 +57,12 @@ final class VideoPageModel {
          makeController: @escaping @MainActor (PlayItem) -> PlaybackControlling,
          sleep: @escaping (Double) async -> Void = { seconds in _ = try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000)) },
          onlineInterval: Double = 30,
+         ownHash: @escaping @MainActor () -> String? = { nil },
          isAppActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }) {
         self.route = route
         self.client = client
         self.settings = settings
+        danmaku = DanmakuController(client: client, settings: settings, ownHash: ownHash)
         self.account = account
         self.makeController = makeController
         self.sleep = sleep
@@ -170,6 +173,7 @@ final class VideoPageModel {
         ended = false
         finishedSent = false
         current = item
+        danmaku.load(cid: item.cid, bvid: item.bvid, durationMs: Int64(currentPage?.duration ?? 0) * 1000)
         schedule = HeartbeatSchedule()
         let next = makeController(item)
         next.rate = rate
