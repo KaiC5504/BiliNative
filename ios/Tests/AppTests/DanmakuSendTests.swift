@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 import BiliAPI
 @testable import BiliNative
@@ -105,7 +107,44 @@ final class DanmakuSendTests: XCTestCase {
         XCTAssertEqual(rig.sender.text.count, 100)
     }
 
+    /// The bar fills the page and reads the safe area itself, so it must follow the page into landscape and back.
+    func testSendBarFollowsTheScreenIntoLandscapeAndBack() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let rig = try await makeRig()
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UIHostingController(rootView: DanmakuSendBar(model: rig.sender, onClose: {}, demo: .style))
+        window.makeKeyAndVisible()
+        let orientation = OrientationController.shared
+        defer {
+            window.isHidden = true
+            orientation.exitToInline()
+        }
+        let view = try XCTUnwrap(window.rootViewController?.view)
+
+        orientation.enterLandscape()
+        let turned = await waitUntil(5) { scene.effectiveGeometry.interfaceOrientation.isLandscape }
+        XCTAssertTrue(turned, "the scene never turned to landscape")
+        let wide = await waitUntil(3) { view.bounds.width > view.bounds.height }
+        XCTAssertTrue(wide, "the bar was not laid out for landscape")
+
+        orientation.exitToInline()
+        let back = await waitUntil(5) { scene.effectiveGeometry.interfaceOrientation == .portrait }
+        XCTAssertTrue(back, "the scene never turned back to portrait")
+        let tall = await waitUntil(3) { view.bounds.height > view.bounds.width }
+        XCTAssertTrue(tall)
+        XCTAssertTrue(view.window === window)
+    }
+
     // MARK: helpers
+
+    private func waitUntil(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return condition()
+    }
 
     private final class PostHTTP: FixtureHTTP, @unchecked Sendable {
         let reply: String
