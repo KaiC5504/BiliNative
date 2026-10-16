@@ -34,6 +34,24 @@ final class NetworkChangeTests: XCTestCase {
         XCTAssertEqual(resolver.status().first { $0.node == NodeCatalog.nodeKey(of: fast) }?.state, "healthy")
     }
 
+    /// A drop on the old path cuts every running copy and would otherwise count as damage at each of their offsets.
+    func testResetHealthForgetsDamage() {
+        let manual = ManualClock(100_000)
+        let resolver = Resolver(primary: primary, backups: [], mode: .overseas, bans: BanList(), clock: manual.clock)
+        let a = resolver.urls()[0]
+        resolver.success(a, bps: 0)
+        for block in Int64(0)..<2 {
+            resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: block << 20 + 1_000, end: block << 20 + 9_999)!)
+        }
+        XCTAssertTrue(resolver.avoids(a, ByteRange(start: 1_000, end: 9_999)!))
+
+        resolver.resetHealth(clearMeasurements: false)
+        XCTAssertFalse(resolver.avoids(a, ByteRange(start: 1_000, end: 9_999)!))
+        resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 2 << 20, end: 2 << 20 + 9_999)!)
+        resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 2 << 20 + 5_000, end: 2 << 20 + 9_999)!)
+        XCTAssertTrue(resolver.allows(a), "damage after the change is judged afresh")
+    }
+
     func testSessionNetworkChangeClearsBansAndBackoffs() async {
         var behaviors: [String: SimCDN.Behavior] = [:]
         for node in NodeCatalog.overseas { behaviors[node] = .init(status: 503) }

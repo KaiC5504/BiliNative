@@ -32,6 +32,8 @@ public final class Resolver: @unchecked Sendable {
         var rangeCursor = 0
         /// Per route: the first missing byte seen in each damaged block of that node's copy, by block index.
         var damage: [String: [Int64: Int64]] = [:]
+        /// Nodes that have sent bytes, even in copies that were cut or cancelled.
+        var streamed = Set<String>()
     }
 
     /// A node left out for being slow goes back to the untested ones after this and gets another try.
@@ -71,6 +73,7 @@ public final class Resolver: @unchecked Sendable {
     public func resetHealth(clearMeasurements: Bool) {
         state.withLock { value in
             value.health = [:]
+            value.damage = [:]
             guard clearMeasurements else { return }
             for key in value.routes.keys {
                 value.routes[key]?.bps = 0
@@ -222,21 +225,31 @@ public final class Resolver: @unchecked Sendable {
         }
     }
 
-    /// `range` is the part this attempt asked for. A copy of a node that is up which breaks off without a status,
-    /// short of the end and not by a timeout, is a damaged copy at that position: the span is avoided on that
-    /// node, without strikes or backoff, unless the damage spreads over more than two blocks.
+    /// A copy of this node sent bytes before it was cancelled.
+    public func streamed(_ url: String) {
+        let node = NodeCatalog.nodeKey(of: url)
+        state.withLock { _ = $0.streamed.insert(node) }
+    }
+
+    /// `range` is the part this attempt asked for. A copy of a node that is up (it has sent bytes) which breaks
+    /// off without a status, short of the end and not by a timeout, is a damaged copy at that position: the span
+    /// is avoided on that node, without strikes or backoff. Damage in a third block is struck as before and not
+    /// recorded. A network change forgets all damage.
     public func failure(_ url: String, status: Int?, receivedBytes: Int64, range: ByteRange? = nil, timedOut: Bool = false) {
-        let delivered = receivedBytes > 0 || (bans?.hasDelivered(url) ?? false)
+        let delivered = bans?.hasDelivered(url) ?? false
+        let node = NodeCatalog.nodeKey(of: url)
         let key = Self.routeKey(url)
         let positional = state.withLock { value -> Bool in
+            if receivedBytes > 0 { value.streamed.insert(node) }
             guard let range, status == nil, !timedOut, receivedBytes < range.length,
-                  delivered || (value.routes[key]?.lastSuccessAt ?? 0) > 0 else { return false }
+                  delivered || value.streamed.contains(node) || (value.routes[key]?.lastSuccessAt ?? 0) > 0 else { return false }
             let offset = range.start + receivedBytes
             var blocks = value.damage[key] ?? [:]
             let block = offset / Self.damageBlock
+            if blocks[block] == nil && blocks.count >= Self.damagedBlockLimit { return false }
             blocks[block] = min(blocks[block] ?? offset, offset)
             value.damage[key] = blocks
-            return blocks.count <= Self.damagedBlockLimit
+            return true
         }
         if positional { return }
         bans?.record(url: url, receivedBytes: receivedBytes, status: status)

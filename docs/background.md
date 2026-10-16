@@ -96,11 +96,13 @@ startup or seeks are slow.
   gets to prove its other address, so the ban never lifts: overseas, cold Akamai lost every early race on
   `os=akam`, was banned for refusing `os=cosovbv`, and the fastest node went unused for the whole video
   (2026-10-16, ripper-bench q80 runs).
-- Damaged copies: when a node that has delivered breaks off without a status and not by a timeout (cut short,
-  or no response at all), the position is recorded for that node and file, from that byte to the end of its MiB,
-  and no piece or backup copy touching it goes to that node again; the rest resumes elsewhere as before. Such a
-  failure is no strike and no backoff unless that node's copy is damaged in more than two blocks. In BTR the
-  empty replies inside Akamai's gap struck the node and banned it after two (2026-10-16, q80 runs).
+- Damaged copies: when a node that is up (it has sent bytes) breaks off without a status and not by a timeout
+  (cut short, or no response at all), the position is recorded for that node and file, from that byte to the
+  end of its MiB. Pieces and backup copies touching it go to other nodes while any other allowed node is left;
+  the header (init and index) fetch does not check it. The rest resumes elsewhere as before. Such a failure is
+  no strike and no backoff for up to two damaged blocks per node and file; damage in a third block is struck as
+  before and not recorded. A network change forgets all damage. In BTR the empty replies inside Akamai's gap
+  struck the node and banned it after two (2026-10-16, q80 runs).
 
 ## Known environment limits
 

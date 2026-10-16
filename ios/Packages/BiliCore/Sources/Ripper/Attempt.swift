@@ -132,6 +132,7 @@ struct AttemptRunner: Sendable {
             if cancelled {
                 // A copy that lost the race still measured its node; without this a slow node is never measured.
                 if received >= Meter.sampleMinBytes { resolver.sample(url, bps: Double(received) * 1000 / elapsed) }
+                if received > 0 { resolver.streamed(url) }
                 ctx.logger.debug(.engine, "attempt cancelled", ["node": .init(node), "range": .init(part.description),
                                                                 "bytes": .init(received), "ms": .init(elapsed.rounded())])
             } else {

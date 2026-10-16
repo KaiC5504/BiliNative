@@ -117,6 +117,26 @@ final class ResolverTests: XCTestCase {
         XCTAssertFalse(resolver.allows(a))
     }
 
+    func testDamagePastTheLimitIsNotRecorded() {
+        let a = node(0)
+        resolver.success(a, bps: 0)
+        for block in Int64(0)..<3 {
+            resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: block << 20 + 1_000, end: block << 20 + 9_999)!)
+        }
+        XCTAssertTrue(resolver.avoids(a, ByteRange(start: 1 << 20 + 1_000, end: 1 << 20 + 9_999)!))
+        XCTAssertFalse(resolver.avoids(a, ByteRange(start: 2 << 20 + 1_000, end: 2 << 20 + 9_999)!))
+        XCTAssertFalse(resolver.ordered().contains(a), "struck and backed off as before")
+    }
+
+    func testBytesFromACutCopyShowTheNodeIsUp() {
+        let a = node(0)
+        resolver.failure(a, status: nil, receivedBytes: 9_972, range: ByteRange(start: 100_000, end: 199_999)!)
+        resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 300_000, end: 399_999)!)
+        resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 400_000, end: 499_999)!)
+        XCTAssertTrue(resolver.allows(a))
+        XCTAssertTrue(resolver.avoids(a, ByteRange(start: 300_000, end: 399_999)!))
+    }
+
     func testEmptyRepliesFromANodeThatNeverDeliveredAreStruckAsBefore() {
         let a = node(0)
         resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 300_000, end: 399_999)!)

@@ -237,6 +237,10 @@ final class AttemptTests: XCTestCase {
         XCTAssertEqual(cancelled?.f["range"], .string("0-299999"))
         XCTAssertEqual(cancelled?.f["node"], .string(TestEngine.cosov))
         XCTAssertNil(sink.events.first { $0.msg == "attempt failed" })
+        let gap = ByteRange(start: 200_000, end: 299_999)!
+        resolver.failure(target, status: nil, receivedBytes: 0, range: gap)
+        resolver.failure(target, status: nil, receivedBytes: 0, range: gap)
+        XCTAssertTrue(resolver.allows(target), "a node that streamed bytes is up, so its empty replies are positional")
     }
 
     func testMeterSmoothsAndSizesPieces() {
