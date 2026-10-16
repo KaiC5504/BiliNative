@@ -212,7 +212,7 @@ class FixtureHTTP: HTTPTransport, @unchecked Sendable {
     }
 }
 
-private final class RedirectingHTTP: FixtureHTTP {
+private final class RedirectingHTTP: FixtureHTTP, @unchecked Sendable {
     override func answer(_ request: HTTPRequest) -> (Int, Data) {
         guard request.url.path == "/x/web-interface/wbi/view" else { return super.answer(request) }
         return DemoFixtures.ok(#"{"bvid":"BV1Redirect01","aid":1,"title":"番剧","pages":[{"cid":1,"page":1,"part":"","duration":100}],"redirect_url":"https://www.bilibili.com/bangumi/play/ep1"}"#)
