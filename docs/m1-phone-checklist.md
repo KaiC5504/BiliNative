@@ -13,35 +13,48 @@ The app is called **BiliFast** on the phone. UI labels below are in Chinese, exa
 
 ## Measure each video
 
-Pick three videos that stutter in the official app (cold, 4K or high bitrate). For each one:
+Pick three videos that stutter in the official app (cold, 4K or high bitrate). Everything below is done once per video. The mode order and the seek positions change per video (the Results table says which), so neither mode always gets the warm start or the same cached parts.
 
-1. In the official app: Share → Copy link.
-2. In BiliFast tap 粘贴 (Paste) on the home screen. The player opens and the first frame appears.
-3. Check the pill under the video says BTR (pink). The stats box on the video shows 模式, 画质, 首帧, 跳转恢复, 卡顿, 下载.
-4. Write down 首帧 and 画质.
-5. Seek three times into parts not loaded yet (drag the bar well ahead each time). After each, write down 跳转恢复.
-6. Let it play for 2 minutes without touching it. Write down 卡顿 (the 次 count).
-7. Scroll the list under the video and turn off BTR 加速. The pill changes to 直连 (blue). Repeat steps 4-6 on the same video.
-8. Turn BTR 加速 back on afterwards.
-9. In the official app, time the same video with a stopwatch: tap to first frame, and one seek.
+**Why 编码 matters:** BTR and direct must play the same stream or the comparison means nothing. So for the two main runs set 编码 to **H.264** (or **AV1** if H.264 is greyed out or fails; use the same one for all three videos). The extra HEVC row at the end is the only run on HEVC.
+
+**Seeking rule:** a seek only counts if you drag the bar to a part that is not loaded yet (past the grey buffered area). If 跳转恢复 shows about 0.00 秒, that part was already loaded: don't count it, seek further ahead and write down the new one. Seek with one drag, then wait for playback to resume before the next one.
+
+1. Official app first. Do this for at least video 1, better for all three. In the official app play the video and time with a stopwatch: tap to first frame, then one seek (drag the bar to 50%). Write both times in the official app row.
+2. In the official app: Share → Copy link. In BiliFast tap 粘贴 on the home screen. The player opens.
+3. In the list under the video set 编码 to H.264 (or AV1). Set BTR 加速 on or off for the first run of this video (the table says which).
+4. Tap back, then tap the same video under 最近打开. It reopens at 0 with the toggle and 编码 you just saved. Wait for the first frame.
+5. Check the pill under the video: BTR (pink) when 加速 is on, 直连 (blue) when it is off. If it says 直连（回退） in a BTR run, note it and tell Claude.
+6. Write down from the stats box: 首帧, 画质, and the **codec shown on the 画质 line** (for example `1080P 高码率 · HEVC · 2.1 Mbps`). If the codec is not the one you picked in 编码, write down what it shows.
+7. Seek three times, using the percentages for this run (see Results): drag the bar to that position. After each, write down 跳转恢复.
+8. Let it play for 2 minutes without touching it. Write down 卡顿 (the 次 count).
+9. Flip the BTR 加速 switch for the second run and repeat steps 4-8 on the same video with the other seek percentages. Do not skip step 4: reopen from 最近打开 so 首帧 starts at 0.
+10. After the video's two runs, turn BTR 加速 back on.
+11. Video 1 only, extra run: BTR 加速 on, 编码 set to HEVC, reopen from 最近打开, write down 首帧, one seek (50%), and 卡顿. This shows what BTR does on the stream it will play by default.
 
 ## Results
 
 Pass criteria (spec section 5): on 3 cold, high-bitrate videos "BTR mode beats direct mode on time to first frame and seek-to-resume, with no more stalls", and BTR "feels at least as good as the official app". Also: you can log in and play a 4K HDR video you have access to.
 
-| video | mode (BTR / direct / official app) | 首帧 | seek 1 跳转恢复 | seek 2 | seek 3 | 卡顿 after 2 min | 画质 shown |
-|---|---|---|---|---|---|---|---|
-| 1 | BTR | | | | | | |
-| 1 | direct | | | | | | |
-| 1 | official app | | | | | n/a | n/a |
-| 2 | BTR | | | | | | |
-| 2 | direct | | | | | | |
-| 2 | official app | | | | | n/a | n/a |
-| 3 | BTR | | | | | | |
-| 3 | direct | | | | | | |
-| 3 | official app | | | | | n/a | n/a |
+Mode order and seek positions per video (the seek percentages are where you drag to):
 
-For the official app rows, write the stopwatch time for first frame and for one seek (seek 1 only).
+- Video 1: BTR first (seeks at 30%, 50%, 70%), then direct (40%, 60%, 80%).
+- Video 2: direct first (seeks at 30%, 50%, 70%), then BTR (40%, 60%, 80%).
+- Video 3: BTR first (seeks at 30%, 50%, 70%), then direct (40%, 60%, 80%).
+
+| video | run | mode | 编码 picked | codec shown | 首帧 | seek 1 跳转恢复 | seek 2 | seek 3 | 卡顿 after 2 min | 画质 shown |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | official app | official app | n/a | n/a | | one seek: | n/a | n/a | n/a | n/a |
+| 1 | 1st | BTR | | | | | | | | |
+| 1 | 2nd | direct | | | | | | | | |
+| 1 | extra | BTR | HEVC | | | | n/a | n/a | | |
+| 2 | official app | official app | n/a | n/a | | one seek: | n/a | n/a | n/a | n/a |
+| 2 | 1st | direct | | | | | | | | |
+| 2 | 2nd | BTR | | | | | | | | |
+| 3 | official app | official app | n/a | n/a | | one seek: | n/a | n/a | n/a | n/a |
+| 3 | 1st | BTR | | | | | | | | |
+| 3 | 2nd | direct | | | | | | | | |
+
+For the official app rows, write the stopwatch time for first frame and for one seek. If you only timed video 1, leave the other official app rows empty.
 
 ## Also check
 
