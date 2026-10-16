@@ -13,6 +13,8 @@ public struct RipperConfig: Sendable {
     public var prefetchAheadSeconds = 45.0
     /// Base priority of player requests; prefetch runs at 10.
     public var priority = 50.0
+    public var hurry = true
+    public var hurryAheadSeconds = 10.0
 
     public init() {}
 }
