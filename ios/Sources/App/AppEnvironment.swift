@@ -3,6 +3,8 @@ import Observation
 import WebKit
 import BiliAPI
 import BiliShared
+import Ripper
+import LocalHTTP
 import DevLog
 
 @MainActor
@@ -19,6 +21,12 @@ final class AppEnvironment {
     let settings = AppSettings()
     @ObservationIgnored let cookies: CookieJar
     @ObservationIgnored let client: BiliClient
+    @ObservationIgnored let auto = AutoConcurrency()
+    @ObservationIgnored let router: PlaybackRouter
+    @ObservationIgnored let server: LocalServer
+    @ObservationIgnored let directLoader = DirectPlaylistLoader()
+    @ObservationIgnored let transport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
+    @ObservationIgnored let codecMemory = CodecMemory()
     private(set) var account: Account = .unknown
     /// The last nav call failed (network, not a verdict), so `account` is still `.unknown`.
     private(set) var accountCheckFailed = false
@@ -49,6 +57,30 @@ final class AppEnvironment {
         persistBlocked = blocked
         cookies = jar
         client = BiliClient(transport: URLSessionHTTPTransport(), cookies: jar)
+        let router = PlaybackRouter()
+        let server = LocalServer(router: router)
+        // Set before the listener starts: onStop is read on the server's queue. A controller acts on the
+        // notification only while its BTR item plays, so a stop after playback ended changes nothing.
+        server.onStop = { [weak server] in
+            guard let server else { return }
+            NotificationCenter.default.post(name: .localServerStopped, object: server)
+        }
+        self.router = router
+        self.server = server
+    }
+
+    func startServices() async {
+        do {
+            try await server.start()
+        } catch {
+            Logger.shared.error(.server, "server did not start; playback will use direct mode", ["error": .init(String(describing: error))])
+        }
+    }
+
+    func playbackEnvironment(bvid: String, cid: Int64) -> PlaybackEnvironment {
+        PlaybackEnvironment(provider: BiliPlayURLProvider(client: client, bvid: bvid, cid: cid), router: router, server: server,
+                            directLoader: directLoader, transport: transport, auto: auto, nodeMode: settings.nodeChoice.mode,
+                            policy: .bilibili, ripperConfig: RipperConfig(), codecMemory: codecMemory, mediaHeaders: BiliClient.mediaHeaders)
     }
 
     /// Returns false when Bilibili could not be asked (network error); `account` then keeps its last value.
