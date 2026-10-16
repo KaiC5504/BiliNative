@@ -53,7 +53,7 @@ struct HomeView: View {
                         .controlSize(.large)
                         .tint(Theme.panelText)
                         .padding(28)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 16))
+                        .background(Theme.toastFill, in: RoundedRectangle(cornerRadius: 16))
                         .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
             }
