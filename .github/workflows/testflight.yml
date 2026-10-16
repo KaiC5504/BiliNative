@@ -162,8 +162,13 @@ jobs:
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
         run: |
           # A brand-new app has no builds yet; anything else non-numeric is an error.
-          if ! latest=$(app-store-connect get-latest-testflight-build-number "$ASC_APP_ID" --all-versions 2>&1); then
-            if echo "$latest" | grep -qiE "no build|did not find latest build"; then latest=0; else echo "$latest"; exit 1; fi
+          # For a new app the CLI exits 0 and prints "Did not find latest build ...".
+          status=0
+          latest=$(app-store-connect get-latest-testflight-build-number "$ASC_APP_ID" --all-versions 2>&1) || status=$?
+          if echo "$latest" | grep -qiE "no build|did not find latest build"; then
+            latest=0
+          elif [ "$status" -ne 0 ]; then
+            echo "$latest"; exit 1
           fi
           case "$latest" in
             ''|*[!0-9]*) echo "App Store Connect gave no build number: '$latest'"; exit 1 ;;
