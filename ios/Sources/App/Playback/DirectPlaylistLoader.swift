@@ -1,4 +1,5 @@
 import AVFoundation
+import UniformTypeIdentifiers
 import BiliShared
 
 /// Direct mode hands AVPlayer its playlists through a custom URL scheme instead of the local
@@ -8,9 +9,14 @@ final class DirectPlaylistLoader: NSObject, AVAssetResourceLoaderDelegate, @unch
     let queue = DispatchQueue(label: "bilinative.direct-loader")
     private let entries = Locked<[String: [String: String]]>([:])
 
+    /// bilinative://playlist/<token>/<name>. The token lives in the path because hosts are case-folded.
+    static func url(token: String, name: String) -> URL {
+        URL(string: "\(scheme)://playlist")!.appendingPathComponent(token).appendingPathComponent(name)
+    }
+
     func register(token: String, playlists: [String: String]) -> URL {
         entries.withLock { $0[token] = playlists }
-        return URL(string: "\(Self.scheme)://\(token)/master.m3u8")!
+        return Self.url(token: token, name: "master.m3u8")
     }
 
     func unregister(_ token: String) {
@@ -19,9 +25,16 @@ final class DirectPlaylistLoader: NSObject, AVAssetResourceLoaderDelegate, @unch
 
     func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
                         shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
-        guard let url = loadingRequest.request.url, url.scheme == Self.scheme, let token = url.host,
-              let text = entries.current[token]?[url.lastPathComponent] else { return false }
-        loadingRequest.dataRequest?.respond(with: Data(text.utf8))
+        guard let url = loadingRequest.request.url, url.scheme == Self.scheme else { return false }
+        let parts = url.pathComponents
+        guard parts.count == 3, let text = entries.current[parts[1]]?[parts[2]] else { return false }
+        let data = Data(text.utf8)
+        if let info = loadingRequest.contentInformationRequest {
+            info.contentType = UTType.m3uPlaylist.identifier
+            info.contentLength = Int64(data.count)
+            info.isByteRangeAccessSupported = false
+        }
+        loadingRequest.dataRequest?.respond(with: data)
         loadingRequest.finishLoading()
         return true
     }

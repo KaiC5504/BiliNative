@@ -27,7 +27,8 @@ enum PlaybackError: Error, Equatable {
 
 struct PreparedTrack {
     let stream: DashStream
-    /// The address that served the headers, and AVPlayer's media URI in direct mode.
+    /// Direct mode only: the address that answered the header request, used as AVPlayer's media URI.
+    /// Ripper mode fills in the stream's baseURL and never reads it; the engine picks its own nodes.
     let mediaURL: String
     /// Bytes 0 through the end of the SIDX, with the init segment already patched when needed.
     let headers: [UInt8]
@@ -61,10 +62,16 @@ enum PlaybackBuilder {
                                  fetch: (TrackKind, DashStream) async throws -> (bytes: [UInt8], total: Int64, url: String)) async throws -> PreparedPlayback {
         func track(_ kind: TrackKind, _ stream: DashStream) async throws -> (PreparedTrack, Bool) {
             let fetched = try await fetch(kind, stream)
-            guard let segments = SidxParser.parse(fetched.bytes, absoluteStart: 0) else { throw PlaybackError.noSidx }
+            guard let segments = SidxParser.parse(fetched.bytes, absoluteStart: 0) else {
+                Logger.shared.warn(.player, "headers unusable", ["track": .init(kind.rawValue), "reason": "sidx missing or not flat"])
+                throw PlaybackError.noSidx
+            }
             // InitSegmentFixer reports a buffer without moov as unchanged, and the playlist's
             // EXT-X-MAP must be served whole from these bytes.
-            guard hasCompleteMoov(fetched.bytes, initRange: stream.initialization) else { throw PlaybackError.noSidx }
+            guard hasCompleteMoov(fetched.bytes, initRange: stream.initialization) else {
+                Logger.shared.warn(.player, "headers unusable", ["track": .init(kind.rawValue), "reason": "no complete moov in init range"])
+                throw PlaybackError.noSidx
+            }
             var headers = fetched.bytes
             var rewrote = false
             if kind == .video {
@@ -100,9 +107,9 @@ enum PlaybackBuilder {
 
     /// AVPlayer reads Bilibili's original bytes in direct mode, so the codec string stays as given.
     static func directPlaylists(_ prepared: PreparedPlayback, token: String) -> [String: String] {
-        let base = "\(DirectPlaylistLoader.scheme)://\(token)/"
-        return playlists(prepared, videoURI: prepared.video.mediaURL, audioURI: prepared.audio.mediaURL,
-                         videoPlaylist: base + "v.m3u8", audioPlaylist: base + "a.m3u8", rewriteHEV1: false)
+        playlists(prepared, videoURI: prepared.video.mediaURL, audioURI: prepared.audio.mediaURL,
+                  videoPlaylist: DirectPlaylistLoader.url(token: token, name: "v.m3u8").absoluteString,
+                  audioPlaylist: DirectPlaylistLoader.url(token: token, name: "a.m3u8").absoluteString, rewriteHEV1: false)
     }
 
     private static func playlists(_ prepared: PreparedPlayback, videoURI: String, audioURI: String, videoPlaylist: String,
@@ -123,7 +130,7 @@ enum PlaybackBuilder {
     /// One plain request per address, Bilibili's own first, then its backups; the first that answers
     /// with the whole range wins. Some accounts get a primary that refuses everything (403) next to
     /// working backups on the same host.
-    static func directHeaders(_ stream: DashStream, transport: RangeTransport) async throws -> (bytes: [UInt8], total: Int64, url: String) {
+    private static func directHeaders(_ stream: DashStream, transport: RangeTransport) async throws -> (bytes: [UInt8], total: Int64, url: String) {
         guard let range = ByteRange(start: 0, end: stream.indexRange.end) else { throw PlaybackError.noSidx }
         let candidates = [stream.baseURL] + stream.backupURLs
         var refused = 0

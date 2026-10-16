@@ -61,7 +61,12 @@ final class LocalServerTests: XCTestCase {
         XCTAssertFalse(prepared.rewroteHEV1)
         let playlists = PlaybackBuilder.directPlaylists(prepared, token: "t")
         XCTAssertEqual(Set(playlists.keys), ["master.m3u8", "v.m3u8", "a.m3u8"])
-        XCTAssertTrue(playlists["v.m3u8"]?.contains("#EXT-X-BYTERANGE:1000@68") == true)
+        let video = try XCTUnwrap(playlists["v.m3u8"])
+        XCTAssertTrue(video.contains("#EXT-X-MAP:URI=\"https://primary.invalid/upgcxcode/80.m4s?deadline=1&upsig=sig\",BYTERANGE=\"24@0\""))
+        XCTAssertTrue(video.contains("#EXT-X-BYTERANGE:1000@68"))
+        let master = try XCTUnwrap(playlists["master.m3u8"])
+        XCTAssertTrue(master.contains("bilinative://playlist/t/v.m3u8"))
+        XCTAssertTrue(master.contains("URI=\"bilinative://playlist/t/a.m3u8\""))
     }
 
     func testPrepareRejectsHeadersWithoutACompleteMoov() async {
@@ -75,8 +80,10 @@ final class LocalServerTests: XCTestCase {
     }
 
     func testDirectModePlaysFromTheFirstAddressThatAnswers() async throws {
-        let fixture = DebugSupport.headerFixture(withMoov: true)
-        let transport = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total, refusing: ["primary.invalid"])
+        let fixture = DebugSupport.headerFixture(withMoov: true, backupHosts: ["whole.invalid", "skewed.invalid", "backup.invalid"])
+        let transport = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total,
+                                                      answers: ["primary.invalid": .refuse, "whole.invalid": .wholeFile,
+                                                                "skewed.invalid": .wrongRange])
         let prepared = try await PlaybackBuilder.prepareDirect(choice: fixture.choice, transport: transport)
         XCTAssertTrue(prepared.video.mediaURL.hasPrefix("https://backup.invalid/"))
         XCTAssertTrue(prepared.audio.mediaURL.hasPrefix("https://backup.invalid/"))
@@ -84,10 +91,12 @@ final class LocalServerTests: XCTestCase {
         for name in ["v.m3u8", "a.m3u8"] {
             let playlist = try XCTUnwrap(playlists[name])
             XCTAssertTrue(playlist.contains("https://backup.invalid/"), name)
-            XCTAssertFalse(playlist.contains("primary.invalid"), name)
+            for refused in ["primary.invalid", "whole.invalid", "skewed.invalid"] {
+                XCTAssertFalse(playlist.contains(refused), "\(name) \(refused)")
+            }
         }
 
-        let open = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total, refusing: [])
+        let open = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total, answers: [:])
         let direct = try await PlaybackBuilder.prepareDirect(choice: fixture.choice, transport: open)
         XCTAssertTrue(direct.video.mediaURL.hasPrefix("https://primary.invalid/"))
     }
@@ -95,13 +104,36 @@ final class LocalServerTests: XCTestCase {
     func testDirectModeFailsTypedWhenEveryAddressRefuses() async {
         let fixture = DebugSupport.headerFixture(withMoov: true)
         let transport = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total,
-                                                      refusing: ["primary.invalid", "backup.invalid"])
+                                                      answers: ["primary.invalid": .refuse, "backup.invalid": .refuse])
         do {
             _ = try await PlaybackBuilder.prepareDirect(choice: fixture.choice, transport: transport)
             XCTFail("expected PlaybackError.noSource")
         } catch {
             XCTAssertEqual(error as? PlaybackError, .noSource)
         }
+    }
+
+    func testClientDisconnectEndsTheEngineReadPromptly() async throws {
+        let server = LocalServer(router: DebugSupport.makeRouter())
+        try await server.start()
+        defer { server.stop() }
+        let readStarted = expectation(description: "read started")
+        readStarted.assertForOverFulfill = false
+        let readEnded = expectation(description: "read ended")
+        let token = DebugSupport.registerHangingAsset(on: server, onRead: { readStarted.fulfill() }, onEnd: { readEnded.fulfill() })
+
+        let task = URLSession.shared.dataTask(with: try XCTUnwrap(server.url(token: token, name: "hang.mp4")))
+        task.resume()
+        await fulfillment(of: [readStarted], timeout: 5)
+        task.cancel()
+        await fulfillment(of: [readEnded], timeout: 1.5)
+    }
+
+    func testDirectPlaylistURLsKeepTheTokenInThePath() {
+        let loader = DirectPlaylistLoader()
+        let url = loader.register(token: "AbC09", playlists: ["master.m3u8": "#EXTM3U\n"])
+        XCTAssertEqual(url.absoluteString, "bilinative://playlist/AbC09/master.m3u8")
+        XCTAssertEqual(url.pathComponents, ["/", "AbC09", "master.m3u8"])
     }
 }
 
