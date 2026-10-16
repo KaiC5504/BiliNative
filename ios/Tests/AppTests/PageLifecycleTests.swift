@@ -67,7 +67,9 @@ final class PageLifecycleTests: XCTestCase {
         try await navigate { navigator.path = [] }
         try await waitUntil { below.model.closed }
         XCTAssertTrue(belowFake.stopped)
-        XCTAssertNil(OrientationController.shared.owner)
+        let owner = OrientationController.shared.owner
+        XCTAssertNil(owner, owner === top.model ? "the popped top page took orientation back, closed \(top.model.closed)"
+                     : owner === below.model ? "the page below kept orientation, closed \(below.model.closed)" : "another page")
     }
 
     func testJumpingBackOverSeveralPagesClosesTheCoveredOnes() async throws {
@@ -186,7 +188,9 @@ final class PageLifecycleTests: XCTestCase {
         try await navigate { navigator.path.removeLast() }
         try await waitUntil { top.model.closed }
         XCTAssertTrue(top.model.closed, "kept \(PiPKeeper.shared.kept === top.model), covered \(top.model.covered), "
-                      + "PiP \(top.model.pipActive), lifecycle: "
+                      + "PiP \(top.model.pipActive), path \(navigator.path.count), "
+                      + "UIKit \(Self.navigationController(in: window?.rootViewController)?.viewControllers.count ?? -1), "
+                      + "same lifecycle as below \(top.model.presenter === below.model.presenter), lifecycle: "
                       + ((top.model.presenter as? PageLifecycle)?.diagnostics ?? "none"))
         try await waitUntil { !below.model.covered }
         XCTAssertTrue(topFake.stopped)

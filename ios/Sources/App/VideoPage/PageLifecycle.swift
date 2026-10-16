@@ -22,6 +22,7 @@ final class PageLifecycle {
     /// Bumped by every event; follow-up looks of an older event stop.
     private var checks = 0
     private var lastPlace: Place?
+    private var removed = false
 
     init() {
         keeper = .shared
@@ -50,7 +51,7 @@ final class PageLifecycle {
     /// page), when the stack still shows the old place and no later event may follow. So each event is followed
     /// by a few more looks until well after any transition it started.
     private func settleAndApply() {
-        guard shown, model != nil else { return }
+        guard shown, !removed, model != nil else { return }
         checks += 1
         let check = checks
         settle(apply)
@@ -68,12 +69,16 @@ final class PageLifecycle {
         settleAndApply()
     }
 
+    /// A page out of the stack never comes back: SwiftUI pushes a new page for the same model. Looks still
+    /// pending from earlier events must not show it again.
     private func apply(_ place: Place) {
-        guard let model else { return }
+        guard let model, !removed else { return }
         switch place {
         case .top: show(model, opened: false)
         case .covered: hide(model, removed: false)
-        case .removed: hide(model, removed: true)
+        case .removed:
+            removed = true
+            hide(model, removed: true)
         }
     }
 
@@ -81,6 +86,7 @@ final class PageLifecycle {
     /// several pages) gets no onDisappear, so it closes here.
     fileprivate func dismantled() {
         guard let model else { return }
+        removed = true
         hide(model, removed: true)
     }
 
@@ -153,12 +159,17 @@ final class PageLifecycle {
     /// For test failure messages.
     var diagnostics: String {
         let inStack = page.flatMap { page in navigation.map { $0.viewControllers.contains(page) } }
-        return "shown \(shown), settling \(settling), last place \(String(describing: lastPlace)), "
-            + "page \(page != nil), navigation \(navigation != nil), in stack \(String(describing: inStack)), "
+        let pageIsTop = navigation.map { $0.topViewController === page } ?? false
+        return "shown \(shown), removed \(removed), settling \(settling), last place \(String(describing: lastPlace)), "
+            + "page \(page.map { String(describing: type(of: $0)) } ?? "nil"), navigation \(navigation != nil), "
+            + "stack \(navigation?.viewControllers.count ?? -1), in stack \(String(describing: inStack)), page is top \(pageIsTop), "
             + "probe in window \(probe?.window != nil), place now \(place)"
     }
 
+    /// Finds the page's controller once and keeps it. After a pop SwiftUI can leave the probe where its responder
+    /// chain reaches the page now on top, which a fresh look would take for this page.
     private func locate() {
+        guard page == nil else { return }
         var responder: UIResponder? = probe
         while let current = responder {
             if let controller = current as? UIViewController, let navigation = controller.parent as? UINavigationController {
