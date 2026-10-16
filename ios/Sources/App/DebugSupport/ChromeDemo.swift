@@ -12,6 +12,7 @@ enum ChromeDemo {
     static func route(for name: String?) -> VideoRoute? {
         chromeRoute(for: name) ?? IntroDemo.route(for: name) ?? DanmakuSendDemo.route(for: name)
             ?? CommentsDemo.route(for: name) ?? ActionsDemo.route(for: name)
+            ?? ActionPromptsDemo.route(for: name)
     }
 
     private static func chromeRoute(for name: String?) -> VideoRoute? {

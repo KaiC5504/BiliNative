@@ -28,6 +28,7 @@ final class AppSettings {
         static let loop = "player.loop"
         static let fit = "player.fit"
         static let danmaku = "danmaku.settings"
+        static let coinAlsoLike = "coin.alsoLike"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -47,6 +48,8 @@ final class AppSettings {
     var autoplay: Bool { didSet { defaults.set(autoplay, forKey: Keys.autoplay) } }
     var loop: LoopMode { didSet { defaults.set(loop.rawValue, forKey: Keys.loop) } }
     var fit: FitMode { didSet { defaults.set(fit.rawValue, forKey: Keys.fit) } }
+    /// 同时点赞内容 in the coin dialog.
+    var coinAlsoLike: Bool { didSet { defaults.set(coinAlsoLike, forKey: Keys.coinAlsoLike) } }
     var danmaku: DanmakuSettings {
         didSet { if let data = try? JSONEncoder().encode(danmaku) { defaults.set(data, forKey: Keys.danmaku) } }
     }
@@ -64,6 +67,7 @@ final class AppSettings {
         autoplay = defaults.object(forKey: Keys.autoplay) as? Bool ?? true
         loop = LoopMode(rawValue: defaults.string(forKey: Keys.loop) ?? "") ?? LoopMode.none
         fit = FitMode(rawValue: defaults.string(forKey: Keys.fit) ?? "") ?? FitMode.fit
+        coinAlsoLike = defaults.object(forKey: Keys.coinAlsoLike) as? Bool ?? true
         danmaku = defaults.data(forKey: Keys.danmaku).flatMap { try? JSONDecoder().decode(DanmakuSettings.self, from: $0) } ?? .defaults
     }
 }

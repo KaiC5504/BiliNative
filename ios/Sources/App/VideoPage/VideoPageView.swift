@@ -2,11 +2,14 @@ import SwiftUI
 import UIKit
 import BiliAPI
 import AppLogic
+import DevLog
 
 struct VideoPageView: View {
     let route: VideoRoute
     /// Tests drive the open panel from outside; the page owns it otherwise.
     private let panelOverride: Binding<PlayerPanel?>?
+    /// The same for the coin dialog, the favourites sheet and the unfollow confirm.
+    private let promptsOverride: ActionPrompts?
     @Environment(AppEnvironment.self) private var env
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: VideoPageModel?
@@ -22,23 +25,27 @@ struct VideoPageView: View {
     @State private var loginRequested = false
     @State private var actions: ActionsModel?
     @State private var actionToast: String?
+    @State private var ownPrompts = ActionPrompts()
     #if DEBUG
     @State private var sendDemo: DanmakuSendBar.Demo?
     #endif
 
-    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil) {
+    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil, prompts: ActionPrompts? = nil) {
         self.route = route
         panelOverride = panel
+        promptsOverride = prompts
     }
 
     /// A page for a model that already exists: the one picture in picture kept after its page closed.
     init(model: VideoPageModel) {
         route = model.route
         panelOverride = nil
+        promptsOverride = nil
         _model = State(initialValue: model)
     }
 
     private var panel: Binding<PlayerPanel?> { panelOverride ?? $ownPanel }
+    private var prompts: ActionPrompts { promptsOverride ?? ownPrompts }
 
     var body: some View {
         ZStack {
@@ -50,6 +57,9 @@ struct VideoPageView: View {
                     .environment(actions)
                 PanelLayer(panel: panel, model: model, onNeedLogin: presentLogin)
                     .ignoresSafeArea()
+                actionOverlay
+                    .ignoresSafeArea()
+                    .zIndex(1)
                 if let viewing = comments?.viewing {
                     PictureViewer(viewing: viewing) { comments?.viewing = nil }
                         .transition(.opacity)
@@ -68,6 +78,13 @@ struct VideoPageView: View {
         .toolbar(.hidden, for: .navigationBar)
         .toast($actionToast)
         .loginGate($loginRequested)
+        .alert("确定不再关注？", isPresented: Binding(get: { prompts.unfollowAsked }, set: { prompts.unfollowAsked = $0 })) {
+            Button("取消", role: .cancel) {}
+            Button("确定") {
+                guard let actions else { return }
+                Task { await actions.toggleFollow() }
+            }
+        }
         .onAppear {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
@@ -76,6 +93,7 @@ struct VideoPageView: View {
             #if DEBUG
             ChromeDemo.stage(page: page, chrome: chrome)
             ActionsDemo.stage(page: page, chrome: chrome)
+            ActionPromptsDemo.stage(page: page, chrome: chrome) { actions }
             DanmakuSendDemo.stage(page: page, chrome: chrome) { demo in
                 sendDemo = demo
                 sendBarOpen = true
@@ -221,10 +239,25 @@ struct VideoPageView: View {
                                },
                                requestLogin: { presentLogin() },
                                toast: { actionToast = $0 })
+        prompts.close()
+        prompts.actions = actions
     }
 
-    /// Taps that open something first. Task 22 replaces the coin, favourites and unfollow cases with its dialog,
-    /// sheet and confirm; until then 投币 gives one coin at once, 收藏 does nothing and 已关注 unfollows at once.
+    @ViewBuilder
+    private var actionOverlay: some View {
+        if let actions, let overlay = prompts.overlay {
+            switch overlay {
+            case .coin:
+                CoinDialog(actions: actions, balance: prompts.balance, onClose: { prompts.close() })
+            case .favourites:
+                if let favourites = prompts.favourites {
+                    FavouriteSheet(actions: actions, model: favourites, onClose: { prompts.close() })
+                }
+            }
+        }
+    }
+
+    /// Taps that open something first.
     private func handle(_ prompt: ActionsModel.Prompt, for actions: ActionsModel) {
         actions.prompt = nil
         switch prompt {
@@ -235,11 +268,34 @@ struct VideoPageView: View {
                 if completed { Task { await actions.shared() } }
             }
         case .coin:
-            Task { await actions.coin(1, alsoLike: false) }
+            // At the limit there is nothing to choose: coin() only says "已投满N个硬币".
+            guard actions.maxCoins > 0 else {
+                Task { await actions.coin(1, alsoLike: false) }
+                return
+            }
+            let prompts = self.prompts
+            prompts.balance = nil
+            prompts.overlay = .coin
+            let client = env.client
+            Task {
+                do {
+                    let balance = try await client.coinBalance()
+                    if prompts.overlay == .coin { prompts.balance = balance }
+                } catch {
+                    Logger.shared.warn(.api, "coin balance failed", ["error": .init(String(describing: error))])
+                }
+            }
         case .favourites:
-            break
+            let env = self.env
+            let favourites = FavouritesModel(client: env.client, aid: actions.detail.aid, mid: {
+                if env.mid == nil { await env.refreshAccount() }
+                return env.mid
+            })
+            prompts.favourites = favourites
+            prompts.overlay = .favourites
+            Task { await favourites.load() }
         case .unfollow:
-            Task { await actions.toggleFollow() }
+            prompts.unfollowAsked = true
         }
     }
 }

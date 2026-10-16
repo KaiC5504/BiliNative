@@ -196,6 +196,8 @@ jobs:
           shoot picture-viewer 12 -DemoData YES -DemoScreen picture-viewer
           shoot page-actions-active 11 -DemoData YES -DemoScreen page-actions-active
           shoot player-landscape-actions 12 -DemoData YES -DemoScreen player-landscape-actions
+          shoot coin-dialog 11 -DemoData YES -DemoScreen coin-dialog
+          shoot favourite-sheet 11 -DemoData YES -DemoScreen favourite-sheet
 
       - name: Release build (no tests)
         if: env.FULL_RUN == 'true'

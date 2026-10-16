@@ -48,7 +48,8 @@ final class AppEnvironment {
     /// back until a read succeeds or the user logs in or out.
     @ObservationIgnored private let persistBlocked: Locked<Bool>
 
-    init() {
+    /// `http` lets a test see the requests a page sends; the app always passes nil.
+    init(http override: HTTPTransport? = nil) {
         let jar = CookieJar()
         let queue = DispatchQueue(label: "bilinative.cookies.persist")
         let blocked = Locked(false)
@@ -81,7 +82,7 @@ final class AppEnvironment {
         #else
         let http: HTTPTransport = URLSessionHTTPTransport()
         #endif
-        let client = BiliClient(transport: http, cookies: jar)
+        let client = BiliClient(transport: override ?? http, cookies: jar)
         self.client = client
         blockRules = BlockRuleStore(client: client)
         let router = PlaybackRouter()

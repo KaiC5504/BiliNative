@@ -10,7 +10,7 @@ enum DemoFixtures {
 
     /// Tried in order; a task that adds an endpoint adds a handler in its own file and lists it here.
     static let handlers: [Handler] = [DemoFixtures.launch, VideoPageFixtures.handle, DanmakuFixtures.handle, DemoFixtures.danmakuPost, DemoFixtures.blockRules,
-                                       ActionsFixtures.handle, HomeFixtures.handle, IntroFixtures.handle, CommentFixtures.handle]
+                                       FavouritesFixtures.handle, ActionsFixtures.handle, HomeFixtures.handle, IntroFixtures.handle, CommentFixtures.handle]
 
     static func response(for url: URL, method: String) -> (Int, Data) {
         for handler in handlers {
