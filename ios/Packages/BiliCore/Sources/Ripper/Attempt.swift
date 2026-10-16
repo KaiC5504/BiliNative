@@ -148,17 +148,24 @@ struct AttemptRunner: Sendable {
                                                                 "bytes": .init(received), "ms": .init(elapsed.rounded())])
             } else {
                 let ripperError = error as? RipperError
+                // BTR PR 11: the request waited behind the node's own transfers (URLSession's 8-per-host limit on
+                // HTTP/1.1 Akamai, or the node's queue), so it is neither a strike nor a reason to slow down.
+                let busy = received == 0 && ripperError == .firstByteTimeout && ctx.nodes.isBusy(url)
                 if ripperError == .firstByteTimeout { ctx.nodes.silent(url, waitedMs: elapsed) }
-                resolver.failure(url, status: ripperError?.status, receivedBytes: received, range: part,
-                                 timedOut: ripperError?.isTimeout == true)
-                if let status = ripperError?.status, status == 412 || status == 429 {
-                    ctx.auto?.pushback(status: status)
-                } else if ripperError?.isTimeout == true && received == 0 {
-                    ctx.auto?.slow()
+                if !busy {
+                    resolver.failure(url, status: ripperError?.status, receivedBytes: received, range: part,
+                                     timedOut: ripperError?.isTimeout == true)
+                    if let status = ripperError?.status, status == 412 || status == 429 {
+                        ctx.auto?.pushback(status: status)
+                    } else if ripperError?.isTimeout == true && received == 0 {
+                        ctx.auto?.slow()
+                    }
                 }
-                ctx.logger.debug(.engine, "attempt failed", ["node": .init(node), "range": .init(part.description),
-                                                             "error": .init(String(describing: error)),
-                                                             "bytes": .init(received), "ms": .init(elapsed.rounded())])
+                var fields: [String: LogValue] = ["node": .init(node), "range": .init(part.description),
+                                                  "error": .init(String(describing: error)),
+                                                  "bytes": .init(received), "ms": .init(elapsed.rounded())]
+                if busy { fields["busy"] = .init(true) }
+                ctx.logger.debug(.engine, "attempt failed", fields)
             }
             ctx.stats.failed(node: node, wastedBytes: received, cancelled: cancelled)
             throw error

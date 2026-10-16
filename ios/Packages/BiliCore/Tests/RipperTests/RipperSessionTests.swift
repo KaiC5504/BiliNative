@@ -345,6 +345,88 @@ final class RipperSessionTests: XCTestCase {
         session.close()
     }
 
+    /// One slow node (a segment takes about a second) and room for one prefetch, so after segment 0 is read
+    /// segment 1 is being prefetched when the player asks for it. Segment 0 is the session's first request.
+    func makeSlowPrefetchSession() async throws -> (session: RipperSession, transport: ScriptedTransport, all: [MediaSegment]) {
+        let all = segments()
+        let node = "upos-sz-mirrorcos.bilivideo.com"
+        let transport = ScriptedTransport(SimCDN(size: size, behaviors: [node: .init(bytesPerSecond: Double(segmentLength))]))
+        var config = TestEngine.slowConfig
+        config.minChunkBytes = segmentLength
+        config.prefetchVideoBytes = segmentLength
+        let session = RipperSession(sources: [.video: (TestEngine.primary, [])], mode: .custom([NodeAddress(host: node)]),
+                                    config: config, transport: transport, auto: nil, logger: Logger(session: "test"))
+        session.setSegments(.video, all)
+        _ = try await read(session, all[0].range)
+        XCTAssertEqual(session.prefetchesRunning(.video), 1, "segment 1 is being prefetched")
+        return (session, transport, all)
+    }
+
+    /// A read of `segment` takes over its prefetch, runs for a moment and is cancelled.
+    func adoptAndAbandon(_ session: RipperSession, _ segment: MediaSegment) async throws {
+        let reader = Task { try await self.read(session, segment.range) }
+        try await waitUntil { session.mediaRequestCount == 2 }
+        XCTAssertEqual(session.prefetchesRunning(.video), 0, "the read took the prefetch over")
+        try await sleepMs(100)
+        reader.cancel()
+        try await waitUntil { session.readsRunning == 0 }
+        _ = await reader.result
+    }
+
+    func deliveredBytes(_ transport: ScriptedTransport) -> Int64 {
+        transport.cdn.deliveredBytes.current.values.reduce(0, +)
+    }
+
+    func testCancelledReaderLeavesTheAdoptedPrefetchRunning() async throws {
+        let (session, transport, all) = try await makeSlowPrefetchSession()
+        let reader = Task { try await self.read(session, all[1].range) }
+        try await waitUntil { session.mediaRequestCount == 2 }
+        try await sleepMs(100)
+        reader.cancel()
+        try await sleepMs(300)
+        XCTAssertEqual(session.readsRunning, 0, "a cancelled read ends at once; it does not wait for the prefetch")
+        XCTAssertEqual(session.prefetchesRunning(.video), 1, "the prefetch is back, still downloading")
+        try await waitUntil(timeout: 5) { session.isCached(.video, all[1].range) }
+
+        let hitsBefore = session.stats().cacheHits
+        let bytes = try await read(session, all[1].range)
+        XCTAssertEqual(bytes, Array(transport.cdn.content[Int(all[1].range.start)...Int(all[1].range.end)]))
+        XCTAssertEqual(session.stats().cacheHits, hitsBefore + 1)
+        XCTAssertEqual(transport.requestedBytes(in: all[1].range), segmentLength, "segment 1 was downloaded once")
+        session.close()
+    }
+
+    func testCloseAndSeekStillCancelAPrefetchAReaderLeft() async throws {
+        do {
+            let (session, transport, all) = try await makeSlowPrefetchSession()
+            try await adoptAndAbandon(session, all[1])
+            XCTAssertEqual(session.prefetchesRunning(.video), 1)
+            session.close()
+            XCTAssertEqual(session.prefetchesRunning(.video), 0)
+            try await sleepMs(1_200)
+            XCTAssertEqual(deliveredBytes(transport), segmentLength, "close cancelled segment 1's download")
+        }
+        do {
+            let (session, transport, all) = try await makeSlowPrefetchSession()
+            try await adoptAndAbandon(session, all[1])
+            XCTAssertEqual(session.prefetchesRunning(.video), 1)
+            _ = try await read(session, all[9].range)
+            session.close()
+            try await sleepMs(1_200)
+            XCTAssertEqual(deliveredBytes(transport), 2 * segmentLength, "the seek cancelled segment 1's download; segments 0 and 9 arrived")
+        }
+    }
+
+    func testCloseCancelsAPrefetchItsReaderWasStillWaitingOn() async throws {
+        let (session, transport, all) = try await makeSlowPrefetchSession()
+        let reader = Task { try await self.read(session, all[1].range) }
+        try await waitUntil { session.mediaRequestCount == 2 }
+        session.close()
+        _ = await reader.result
+        try await sleepMs(1_200)
+        XCTAssertEqual(deliveredBytes(transport), segmentLength)
+    }
+
     func testPrefetchFailuresAreOnlyLoggedAndAPlayerFailureSignalsOnce() async throws {
         let all = segments()
         let transport = ScriptedTransport(SimCDN(size: size), refuseFrom: all[1].range.start)
