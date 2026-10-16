@@ -802,6 +802,20 @@ func testTextIsCappedAt100Characters()
 
 # Build B: the page and the entry points
 
+### Task 15b: Panel look, from KaiC's build A comparison
+
+KaiC compared build A's panels with the official app (2026-10-17, ⋮ and 清晰度 in landscape). Design only, no new rows or buttons.
+
+**Files:**
+- Modify: `ios/Sources/App/Shared/Theme.swift`, `ios/Sources/App/Player/Panels/SidePanel.swift`, `QualityPanel.swift`, and any panel that sets its own card colour or background
+- Test: the panel shots in the compile check
+
+- [ ] **Step 1: Panel background fades into the video.** The official panel is a see-through dark layer that blends into the video on the side facing it, with no hard edge; ours is a flat, heavier black with a hard edge. Use a horizontal gradient (landscape; vertical for the portrait sheet) from clear at the video side to dark at the screen edge, lighter overall than today's `Theme.panel`.
+- [ ] **Step 2: Softer cards.** Cards and the ⋮ square buttons are lighter and slightly see-through in the official app (about #2B2C30 with the video faintly behind), ours solid #212327. Change `Theme.panelCard` once so every panel (清晰度, 倍速, ⋮, 选集, 弹幕设置) follows.
+- [ ] **Step 3: Selected quality row is bold.** The playing row's title is pink and semibold in the official app; ours is pink at regular weight.
+- [ ] **Step 4: Official quality names.** Show the official app's own names instead of the server's description: `480P 标清` (seen in the official app; we showed `480P 清晰`). Keep a qn → name table in AppLogic with a test, fill the other rows from the official app when it shows them, and fall back to the server's text for a qn the table lacks.
+- [ ] **Step 5: Shots.** Compare `11-panel-quality`, `11-panel-more` and `panel-danmaku` with KaiC's official screenshots side by side.
+
 ### Task 16: Actions API
 
 **Files:**
