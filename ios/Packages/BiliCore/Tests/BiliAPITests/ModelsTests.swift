@@ -20,6 +20,7 @@ final class ModelsTests: XCTestCase {
         XCTAssertTrue(nav.isVip)
         XCTAssertEqual(nav.mid, 12345)
         XCTAssertEqual(nav.uname, "测试用户")
+        XCTAssertEqual(nav.face, "https://i0.hdslb.com/bfs/face/test.jpg")
     }
 
     func testView() throws {

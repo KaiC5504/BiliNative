@@ -203,6 +203,7 @@ final class PanelActionTests: XCTestCase {
     func testQualityAndSpeedLabels() {
         XCTAssertEqual(QualityPanel.title(for: QualityOption(id: 120, name: "超清 4K")), "4K 超高清")
         XCTAssertEqual(QualityPanel.title(for: QualityOption(id: 80, name: "高清 1080P")), "1080P 高清")
+        XCTAssertEqual(QualityPanel.title(for: QualityOption(id: 32, name: "清晰 480P")), "480P 标清")
         XCTAssertEqual(QualityPanel.title(for: QualityOption(id: 999, name: "未知")), "未知")
         XCTAssertEqual(SpeedPanel.choices.map(\.label), ["3.0X", "2.0X", "1.5X", "1.25X", "1.0X", "0.75X", "0.5X"])
     }

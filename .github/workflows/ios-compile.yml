@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - "ios/**"
+      - "tools/write_app_keys.py"
       - ".github/workflows/ios-compile.yml"
   workflow_dispatch:
 
@@ -38,6 +39,13 @@ jobs:
       - name: Core package tests
         if: env.FULL_RUN == 'true'
         run: swift test --package-path ios/Packages/BiliCore
+
+      # Same step as in testflight.yml. Without the secret (a fork, or before it is set) it prints a notice and
+      # the app builds with nil keys; either way the log never shows the values.
+      - name: App keys
+        env:
+          BILI_APP_KEYS: ${{ secrets.BILI_APP_KEYS }}
+        run: python3 tools/write_app_keys.py ios/Generated/AppKeys.swift
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -155,7 +163,9 @@ jobs:
             xcrun simctl io "$UDID" screenshot "shots/$name.png"
           }
           shoot 02-settings 8 -DemoScreen settings
-          shoot 00-demo-home 8 -DemoData YES
+          shoot 00-demo-home 5 -DemoData YES
+          shoot home-menu 5 -DemoData YES -DemoScreen home-menu
+          shoot history 6 -DemoData YES -DemoScreen history
           shoot 03-page 10 -DemoData YES -DemoScreen page
           shoot 22-danmaku-send 12 -DemoData YES -DemoScreen danmaku-send
           shoot 23-danmaku-style 12 -DemoData YES -DemoScreen danmaku-style

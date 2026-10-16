@@ -67,6 +67,7 @@ public struct NavInfo: Decodable, Sendable, Equatable {
     public let isLogin: Bool
     public let mid: Int64?
     public let uname: String?
+    public let face: String?
     public let vipStatus: Int
     public let vipType: Int
     public let imgURL: String
@@ -79,6 +80,7 @@ public struct NavInfo: Decodable, Sendable, Equatable {
         isLogin = try container.first(Bool.self, "isLogin") ?? false
         mid = try container.first(Int64.self, "mid")
         uname = try container.first(String.self, "uname")
+        face = try container.first(String.self, "face")
         vipStatus = try container.first(Int.self, "vipStatus") ?? 0
         vipType = try container.first(Int.self, "vipType") ?? 0
         let images = container.nested("wbi_img")

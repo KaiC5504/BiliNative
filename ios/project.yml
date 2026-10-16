@@ -29,6 +29,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources/App
+      # Written by tools/write_app_keys.py before xcodegen runs (the "App keys" step), nil without the secret.
+      - path: Generated/AppKeys.swift
       # Resources/Borrowed (PiliPlus's coin art and custom_icon.ttf) ships through this entry; a second
       # entry for it would copy the same files twice.
       - path: Resources

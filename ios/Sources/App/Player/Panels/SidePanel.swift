@@ -17,6 +17,12 @@ enum PanelMetrics {
     static let titleSize: CGFloat = 14
     static let iconInset: CGFloat = 17
     static let labelInset: CGFloat = 44
+    /// Where the official app's dark layer starts to fade in before its cards: 18% of the screen width in landscape.
+    /// The portrait sheet's height is chosen by eye, since the official app has no such sheet to measure.
+    static let fadeFraction: CGFloat = 0.18
+    static let fadeHeight: CGFloat = 90
+    /// The 弹幕设置 panel and the 倍速 strip have a hard edge instead; it sits this far before the cards.
+    static let edgeLead: CGFloat = 17
 }
 
 private struct PanelLandscapeKey: EnvironmentKey {
@@ -49,8 +55,17 @@ struct SidePanel<Content: View>: View {
         case column
     }
 
+    /// How the dark layer meets the video in landscape.
+    enum Edge {
+        /// A long ramp from clear, as behind 清晰度 and ⋮.
+        case fading
+        /// A hard edge, as behind 弹幕设置.
+        case hard
+    }
+
     let identifier: String
     let style: Style
+    let edge: Edge
     let portraitHeight: CGFloat
     let dismiss: () -> Void
     let content: () -> Content
@@ -60,10 +75,11 @@ struct SidePanel<Content: View>: View {
     @State private var shown = false
     @State private var closer: Task<Void, Never>?
 
-    init(identifier: String, style: Style = .side(width: 0.4), portraitHeight: CGFloat = 0.62,
+    init(identifier: String, style: Style = .side(width: 0.4), edge: Edge = .fading, portraitHeight: CGFloat = 0.62,
          dismiss: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
         self.identifier = identifier
         self.style = style
+        self.edge = edge
         self.portraitHeight = portraitHeight
         self.dismiss = dismiss
         self.content = content
@@ -80,7 +96,7 @@ struct SidePanel<Content: View>: View {
                 if landscape {
                     switch style {
                     case .side(let fraction):
-                        side(width: geometry.size.width * fraction, insets: insets)
+                        side(width: geometry.size.width * fraction, screenWidth: geometry.size.width, insets: insets)
                     case .column:
                         column(in: geometry.size, insets: insets)
                     }
@@ -110,8 +126,10 @@ struct SidePanel<Content: View>: View {
         }
     }
 
-    private func side(width: CGFloat, insets: UIEdgeInsets) -> some View {
-        ScrollView(showsIndicators: false) {
+    private func side(width: CGFloat, screenWidth: CGFloat, insets: UIEdgeInsets) -> some View {
+        let fading = edge == .fading
+        let reach = fading ? screenWidth * PanelMetrics.fadeFraction : PanelMetrics.edgeLead
+        return ScrollView(showsIndicators: false) {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, insets.top)
@@ -120,65 +138,98 @@ struct SidePanel<Content: View>: View {
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
-        .background(Theme.panel)
         .contentShape(Rectangle())
         .onTapGesture {}
+        .background(alignment: .trailing) {
+            PanelBackdrop(reach: reach, soft: fading)
+                .frame(width: width + reach)
+        }
         .background(PanelProbe(identifier: identifier))
         .accessibilityIdentifier(identifier)
-        .offset(x: shown ? 0 : width)
+        .offset(x: shown ? 0 : width + reach)
     }
 
-    /// The 倍速 column: a transparent strip at the right edge with the content centred in it, over a dimmed screen.
+    /// The 倍速 column: a dark strip at the right edge with the content centred in it, and the video untouched beside it.
     private func column(in size: CGSize, insets: UIEdgeInsets) -> some View {
-        ZStack(alignment: .trailing) {
-            Color.black.opacity(shown ? 0.4 : 0)
-                .allowsHitTesting(false)
-            // A scroll view, like the side panel's, so UIKit hit testing resolves a touch on the strip to it and not to the
-            // dismiss layer underneath; SwiftUI gestures alone do not stop that.
-            ScrollView(showsIndicators: false) {
-                content()
-                    .padding(.trailing, insets.right + PanelMetrics.trailingMargin)
-                    .frame(minHeight: size.height)
-            }
-            .frame(width: size.width * 0.28, height: size.height)
-            .contentShape(Rectangle())
-            .onTapGesture {}
-            .opacity(shown ? 1 : 0)
-                .background(PanelProbe(identifier: identifier))
-                .accessibilityIdentifier(identifier)
+        // A scroll view, like the side panel's, so UIKit hit testing resolves a touch on the strip to it and not to the
+        // dismiss layer underneath; SwiftUI gestures alone do not stop that.
+        ScrollView(showsIndicators: false) {
+            content()
+                .padding(.trailing, insets.right + PanelMetrics.trailingMargin)
+                .frame(minHeight: size.height)
         }
+        .frame(width: size.width * 0.28, height: size.height)
+        .contentShape(Rectangle())
+        .onTapGesture {}
+        .background(PanelBackdrop(reach: 0, soft: false))
+        .opacity(shown ? 1 : 0)
+        .background(PanelProbe(identifier: identifier))
+        .accessibilityIdentifier(identifier)
     }
 
     private func sheet(height: CGFloat, insets: UIEdgeInsets) -> some View {
-        ZStack(alignment: .bottom) {
-            Color.black.opacity(shown ? 0.4 : 0)
-                .allowsHitTesting(false)
-            VStack(spacing: 0) {
-                Capsule()
-                    .fill(Color.white.opacity(0.3))
-                    .frame(width: 36, height: 4)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture().onEnded { drag in
-                        if drag.translation.height > 40 { requestDismiss() }
-                    })
-                ScrollView(showsIndicators: false) {
-                    content()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Theme.Metrics.gutter)
-                        .padding(.bottom, insets.bottom + 12)
-                }
+        let reach = PanelMetrics.fadeHeight
+        return VStack(spacing: 0) {
+            Capsule()
+                .fill(Color.white.opacity(0.3))
+                .frame(width: 36, height: 4)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture().onEnded { drag in
+                    if drag.translation.height > 40 { requestDismiss() }
+                })
+            ScrollView(showsIndicators: false) {
+                content()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Theme.Metrics.gutter)
+                    .padding(.bottom, insets.bottom + 12)
             }
-            .frame(height: height, alignment: .top)
-            .frame(maxWidth: .infinity)
-            .background(Theme.panel, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
-            .contentShape(Rectangle())
-            .onTapGesture {}
-            .background(PanelProbe(identifier: identifier))
-            .accessibilityIdentifier(identifier)
-            .offset(y: shown ? 0 : height + insets.bottom)
         }
+        .frame(height: height, alignment: .top)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {}
+        .background(alignment: .bottom) {
+            PanelBackdrop(reach: reach, soft: true, vertical: true)
+                .frame(height: height + reach)
+        }
+        .background(PanelProbe(identifier: identifier))
+        .accessibilityIdentifier(identifier)
+        .offset(y: shown ? 0 : height + reach + insets.bottom)
+    }
+}
+
+/// The dark layer behind a panel. `reach` is how far it extends past the panel's frame towards the video: a ramp from
+/// clear when `soft`, a hard edge when not. It takes no touches, so a tap on it reaches the dismiss layer.
+struct PanelBackdrop: View {
+    let reach: CGFloat
+    let soft: Bool
+    var vertical = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            let length = vertical ? geometry.size.height : geometry.size.width
+            Rectangle()
+                .fill(LinearGradient(stops: Self.stops(reach: soft ? reach : 0, in: length, fullShade: vertical),
+                                     startPoint: vertical ? .top : .leading, endPoint: vertical ? .bottom : .trailing))
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// The sheet ramps all the way to full shade before its content starts: behind it is the light page, whose text
+    /// would ghost through the heading at the landscape ramp's end.
+    static func stops(reach: CGFloat, in length: CGFloat, fullShade: Bool = false) -> [Gradient.Stop] {
+        guard reach > 0, length > reach else {
+            return [Gradient.Stop(color: Theme.panelShade, location: 0), Gradient.Stop(color: Theme.panelShade, location: 1)]
+        }
+        let ramp = reach / length
+        let end = Theme.panelFade.last?.black ?? 1
+        let scale = fullShade ? Theme.panelShadeOpacity / end : 1
+        var stops = Theme.panelFade.map { Gradient.Stop(color: Color.black.opacity($0.black * scale), location: $0.location * ramp) }
+        stops.append(Gradient.Stop(color: Theme.panelShade, location: ramp + (1 - ramp) * 0.2))
+        stops.append(Gradient.Stop(color: Theme.panelShade, location: 1))
+        return stops
     }
 }
 
@@ -312,7 +363,7 @@ struct PanelCardRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(title)
-                            .font(.system(size: PanelMetrics.titleSize))
+                            .font(.system(size: PanelMetrics.titleSize, weight: selected ? .semibold : .regular))
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                         if let badge {
@@ -466,7 +517,7 @@ struct PanelSegments<Value: Equatable>: View {
                     select(item.value)
                 } label: {
                     Text(item.title)
-                        .font(.system(size: 12))
+                        .font(.system(size: 12, weight: selected ? .semibold : .regular))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .foregroundStyle(selected ? Theme.pink : Theme.panelText)
