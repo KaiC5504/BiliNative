@@ -78,33 +78,72 @@ final class InitSegmentFixerTests: XCTestCase {
         guard case .unplayable = InitSegmentFixer.fixHEV1(initSegment(entries: [good, bad])) else { return XCTFail("expected unplayable") }
     }
 
-    func testBoxSizesPastTheBufferNeverTrap() {
+    func testBoxSizesPastTheBufferNeverTrap() throws {
         let valid = MP4Builder.initSegment(entryType: "hev1", nalTypes: [32, 33, 34])
-        // Cutting at every length covers a buffer that ends inside moov, trak, stsd, the entry and hvcC.
         for length in 0..<valid.count {
             _ = InitSegmentFixer.fixHEV1(Array(valid[0..<length]))
         }
-        let moovStart = Int(BoxReader.uint32(valid, 0))
-        for offset in [moovStart, valid.count - 60, valid.count - 30] {
+        let sizeOffsets = [
+            try XCTUnwrap(boxStart("moov", in: valid)),
+            try XCTUnwrap(boxStart("hev1", in: valid)),
+            try XCTUnwrap(boxStart("hvcC", in: valid)),
+        ]
+        for offset in sizeOffsets {
             var hostile = valid
             hostile.replaceSubrange(offset..<offset + 4, with: [0xFF, 0xFF, 0xFF, 0xFF])
             _ = InitSegmentFixer.fixHEV1(hostile)
         }
         var largeSize = valid
-        largeSize.replaceSubrange(moovStart..<moovStart + 4, with: MP4Builder.be32(1))
+        largeSize.replaceSubrange(sizeOffsets[0]..<sizeOffsets[0] + 4, with: MP4Builder.be32(1))
         _ = InitSegmentFixer.fixHEV1(largeSize)
     }
 
-    func testOversizedEntryDoesNotChangeAnything() {
+    func testOversizedHev1EntryIsUnplayable() throws {
         var original = MP4Builder.initSegment(entryType: "hev1", nalTypes: [32, 33, 34])
-        let position = indexOf("hev1", in: original)! - 4
+        let position = try XCTUnwrap(boxStart("hev1", in: original))
+        original.replaceSubrange(position..<position + 4, with: MP4Builder.be32(0x7FFF_FFFF))
+        guard case .unplayable = InitSegmentFixer.fixHEV1(original) else { return XCTFail("expected unplayable") }
+    }
+
+    func testOversizedNonHevcEntryIsLeftAlone() throws {
+        var original = MP4Builder.initSegment(entryType: "avc1", nalTypes: [])
+        let position = try XCTUnwrap(boxStart("avc1", in: original))
         original.replaceSubrange(position..<position + 4, with: MP4Builder.be32(0x7FFF_FFFF))
         XCTAssertEqual(InitSegmentFixer.fixHEV1(original), .unchanged)
     }
 
-    func testBuffersWithoutMoovAreLeftAlone() {
-        XCTAssertEqual(InitSegmentFixer.fixHEV1(MP4Builder.box("ftyp", Array("iso6".utf8) + MP4Builder.be32(0))), .unchanged)
+    func testBufferCutBeforeMoovEndsIsUnplayableAtEveryLength() {
+        let valid = MP4Builder.initSegment(entryType: "hev1", nalTypes: [32, 33, 34])
+        for length in 8..<valid.count {
+            guard case .unplayable = InitSegmentFixer.fixHEV1(Array(valid[0..<length])) else {
+                return XCTFail("expected unplayable at \(length) bytes")
+            }
+        }
+        guard case .rewritten = InitSegmentFixer.fixHEV1(valid) else { return XCTFail("expected a rewrite") }
+    }
+
+    func testBuffersWithoutFtypOrMoovAreLeftAlone() {
         XCTAssertEqual(InitSegmentFixer.fixHEV1([]), .unchanged)
+        XCTAssertEqual(InitSegmentFixer.fixHEV1(MP4Builder.box("free", [1, 2, 3])), .unchanged)
+    }
+
+    func testFtypWithoutMoovIsUnplayable() {
+        guard case .unplayable(let reason) = InitSegmentFixer.fixHEV1(MP4Builder.box("ftyp", Array("iso6".utf8) + MP4Builder.be32(0))) else {
+            return XCTFail("expected unplayable")
+        }
+        XCTAssertEqual(reason, "incomplete moov")
+    }
+
+    func testRewritesAnFfmpegHev1InitSegment() throws {
+        let original = RealHEV1InitSegment.bytes
+        XCTAssertEqual(original.count, 3195)
+        guard case .rewritten(let fixed) = InitSegmentFixer.fixHEV1(original) else { return XCTFail("expected a rewrite") }
+        XCTAssertEqual(fixed.count, original.count)
+        let changed = original.indices.filter { original[$0] != fixed[$0] }
+        // hev1 -> hvc1 changes only the second and third letters.
+        let position = try XCTUnwrap(indexOf("hev1", in: original))
+        XCTAssertEqual(changed, [position + 1, position + 2])
+        XCTAssertEqual(Array(fixed[position..<position + 4]), Array("hvc1".utf8))
     }
 
     private func initSegment(entryChildren: [UInt8]) -> [UInt8] {
@@ -123,6 +162,10 @@ final class InitSegmentFixerTests: XCTestCase {
         let needle = Array(text.utf8)
         guard bytes.count >= needle.count else { return nil }
         return (0...(bytes.count - needle.count)).first { Array(bytes[$0..<$0 + needle.count]) == needle }
+    }
+
+    private func boxStart(_ type: String, in bytes: [UInt8]) -> Int? {
+        indexOf(type, in: bytes).map { $0 - 4 }
     }
 
     private func occurrences(_ text: String, in bytes: [UInt8]) -> Int {

@@ -11,8 +11,15 @@ public enum InitSegmentFixer {
     public static func fixHEV1(_ bytes: [UInt8]) -> InitFixResult {
         var output = bytes
         var rewrote = false
-        for moov in BoxReader.boxes(in: bytes, from: 0, to: bytes.count) where moov.type == "moov" {
-            for entry in sampleEntries(bytes, moov) where entry.type == "hev1" {
+        let topLevel = BoxReader.boxes(in: bytes, from: 0, to: bytes.count)
+        let moovs = topLevel.filter { $0.type == "moov" }
+        // Boxes cut off by the end of the buffer are dropped by BoxReader, so a missing moov after an
+        // ftyp means the caller's buffer is short, and an unpatched hev1 could be hiding in the rest.
+        if moovs.isEmpty, startsWithFtyp(bytes) { return .unplayable("incomplete moov") }
+        for moov in moovs {
+            let (entries, hasBrokenHev1) = sampleEntries(bytes, moov)
+            if hasBrokenHev1 { return .unplayable("hev1 sample entry is truncated or malformed") }
+            for entry in entries where entry.type == "hev1" {
                 guard hasParameterSets(bytes, entry) else { return .unplayable("hev1 without VPS/SPS/PPS in hvcC") }
                 output.replaceSubrange((entry.start + 4)..<(entry.start + 8), with: Array("hvc1".utf8))
                 rewrote = true
@@ -21,25 +28,35 @@ public enum InitSegmentFixer {
         return rewrote ? .rewritten(output) : .unchanged
     }
 
+    private static func startsWithFtyp(_ bytes: [UInt8]) -> Bool {
+        bytes.count >= 8 && BoxReader.type(bytes, 4) == "ftyp"
+    }
+
     private static func children(_ bytes: [UInt8], _ box: BoxHeader, type: String) -> [BoxHeader] {
         BoxReader.boxes(in: bytes, from: box.payloadStart, to: box.end).filter { $0.type == type }
     }
 
-    private static func sampleEntries(_ bytes: [UInt8], _ moov: BoxHeader) -> [BoxHeader] {
+    private static func sampleEntries(_ bytes: [UInt8], _ moov: BoxHeader) -> (entries: [BoxHeader], hasBrokenHev1: Bool) {
         var entries: [BoxHeader] = []
+        var hasBrokenHev1 = false
         for trak in children(bytes, moov, type: "trak") {
             for mdia in children(bytes, trak, type: "mdia") {
                 for minf in children(bytes, mdia, type: "minf") {
                     for stbl in children(bytes, minf, type: "stbl") {
                         for stsd in children(bytes, stbl, type: "stsd") {
                             // stsd is a full box: version/flags and entry_count come first.
-                            entries += BoxReader.boxes(in: bytes, from: stsd.payloadStart + 8, to: stsd.end)
+                            let entriesStart = stsd.payloadStart + 8
+                            let found = BoxReader.boxes(in: bytes, from: entriesStart, to: stsd.end)
+                            entries += found
+                            // BoxReader stops at an entry whose size runs past stsd; its type is still readable.
+                            let rest = found.last?.end ?? entriesStart
+                            if rest + 8 <= stsd.end, BoxReader.type(bytes, rest + 4) == "hev1" { hasBrokenHev1 = true }
                         }
                     }
                 }
             }
         }
-        return entries
+        return (entries, hasBrokenHev1)
     }
 
     private static func hasParameterSets(_ bytes: [UInt8], _ entry: BoxHeader) -> Bool {
