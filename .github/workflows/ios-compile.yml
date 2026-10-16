@@ -66,7 +66,17 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
 
+      - name: Restore test media
+        id: media
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/media
+          key: test-media-${{ runner.os }}-${{ hashFiles('ios/scripts/make_test_media.py') }}
+
       - name: Test media
+        if: steps.media.outputs.cache-hit != 'true'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
           command -v ffmpeg >/dev/null || brew install ffmpeg
           python3 ios/scripts/make_test_media.py "$RUNNER_TEMP/media"

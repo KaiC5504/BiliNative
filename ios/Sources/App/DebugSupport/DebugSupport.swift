@@ -3,6 +3,7 @@ import Foundation
 import Network
 import BiliShared
 import BiliAPI
+import DevLog
 import LocalHTTP
 import Ripper
 
@@ -270,6 +271,40 @@ struct FixtureMedia {
     }
 }
 
+/// Keeps the player's log events, so a test can tell which path playback took. The test target
+/// cannot import DevLog, so fields arrive as plain strings.
+final class CapturingLogSink: LogSink, @unchecked Sendable {
+    struct Entry: Sendable {
+        let message: String
+        let fields: [String: String]
+    }
+
+    private let store = Locked<[Entry]>([])
+
+    var entries: [Entry] { store.current }
+
+    func start() {
+        Logger.shared.add(self)
+    }
+
+    func stop() {
+        Logger.shared.remove(self)
+    }
+
+    func receive(_ event: LogEvent) {
+        guard event.cat == .player else { return }
+        let fields = event.f.mapValues { value -> String in
+            switch value {
+            case .string(let text): return text
+            case .int(let number): return String(number)
+            case .double(let number): return String(number)
+            case .bool(let flag): return String(flag)
+            }
+        }
+        store.withLock { $0.append(Entry(message: event.msg, fields: fields)) }
+    }
+}
+
 final class FixtureProvider: PlayURLProvider, @unchecked Sendable {
     let info: PlayURLInfo
     private let count = Locked(0)
@@ -304,7 +339,7 @@ enum FixturePlayback {
                               initialization: ByteRange.parse(track.initialization)!, indexRange: ByteRange.parse(track.indexRange)!)
         }
         let dash = Dash(duration: 40, video: [stream(media.video, id: 64, codecid: codecid)], audio: [stream(media.audio, id: 30280, codecid: 0)])
-        let info = PlayURLInfo(quality: 64, acceptQuality: [64], acceptDescription: ["测试 720P"], dash: dash, hasDurl: false)
+        let info = PlayURLInfo(quality: 64, acceptQuality: [64], acceptDescription: ["测试 360P"], dash: dash, hasDurl: false)
         var config = RipperConfig()
         config.fixedConcurrency = 8
         return PlaybackEnvironment(provider: FixtureProvider(info: info), router: router, server: server, directLoader: loader,

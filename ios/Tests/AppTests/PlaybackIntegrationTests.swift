@@ -71,6 +71,8 @@ final class PlaybackIntegrationTests: XCTestCase {
     }
 
     func testHEV1VideoPlaysThroughTheInitFix() async throws {
+        let media = try FixtureMedia.load(directory: mediaDirectory, variant: "hevc")
+        XCTAssertTrue(media.video.codecs.hasPrefix("hev1"), media.video.codecs)
         let (controller, _) = try makeController(variant: "hevc", codecid: 12, btr: true)
         await controller.start()
         try await waitUntil(60) { controller.currentSeconds >= 5 }
@@ -85,6 +87,7 @@ final class PlaybackIntegrationTests: XCTestCase {
         try await waitUntil(60) { controller.currentSeconds >= 3 }
         controller.debugKillServer()
         try await waitUntil(30) { controller.mode == .directFallback }
+        try await waitUntil(60) { controller.phase == .playing }
         let resumedAt = controller.currentSeconds
         try await waitUntil(60) { controller.currentSeconds >= resumedAt + 5 }
         XCTAssertFalse(playerRequests.isEmpty, "the fallback plays from the CDN directly")
@@ -130,12 +133,22 @@ final class PlaybackIntegrationTests: XCTestCase {
     }
 
     func testFailingRangesRefreshTheURLsAndThenFallBackToDirect() async throws {
+        let log = CapturingLogSink()
+        log.start()
+        defer { log.stop() }
         let (controller, provider) = try makeController(variant: "avc", codecid: 7, btr: true)
         nodes.forEach { $0.refuseEngineMedia(true) }
         await controller.start()
         XCTAssertEqual(controller.mode, .ripper, "headers still load, so playback starts in BTR mode")
         try await waitUntil(60) { controller.mode == .directFallback }
         XCTAssertGreaterThanOrEqual(provider.calls, 2, "the URLs were refreshed before giving up on BTR mode")
+        // AVPlayer failing the item in BTR mode also ends in .directFallback, with another reason.
+        let entries = log.entries
+        let refreshed = entries.firstIndex { $0.message == "btr range failed, refreshing urls" }
+        let fellBack = entries.firstIndex { $0.message == "fallback to direct" }
+        let fallback = try XCTUnwrap(fellBack, "no fallback logged")
+        XCTAssertEqual(entries[fallback].fields["reason"], "btr failed again")
+        XCTAssertLessThan(try XCTUnwrap(refreshed, "no refresh logged"), fallback)
         try await waitUntil(60) { controller.currentSeconds >= 3 }
         XCTAssertFalse(playerRequests.isEmpty)
         controller.stop()

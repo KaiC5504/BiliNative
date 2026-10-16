@@ -62,11 +62,13 @@ def hev1_codecs(path):
 
 def ranges(path):
     data = path.read_bytes()
-    found = {kind: (offset, size) for kind, offset, size in boxes(data)}
-    if "moov" not in found or "sidx" not in found:
-        raise SystemExit(f"{path.name}: expected moov and sidx, found {sorted(found)}")
-    moov_offset, moov_size = found["moov"]
-    sidx_offset, sidx_size = found["sidx"]
+    found = list(boxes(data))
+    kinds = [kind for kind, _, _ in found]
+    # The app's SidxParser reads one flat index directly after the init segment, as Bilibili serves it.
+    if kinds.count("moov") != 1 or kinds.count("sidx") != 1 or kinds.index("sidx") != kinds.index("moov") + 1:
+        raise SystemExit(f"{path.name}: expected one moov followed by one sidx, found {kinds[:6]}...")
+    _, moov_offset, moov_size = found[kinds.index("moov")]
+    _, sidx_offset, sidx_size = found[kinds.index("sidx")]
     return {
         "initialization": f"0-{moov_offset + moov_size - 1}",
         "indexRange": f"{sidx_offset}-{sidx_offset + sidx_size - 1}",
@@ -95,9 +97,13 @@ def build(variant, codec_args, out):
             kind = "video" if rep.get("width") else "audio"
             target = out / f"{variant}-{kind}.mp4"
             shutil.copy(work / f"{variant}-{rep_id}.mp4", target)
+            # Read from the file for HEVC so the sample entry is checked to really be hev1.
+            codecs = hev1_codecs(target) if variant == "hevc" and kind == "video" else rep.get("codecs")
+            if not codecs:
+                raise SystemExit(f"{target.name}: no codecs string in the MPD")
             result[kind] = {
                 "file": target.name,
-                "codecs": rep.get("codecs") or hev1_codecs(target),
+                "codecs": codecs,
                 "bandwidth": int(rep.get("bandwidth")),
                 "width": int(rep.get("width") or 0),
                 "height": int(rep.get("height") or 0),
