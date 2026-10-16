@@ -8,7 +8,7 @@ struct HomeView: View {
     @State private var opening = false
     @State private var errorText: String?
     @State private var partChoice: VideoView?
-    @State private var route: PlayerRoute?
+    @State private var route: VideoRoute?
     @State private var showLogin = false
     @State private var showSettings = false
     @State private var confirmClear = false
@@ -48,7 +48,7 @@ struct HomeView: View {
                 if !env.recents.items.isEmpty {
                     Section {
                         ForEach(env.recents.items) { item in
-                            Button { route = item } label: { RecentRow(item: item) }
+                            Button { route = item.videoRoute } label: { RecentRow(item: item) }
                         }
                     } header: {
                         HStack {
@@ -71,7 +71,7 @@ struct HomeView: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                 }
             }
-            .navigationDestination(item: $route) { PlayerScreen(route: $0).id($0.id) }
+            .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
             .sheet(isPresented: $showLogin) { LoginView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),
@@ -94,10 +94,10 @@ struct HomeView: View {
             .animation(.spring(duration: 0.3), value: opening)
             .task {
                 #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("-DemoScreen"),
-                   let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-DemoScreen"),
-                   ProcessInfo.processInfo.arguments.dropFirst(index + 1).first == "settings" {
-                    showSettings = true
+                switch UserDefaults.standard.string(forKey: "DemoScreen") {
+                case "settings": showSettings = true
+                case "page": route = VideoRoute(bvid: VideoPageFixtures.bvidA)
+                default: break
                 }
                 #endif
                 if env.account == .unknown { await env.refreshAccount() }
@@ -141,7 +141,7 @@ struct HomeView: View {
         partChoice = nil
         let next = PlayerRoute(bvid: view.bvid, cid: page.cid, title: view.title, part: page.part, page: page.page, pageCount: view.pages.count)
         env.recents.add(next)
-        route = next
+        route = next.videoRoute
     }
 
     private static func userMessage(_ error: Error) -> String {

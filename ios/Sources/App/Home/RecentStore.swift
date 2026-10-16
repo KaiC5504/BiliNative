@@ -10,6 +10,8 @@ struct PlayerRoute: Hashable, Codable, Identifiable {
     let pageCount: Int
 
     var id: String { "\(bvid)#\(cid)" }
+
+    var videoRoute: VideoRoute { VideoRoute(bvid: bvid, cid: cid) }
 }
 
 @MainActor

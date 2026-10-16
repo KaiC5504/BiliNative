@@ -25,8 +25,8 @@ final class VideoPageModel {
 
     @ObservationIgnored let client: BiliClient
     @ObservationIgnored let settings: AppSettings
-    @ObservationIgnored private let account: () -> Account
-    @ObservationIgnored private let makeController: (PlayItem) -> PlaybackControlling
+    @ObservationIgnored private let account: @MainActor () -> Account
+    @ObservationIgnored private let makeController: @MainActor (PlayItem) -> PlaybackControlling
     @ObservationIgnored private let sleep: (Double) async -> Void
     @ObservationIgnored private let onlineInterval: Double
 
@@ -49,8 +49,8 @@ final class VideoPageModel {
     @ObservationIgnored private var sideTasks: [Task<Void, Never>] = []
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
 
-    init(route: VideoRoute, client: BiliClient, settings: AppSettings, account: @escaping () -> Account,
-         makeController: @escaping (PlayItem) -> PlaybackControlling,
+    init(route: VideoRoute, client: BiliClient, settings: AppSettings, account: @escaping @MainActor () -> Account,
+         makeController: @escaping @MainActor (PlayItem) -> PlaybackControlling,
          sleep: @escaping (Double) async -> Void = { try? await Task.sleep(nanoseconds: UInt64(max(0, $0) * 1_000_000_000)) },
          onlineInterval: Double = 30) {
         self.route = route
