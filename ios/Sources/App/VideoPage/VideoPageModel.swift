@@ -460,7 +460,7 @@ final class VideoPageModel {
         let bvid = detail.bvid
         introTasks.forEach { $0.cancel() }
         introTasks = [
-            sideLoad("uploader card", bvid: bvid, { try await client.card(mid: detail.owner.mid) }) { $0.uploader = $1 },
+            sideLoad("uploader card", bvid: bvid, { try await client.uploaderCard(mid: detail.owner.mid) }) { $0.uploader = $1 },
             sideLoad("tags", bvid: bvid, { try await client.tags(bvid: bvid, cid: detail.pages.first?.cid ?? 0) }) { $0.tags = $1 },
         ]
         switch account() {
