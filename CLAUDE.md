@@ -8,7 +8,9 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 
 1. `docs/superpowers/specs/2026-10-16-m1-playback-core-design.md`: the approved milestone 1 design (what and why).
 2. `docs/superpowers/plans/2026-10-16-m1-playback-core.md`: the implementation plan, 29 tasks with full code.
-3. `docs/background.md`: how the project got here, prior art, and what real Bilibili CDN nodes do. Read it
+3. `docs/official-app-reference.md`: what each official-app screen looks like (KaiC's screenshots, kept in
+   `local/Sample Images/`, gitignored). Read it, and the matching image, before building any screen.
+4. `docs/background.md`: how the project got here, prior art, and what real Bilibili CDN nodes do. Read it
    before tuning the engine or debugging slow playback.
 
 ## Status
