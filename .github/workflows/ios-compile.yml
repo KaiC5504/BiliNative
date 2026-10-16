@@ -24,6 +24,8 @@ jobs:
       # main and m2 get everything. Task branches skip what the PC already checks (the BiliCore tests) and the
       # Release build, which main checks before every TestFlight build.
       FULL_RUN: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/m2' }}
+      # Homebrew's self-update took over two minutes before installing XcodeGen.
+      HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -36,25 +38,6 @@ jobs:
       - name: Core package tests
         if: env.FULL_RUN == 'true'
         run: swift test --package-path ios/Packages/BiliCore
-
-      # Booting takes over a minute, so it runs during the app build. Not earlier: it would slow the BiliCore
-      # tests, some of which are timed.
-      - name: Start a simulator
-        id: sim
-        run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c "
-          import json, sys
-          best = None
-          for runtime, items in json.load(sys.stdin)['devices'].items():
-              if 'iOS' not in runtime:
-                  continue
-              for device in items:
-                  if 'iPhone' in device['name'] and device['isAvailable']:
-                      best = device['udid']
-          print(best)
-          ")
-          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-          xcrun simctl boot "$UDID"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -74,6 +57,25 @@ jobs:
           echo "$debug" | grep -qw DEBUG
           echo "$debug" | grep -qw DEV_TOOLS
           echo "$release" | grep -qw DEV_TOOLS
+
+      # Booting takes over a minute, so it runs during the app build. Not earlier: it slows everything beside it,
+      # and some BiliCore tests are timed.
+      - name: Start a simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          best = None
+          for runtime, items in json.load(sys.stdin)['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for device in items:
+                  if 'iPhone' in device['name'] and device['isAvailable']:
+                      best = device['udid']
+          print(best)
+          ")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID"
 
       # Xcode's compilation cache is keyed by content, not file times, so a fresh checkout can reuse it.
       - name: Restore the compilation cache
@@ -108,8 +110,6 @@ jobs:
 
       - name: Test media
         if: steps.media.outputs.cache-hit != 'true'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
           command -v ffmpeg >/dev/null || brew install ffmpeg
           python3 ios/scripts/make_test_media.py "$RUNNER_TEMP/media"
