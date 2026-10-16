@@ -176,6 +176,11 @@ jobs:
           shoot block-words 16 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoBlockWords YES
           shoot panel-danmaku-portrait 12 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoPortrait YES
           shoot block-words-portrait 12 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoPortrait YES -DemoBlockWords YES
+          shoot page-intro 12 -DemoData YES -DemoScreen page-intro
+          shoot page-intro-expanded 12 -DemoData YES -DemoScreen page-intro-expanded
+          shoot sheet-collection 13 -DemoData YES -DemoScreen sheet-collection
+          shoot page-collapsed 13 -DemoData YES -DemoScreen page-collapsed
+          shoot danmaku-send-inline 12 -DemoData YES -DemoScreen danmaku-send-inline
 
       - name: Release build (no tests)
         if: env.FULL_RUN == 'true'

@@ -8,7 +8,12 @@ import AppLogic
 enum ChromeDemo {
     private typealias F = VideoPageFixtures
 
+    /// The demo screens that open a video page and are not listed in HomeView.
     static func route(for name: String?) -> VideoRoute? {
+        chromeRoute(for: name) ?? IntroDemo.route(for: name) ?? DanmakuSendDemo.route(for: name)
+    }
+
+    private static func chromeRoute(for name: String?) -> VideoRoute? {
         switch name {
         case "player-portrait": return VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 32)
         case "player-landscape": return VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 7)
@@ -24,7 +29,7 @@ enum ChromeDemo {
 
     static func stage(page: VideoPageModel, chrome: ChromeState) {
         let name = UserDefaults.standard.string(forKey: "DemoScreen")
-        guard !staged, route(for: name) != nil, let name else { return }
+        guard !staged, chromeRoute(for: name) != nil, let name else { return }
         staged = true
         chrome.autoHides = false
         page.settings.showOverlay = false

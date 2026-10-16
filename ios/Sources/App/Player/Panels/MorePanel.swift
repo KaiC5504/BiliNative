@@ -213,6 +213,10 @@ extension VideoPageModel {
     /// With no login cookies the client throws -101 before sending anything, so a logged-out tap needs no separate check.
     func addToWatchLater() async -> WatchLaterResult {
         guard let aid = detail?.aid else { return .failed("视频还没有加载完") }
+        return await addToWatchLater(aid: aid)
+    }
+
+    func addToWatchLater(aid: Int64) async -> WatchLaterResult {
         do {
             try await client.addToWatchLater(aid: aid)
             return .added
