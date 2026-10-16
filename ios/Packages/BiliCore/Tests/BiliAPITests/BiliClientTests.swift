@@ -1,4 +1,7 @@
 import XCTest
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import BiliShared
 import DevLog
 @testable import BiliAPI
@@ -134,7 +137,7 @@ final class BiliClientTests: XCTestCase {
         let http = FakeHTTP()
         http.routes = [viewPath: (200, Fixtures.view)]
         http.redirects["b23.tv/xyZ123a"] = URL(string: "https://www.bilibili.com/video/BV1GJ411x7h7")!
-        _ = try await makeClient(http).resolve(.short(URL(string: "http://b23.tv/xyZ123a")!))
+        _ = try await makeClient(http, cookies: ["SESSDATA": "abc", "buvid3": "b3"]).resolve(.short(URL(string: "http://b23.tv/xyZ123a")!))
         let first = try XCTUnwrap(http.requests.current.first)
         XCTAssertEqual(first.url.scheme, "https")
         XCTAssertEqual(first.url.host, "b23.tv")
@@ -152,6 +155,23 @@ final class BiliClientTests: XCTestCase {
             guard case .decoding = error as? BiliError else { return XCTFail("wrong error \(error)") }
         }
         XCTAssertTrue(http.requests(to: playPath).isEmpty)
+    }
+
+    func testRedirectKeepsCookieOnBilibiliHostsOnly() {
+        func redirected(_ urlString: String) -> String? {
+            var request = URLRequest(url: URL(string: urlString)!)
+            request.setValue("SESSDATA=abc", forHTTPHeaderField: "Cookie")
+            request.setValue("agent", forHTTPHeaderField: "User-Agent")
+            let result = URLSessionHTTPTransport.redirectedRequest(request)
+            XCTAssertEqual(result.value(forHTTPHeaderField: "User-Agent"), "agent")
+            return result.value(forHTTPHeaderField: "Cookie")
+        }
+        XCTAssertEqual(redirected("https://www.bilibili.com/video/BV1GJ411x7h7"), "SESSDATA=abc")
+        XCTAssertEqual(redirected("https://api.bilibili.com/x/web-interface/view"), "SESSDATA=abc")
+        XCTAssertEqual(redirected("https://bilibili.com/"), "SESSDATA=abc")
+        XCTAssertNil(redirected("https://evil.example/steal"))
+        XCTAssertNil(redirected("https://bilibili.com.evil.example/"))
+        XCTAssertNil(redirected("https://notbilibili.com/"))
     }
 
     func testCookieJarHeaderAndParse() {
