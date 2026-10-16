@@ -5,16 +5,27 @@ import AppLogic
 
 struct VideoPageView: View {
     let route: VideoRoute
+    /// Tests drive the open panel from outside; the page owns it otherwise.
+    private let panelOverride: Binding<PlayerPanel?>?
     @Environment(AppEnvironment.self) private var env
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: VideoPageModel?
     @State private var chrome = ChromeState()
-    @State private var panel: PlayerPanel?
+    @State private var ownPanel: PlayerPanel?
+
+    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil) {
+        self.route = route
+        panelOverride = panel
+    }
+
+    private var panel: Binding<PlayerPanel?> { panelOverride ?? $ownPanel }
 
     var body: some View {
         ZStack {
             if let model {
-                PageLayout(model: model, chrome: chrome, panel: $panel, danmaku: danmakuView(for: model))
+                PageLayout(model: model, chrome: chrome, panel: panel, danmaku: danmakuView(for: model))
+                PanelLayer(panel: panel, model: model)
+                    .ignoresSafeArea()
             } else {
                 Color.black.ignoresSafeArea()
             }
@@ -36,6 +47,19 @@ struct VideoPageView: View {
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             OrientationController.shared.videoIsVertical = vertical ?? false
         }
+        .task { await openDemoPanel() }
+    }
+
+    private func openDemoPanel() async {
+        #if DEBUG
+        guard let demo = DemoPanel.requested else { return }
+        if DemoPanel.landscape {
+            try? await Task.sleep(for: .seconds(1))
+            OrientationController.shared.enterLandscape()
+        }
+        try? await Task.sleep(for: .seconds(2.5))
+        panel.wrappedValue = demo
+        #endif
     }
 
     /// The danmaku renderer goes into the player here (Task 12); nil draws none.
@@ -87,7 +111,8 @@ private struct PlayerBox: View {
             PlayerSurface(player: model.controller?.player, fit: env.settings.fit, mirrored: model.mirrored,
                           allowsLevelGestures: !inline,
                           onGesture: { chrome.handle($0, page: model, size: size) },
-                          danmaku: danmaku)
+                          danmaku: danmaku,
+                          onHost: { [weak model] in model?.host = $0 })
             if let controller = model.controller {
                 if env.settings.showOverlay {
                     StatsOverlay(stats: controller.overlay, mode: controller.mode, quality: qualityLine(controller))
@@ -98,7 +123,6 @@ private struct PlayerBox: View {
             }
             ChromeLayer(model: model, chrome: chrome, panel: $panel)
             status
-            PanelLayer(panel: $panel, model: model)
         }
         .clipped()
         .animation(.smooth(duration: 0.25), value: env.settings.showOverlay)
