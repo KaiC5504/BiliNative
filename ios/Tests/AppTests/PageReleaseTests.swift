@@ -16,8 +16,12 @@ private struct ReleaseHarness: View {
     var body: some View {
         NavigationStack(path: $path.pages) {
             Color.clear
-                .navigationDestination(for: Int.self) { _ in
-                    VideoPageView(route: VideoRoute(bvid: VideoPageFixtures.bvidA), prompts: prompts)
+                .navigationDestination(for: Int.self) { page in
+                    if page == 1 {
+                        VideoPageView(route: VideoRoute(bvid: VideoPageFixtures.bvidA), prompts: prompts)
+                    } else {
+                        Color.white
+                    }
                 }
         }
     }
@@ -61,10 +65,25 @@ final class PageReleaseTests: XCTestCase {
         try await waitUntil { page?.closed ?? true }
         // The test's own handle on the actions.
         prompts.actions = nil
+        // SwiftUI may hold the last popped destination until the stack moves again; a plain page pushed and popped
+        // lets it go, while a real cycle survives it.
+        try await Task.sleep(for: .milliseconds(800))
+        path.pages = [2]
+        try await Task.sleep(for: .milliseconds(800))
+        path.pages = []
         try await waitUntil(10) { page == nil && actions == nil && comments == nil }
-        XCTAssertNil(page, "the popped page's VideoPageModel is still alive")
+        let leftover = Self.hostView(in: window).map { "a player view is still in the window (\($0.window != nil))" } ?? "no player view in the window"
+        XCTAssertNil(page, "the popped page's VideoPageModel is still alive; \(leftover); host in a window: \(page?.host?.window != nil)")
         XCTAssertNil(actions, "the popped page's ActionsModel is still alive")
         XCTAssertNil(comments, "the popped page's CommentsModel is still alive")
+    }
+
+    private static func hostView(in view: UIView) -> PlayerHostView? {
+        if let host = view as? PlayerHostView { return host }
+        for subview in view.subviews {
+            if let host = hostView(in: subview) { return host }
+        }
+        return nil
     }
 
     private func waitUntil(_ seconds: Double = 8, _ condition: () -> Bool,
