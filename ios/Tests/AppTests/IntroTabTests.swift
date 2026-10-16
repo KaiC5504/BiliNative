@@ -43,7 +43,7 @@ final class IntroTabTests: XCTestCase {
         let card = page.model.related[0]
         page.model.openRelated(card)
         XCTAssertEqual(page.navigator.path.count, 1)
-        let pushed = try XCTUnwrap(page.navigator.path.last)
+        guard case .video(let pushed)? = page.navigator.path.last else { return XCTFail("no video page pushed") }
         XCTAssertEqual(pushed.bvid, card.bvid)
         XCTAssertNil(pushed.cid)
         XCTAssertNil(pushed.startSeconds)
@@ -156,7 +156,8 @@ final class RelatedPushTests: XCTestCase {
         model.openRelated(card)
         let pushed = await waitUntil(8) { Self.hosts(in: window).contains { $0 !== first } }
         XCTAssertTrue(pushed, "no second page came up")
-        XCTAssertEqual(env.navigator.path.last?.bvid, card.bvid)
+        guard case .video(let pushed)? = env.navigator.path.last else { return XCTFail("no video page pushed") }
+        XCTAssertEqual(pushed.bvid, card.bvid)
         let covered = await waitUntil(5) { model.covered }
         XCTAssertTrue(covered, "the page under the related video should be covered, not closed")
         XCTAssertFalse(model.closed)
