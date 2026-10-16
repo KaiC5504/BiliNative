@@ -68,15 +68,7 @@ final class LocalServer: @unchecked Sendable {
         stateBox.withLock { $0 = .starting }
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let resumed = Locked(false)
-            @Sendable func resumeOnce(_ body: () -> Void) -> Bool {
-                let first = resumed.withLock { value -> Bool in
-                    defer { value = true }
-                    return !value
-                }
-                if first { body() }
-                return first
-            }
+            let once = Once()
             listener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
                 // stop() clears the box before cancelling; a newer start() puts its own listener there,
@@ -86,13 +78,13 @@ final class LocalServer: @unchecked Sendable {
                 case .ready:
                     // A listener stop() already let go of may still report ready; it must not mark the server running.
                     guard self.listenerBox.withLock({ $0 === listener }) else {
-                        _ = resumeOnce { continuation.resume(throwing: CancellationError()) }
+                        if once.claim() { continuation.resume(throwing: CancellationError()) }
                         return
                     }
                     let port = listener.port?.rawValue ?? 0
                     self.stateBox.withLock { $0 = .ready(port) }
                     Logger.shared.info(.server, "listening", ["port": .init(Int(port))])
-                    _ = resumeOnce { continuation.resume() }
+                    if once.claim() { continuation.resume() }
                 // A waiting listener may never become ready, which would leave start() hanging.
                 case .failed(let error), .waiting(let error):
                     if isCurrent { self.stateBox.withLock { $0 = .failed(String(describing: error)) } }
@@ -101,12 +93,20 @@ final class LocalServer: @unchecked Sendable {
                     listener.stateUpdateHandler = nil
                     listener.cancel()
                     self.listenerBox.withLock { if $0 === listener { $0 = nil } }
-                    if !resumeOnce({ continuation.resume(throwing: error) }), isCurrent { self.onStop?() }
+                    if once.claim() {
+                        continuation.resume(throwing: error)
+                    } else if isCurrent {
+                        self.onStop?()
+                    }
                 case .cancelled:
                     listener.stateUpdateHandler = nil
                     Logger.shared.warn(.server, "listener stopped")
                     if isCurrent { self.stateBox.withLock { $0 = .stopped } }
-                    if !resumeOnce({ continuation.resume(throwing: CancellationError()) }), isCurrent { self.onStop?() }
+                    if once.claim() {
+                        continuation.resume(throwing: CancellationError())
+                    } else if isCurrent {
+                        self.onStop?()
+                    }
                 default:
                     break
                 }

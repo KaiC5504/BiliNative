@@ -17,7 +17,7 @@ struct StatsOverlay: View {
             if let ripper = stats.ripper {
                 line("连接", "\(ripper.concurrency)  重复 \(String(format: "%.1f", ripper.duplicateShare * 100))%  缓存命中 \(ripper.cacheHits)")
                 ForEach(ripper.nodes, id: \.node) { node in
-                    let state = Self.bestState(of: node.node, in: ripper.nodeStates)
+                    let state = Resolver.NodeStatus.best(of: node.node, in: ripper.nodeStates)
                     HStack(spacing: 4) {
                         Circle().fill(Self.color(state?.state)).frame(width: 5, height: 5)
                         Text("\(shortName(node.node)) \(Int(node.firstByteMs))ms \(String(format: "%.1f", (state?.bps ?? 0) / 1_048_576))MB/s \(state?.state ?? "")")
@@ -44,12 +44,6 @@ struct StatsOverlay: View {
 
     private func shortName(_ node: String) -> String {
         node.replacingOccurrences(of: ".bilivideo.com", with: "").replacingOccurrences(of: "upos-sz-", with: "")
-    }
-
-    /// A node has one status per address it serves (one can be refused while another works); show the best.
-    private static func bestState(of node: String, in states: [Resolver.NodeStatus]) -> Resolver.NodeStatus? {
-        let rank = ["healthy": 0, "untested": 1, "blocked": 2, "banned": 3]
-        return states.filter { $0.node == node }.min { (rank[$0.state] ?? 9, -$0.bps) < (rank[$1.state] ?? 9, -$1.bps) }
     }
 
     private static func color(_ state: String?) -> Color {

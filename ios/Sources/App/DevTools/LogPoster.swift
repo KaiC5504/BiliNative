@@ -82,13 +82,9 @@ final class LogPoster: Sendable {
 
     private func ready(_ connection: NWConnection) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let resumed = Locked(false)
+            let once = Once()
             @Sendable func finish(_ result: Result<Void, Error>) {
-                let first = resumed.withLock { value -> Bool in
-                    defer { value = true }
-                    return !value
-                }
-                if first { continuation.resume(with: result) }
+                if once.claim() { continuation.resume(with: result) }
             }
             connection.stateUpdateHandler = { state in
                 switch state {

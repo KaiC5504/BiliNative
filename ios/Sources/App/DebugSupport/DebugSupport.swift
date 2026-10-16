@@ -155,13 +155,9 @@ final class FakeCDNServer: @unchecked Sendable {
             self.receive(connection, buffer: [])
         }
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
-            let resumed = Locked(false)
+            let once = Once()
             @Sendable func resumeOnce(_ result: Result<UInt16, Error>) {
-                let first = resumed.withLock { value -> Bool in
-                    defer { value = true }
-                    return !value
-                }
-                if first { continuation.resume(with: result) }
+                if once.claim() { continuation.resume(with: result) }
             }
             listener.stateUpdateHandler = { state in
                 switch state {
