@@ -114,6 +114,59 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(info.qualityOptions, [])
     }
 
+    private func playURL(video: [String], audio: [String] = [], extra: String = "") -> String {
+        #"{"code":0,"data":{"quality":80,"dash":{"duration":10,"video":[\#(video.joined(separator: ","))],"audio":[\#(audio.joined(separator: ","))]}\#(extra)}}"#
+    }
+
+    private func stream(id: Int = 80, extra: String) -> String {
+        #"{"id":\#(id),"baseUrl":"https://h/a.m4s","bandwidth":1,"mimeType":"video/mp4","codecs":"avc1","codecid":7,\#(extra)}"#
+    }
+
+    private let goodBase = #""SegmentBase":{"Initialization":"0-9","indexRange":"10-19"}"#
+
+    func testStreamWithoutSegmentBaseIsDroppedNotFatal() throws {
+        let json = playURL(
+            video: [stream(id: 64, extra: goodBase), stream(id: 80, extra: #""width":1"#), stream(id: 120, extra: goodBase)],
+            audio: [#"{"id":30280,"codecs":"mp4a.40.2"}"#, stream(id: 30216, extra: goodBase)])
+        let dash = try XCTUnwrap(decode(PlayURLInfo.self, json).data?.dash)
+        XCTAssertEqual(dash.video.map(\.id), [64, 120])
+        XCTAssertEqual(dash.audio.map(\.id), [30216])
+    }
+
+    func testStreamWithoutBaseURLIsDropped() throws {
+        let noURL = #"{"id":80,"codecs":"avc1","SegmentBase":{"Initialization":"0-9","indexRange":"10-19"}}"#
+        let dash = try XCTUnwrap(decode(PlayURLInfo.self, playURL(video: [noURL, stream(id: 64, extra: goodBase)])).data?.dash)
+        XCTAssertEqual(dash.video.map(\.id), [64])
+    }
+
+    func testIncompleteSegmentBaseFallsThroughToOtherSpelling() throws {
+        let both = stream(extra: #""SegmentBase":{"Initialization":"0-9"},"segment_base":{"initialization":"0-5","index_range":"6-11"}"#)
+        let dash = try XCTUnwrap(decode(PlayURLInfo.self, playURL(video: [both])).data?.dash)
+        XCTAssertEqual(dash.video.first?.initialization, ByteRange(start: 0, end: 5))
+        XCTAssertEqual(dash.video.first?.indexRange, ByteRange(start: 6, end: 11))
+        let reverse = stream(extra: #""segment_base":{"index_range":"junk"},"SegmentBase":{"Initialization":"0-9","indexRange":"10-19"}"#)
+        let other = try XCTUnwrap(decode(PlayURLInfo.self, playURL(video: [reverse])).data?.dash)
+        XCTAssertEqual(other.video.first?.indexRange, ByteRange(start: 10, end: 19))
+    }
+
+    func testFrameRateOnlyInSnakeCase() throws {
+        let dash = try XCTUnwrap(decode(PlayURLInfo.self, playURL(video: [stream(extra: goodBase + #","frame_rate":"25""#)])).data?.dash)
+        XCTAssertEqual(dash.video.first?.frameRate, "25")
+    }
+
+    func testBackupUrlOnlyInSnakeCase() throws {
+        let dash = try XCTUnwrap(decode(PlayURLInfo.self, playURL(video: [stream(extra: goodBase + #","backup_url":["https://h/b.m4s"]"#)])).data?.dash)
+        XCTAssertEqual(dash.video.first?.backupURLs, ["https://h/b.m4s"])
+    }
+
+    func testHasDurlNeedsANonEmptyArray() throws {
+        for (extra, expected) in [(#","durl":null"#, false), (#","durl":[]"#, false), ("", false),
+                                  (#","durl":[{"order":1,"url":"https://x/a.flv"}]"#, true)] {
+            let info = try XCTUnwrap(decode(PlayURLInfo.self, playURL(video: [], extra: extra)).data)
+            XCTAssertEqual(info.hasDurl, expected, extra)
+        }
+    }
+
     func testSPI() throws {
         let spi = try XCTUnwrap(decode(SPIInfo.self, Fixtures.spi).data)
         XCTAssertEqual(spi.b3, "B3-VALUE-infoc")

@@ -30,6 +30,19 @@ private func missing(_ field: String, _ decoder: Decoder) -> DecodingError {
     DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "missing \(field)"))
 }
 
+/// One undecodable element becomes nil instead of failing the whole array.
+private struct Lossy<T: Decodable>: Decodable {
+    let value: T?
+
+    init(from decoder: Decoder) {
+        value = try? T(from: decoder)
+    }
+}
+
+private struct Ignored: Decodable {
+    init(from decoder: Decoder) {}
+}
+
 public struct BiliEnvelope<T: Decodable>: Decodable {
     public let code: Int
     public let message: String?
@@ -160,21 +173,17 @@ public struct DashStream: Decodable, Sendable, Equatable {
         height = try container.first(Int.self, "height") ?? 0
         let rate = try container.first(String.self, "frameRate", "frame_rate")
         frameRate = (rate?.isEmpty ?? true) ? nil : rate
-        let initText: String?
-        let indexText: String?
-        if let segmentBase = container.nested("SegmentBase") {
-            initText = try segmentBase.first(String.self, "Initialization", "initialization")
-            indexText = try segmentBase.first(String.self, "indexRange", "index_range")
-        } else if let segmentBase = container.nested("segment_base") {
-            initText = try segmentBase.first(String.self, "initialization", "Initialization")
-            indexText = try segmentBase.first(String.self, "index_range", "indexRange")
-        } else {
-            initText = nil
-            indexText = nil
+        var ranges: (ByteRange, ByteRange)?
+        for key in ["SegmentBase", "segment_base"] {
+            guard let segmentBase = container.nested(key) else { continue }
+            let start = (try? segmentBase.first(String.self, "Initialization", "initialization")) ?? nil
+            let index = (try? segmentBase.first(String.self, "indexRange", "index_range")) ?? nil
+            if let start = start.flatMap(ByteRange.parse), let index = index.flatMap(ByteRange.parse) {
+                ranges = (start, index)
+                break
+            }
         }
-        guard let initRange = initText.flatMap(ByteRange.parse), let index = indexText.flatMap(ByteRange.parse) else {
-            throw missing("SegmentBase", decoder)
-        }
+        guard let (initRange, index) = ranges else { throw missing("SegmentBase", decoder) }
         initialization = initRange
         indexRange = index
     }
@@ -194,8 +203,8 @@ public struct Dash: Decodable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: AnyKey.self)
         duration = try container.first(Int.self, "duration") ?? 0
-        video = try container.first([DashStream].self, "video") ?? []
-        audio = try container.first([DashStream].self, "audio") ?? []
+        video = try container.first([Lossy<DashStream>].self, "video")?.compactMap(\.value) ?? []
+        audio = try container.first([Lossy<DashStream>].self, "audio")?.compactMap(\.value) ?? []
     }
 }
 
@@ -230,7 +239,8 @@ public struct PlayURLInfo: Decodable, Sendable {
         acceptQuality = try container.first([Int].self, "accept_quality") ?? []
         acceptDescription = try container.first([String].self, "accept_description") ?? []
         dash = try container.first(Dash.self, "dash")
-        hasDurl = container.contains(AnyKey("durl"))
+        let durl = (try? container.first([Ignored].self, "durl")) ?? nil
+        hasDurl = !(durl ?? []).isEmpty
     }
 
     public var qualityOptions: [QualityOption] {
