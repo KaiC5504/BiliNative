@@ -16,6 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVICE_TYPE = "_bilinative-log._tcp.local."
 COLORS = {"debug": "\033[90m", "info": "\033[0m", "warn": "\033[33m", "error": "\033[31m"}
 RESET = "\033[0m"
+SESSION_MAX = 64
 
 
 def lan_addresses():
@@ -35,11 +36,33 @@ def lan_addresses():
     return sorted(a for a in addresses if not a.startswith("127."))
 
 
+def stamp_of(t):
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
+        t = 0
+    try:
+        return dt.datetime.fromtimestamp(t).strftime("%H:%M:%S.%f")[:-3]
+    except (OverflowError, OSError, ValueError):
+        return "--:--:--.---"
+
+
 def summarize(event):
-    stamp = dt.datetime.fromtimestamp(event.get("t", 0)).strftime("%H:%M:%S.%f")[:-3]
-    level = event.get("level", "info")
-    fields = " ".join(f"{key}={value}" for key, value in sorted(event.get("f", {}).items()))
-    return f"{COLORS.get(level, '')}{stamp} {level:<5} {event.get('cat', '?'):<6} {event.get('msg', '')} {fields}{RESET}"
+    level = str(event.get("level", "info"))
+    fields = event.get("f")
+    if isinstance(fields, dict):
+        fields = " ".join(f"{key}={value}" for key, value in sorted(fields.items()))
+    else:
+        fields = ""
+    return f"{COLORS.get(level, '')}{stamp_of(event.get('t'))} {level:<5} {str(event.get('cat', '?')):<6} {event.get('msg', '')} {fields}{RESET}"
+
+
+def parse_line(line):
+    try:
+        event = json.loads(line)
+    except (ValueError, RecursionError):
+        event = None
+    if isinstance(event, dict):
+        return event
+    return {"level": "warn", "cat": "logserver", "msg": "unparsable line", "f": {"line": line[:200]}}
 
 
 class LogStore:
@@ -51,11 +74,14 @@ class LogStore:
         day = dt.date.today().isoformat()
         with self.lock:
             for event in events:
-                session = "".join(c for c in str(event.get("session", "unknown")) if c.isalnum()) or "unknown"
+                session = "".join(c for c in str(event.get("session", "unknown")) if c.isalnum())[:SESSION_MAX] or "unknown"
                 folder = self.root / day
-                folder.mkdir(parents=True, exist_ok=True)
-                with open(folder / f"{session}.jsonl", "a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+                try:
+                    folder.mkdir(parents=True, exist_ok=True)
+                    with open(folder / f"{session}.jsonl", "a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+                except OSError as error:
+                    print(f"logserver: write failed: {type(error).__name__}", file=sys.stderr)
 
 
 def make_handler(store, quiet):
@@ -72,19 +98,19 @@ def make_handler(store, quiet):
                 return
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length).decode("utf-8", errors="replace")
-            events = []
-            for line in body.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    events.append({"level": "warn", "cat": "logserver", "msg": "unparsable line", "f": {"line": line[:200]}})
-            store.append(events)
+            # NetworkSink writes one JSON object per "\n"; str.splitlines would also break on U+2028, U+2029 and U+0085, which JSON leaves unescaped.
+            events = [parse_line(line.strip()) for line in body.split("\n") if line.strip()]
+            try:
+                store.append(events)
+            except Exception as error:
+                print(f"logserver: store failed: {type(error).__name__}", file=sys.stderr)
             if not quiet:
                 for event in events:
-                    print(summarize(event), flush=True)
+                    # The file is the record; a console that cannot show a line must not cost the reply.
+                    try:
+                        print(summarize(event), flush=True)
+                    except (UnicodeError, OSError, ValueError):
+                        pass
             self._reply(200, b"ok")
 
         def _reply(self, status, body):
@@ -122,6 +148,8 @@ def main():
     parser.add_argument("--no-bonjour", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
+    # Windows consoles default to cp1252 when stdout is redirected, which cannot encode the Chinese UI text.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     server = make_server(args.port, ROOT / "logs", args.quiet)
     print(f"Writing to {ROOT / 'logs'}")
     for address in lan_addresses():
