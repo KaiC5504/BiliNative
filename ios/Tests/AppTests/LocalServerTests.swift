@@ -169,6 +169,27 @@ final class LocalServerTests: XCTestCase {
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
+    func testAnAbandonedListenerStopsQuietlyAndANewOneAnswers() async throws {
+        let server = LocalServer(router: DebugSupport.makeRouter())
+        let stops = ReadCounter()
+        server.onStop = { stops.increment() }
+        try await server.start()
+        defer { server.stop() }
+        let answered = await server.answers()
+        XCTAssertTrue(answered)
+
+        server.abandonListener()
+        XCTAssertFalse(server.isRunning)
+        let answeredStopped = await server.answers()
+        XCTAssertFalse(answeredStopped)
+
+        try await server.start()
+        let answeredAgain = await server.answers()
+        XCTAssertTrue(answeredAgain)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(stops.value, 0)
+    }
+
     func testClientDisconnectEndsTheEngineReadPromptly() async throws {
         let server = LocalServer(router: DebugSupport.makeRouter())
         try await server.start()

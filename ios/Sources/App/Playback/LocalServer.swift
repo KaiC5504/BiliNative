@@ -115,6 +115,44 @@ final class LocalServer: @unchecked Sendable {
         }
     }
 
+    /// iOS can take a suspended app's listening socket without the listener ever reporting it, so a server
+    /// that says it is ready is asked over loopback whether it still accepts connections.
+    func answers(within timeout: TimeInterval = 0.5) async -> Bool {
+        guard let port, let endpointPort = NWEndpoint.Port(rawValue: port) else { return false }
+        let connection = NWConnection(host: .ipv4(.loopback), port: endpointPort, using: .tcp)
+        let once = Once()
+        return await withCheckedContinuation { continuation in
+            let finish = { (answered: Bool) in
+                guard once.claim() else { return }
+                connection.stateUpdateHandler = nil
+                connection.cancel()
+                continuation.resume(returning: answered)
+            }
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready: finish(true)
+                case .failed, .waiting, .cancelled: finish(false)
+                default: break
+                }
+            }
+            connection.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + timeout) { finish(false) }
+        }
+    }
+
+    /// Drops a listener that no longer answers without reporting a stop: nothing can be using it, so no
+    /// playback should react.
+    func abandonListener() {
+        startTask.withLock { $0 = nil }
+        let listener = listenerBox.withLock { box -> NWListener? in
+            defer { box = nil }
+            return box
+        }
+        listener?.stateUpdateHandler = nil
+        listener?.cancel()
+        stateBox.withLock { $0 = .stopped }
+    }
+
     func stop() {
         // The cancel below ends a start in progress; a later start() must begin a new listener, not join that one.
         startTask.withLock { $0 = nil }

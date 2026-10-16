@@ -273,11 +273,15 @@ final class PlaybackController {
         }
     }
 
-    /// iOS reclaims a suspended app's listening socket, so a stopped server is started again before
-    /// a BTR playback settles for direct mode.
+    /// iOS reclaims a suspended app's listening socket, sometimes without the listener noticing, so a server
+    /// that stopped or no longer answers is started again before a BTR playback settles for direct mode.
     private func ripperAvailable(epoch current: Int) async throws -> Bool {
         guard btrEnabled, !forcedDirect else { return false }
         let server = environment.server
+        if server.isRunning, !(await server.answers()) {
+            Logger.shared.warn(.server, "ready but not answering, starting a new listener", ["port": .init(Int(server.port ?? 0))])
+            server.abandonListener()
+        }
         if !server.isRunning {
             Logger.shared.warn(.server, "not running at playback start, restarting", ["state": .init(String(describing: server.state))])
             do {
