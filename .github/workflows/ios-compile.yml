@@ -127,6 +127,12 @@ jobs:
           shoot 23-danmaku-style 12 -DemoData YES -DemoScreen danmaku-style
           shoot danmaku-portrait 14 -DemoData YES -DemoScreen danmaku-portrait -DemoPauseAt 26
           shoot danmaku-landscape 14 -DemoData YES -DemoScreen danmaku-landscape -DemoPauseAt 26
+          shoot 04-player-portrait 12 -DemoData YES -DemoScreen player-portrait
+          shoot 05-player-landscape 12 -DemoData YES -DemoScreen player-landscape
+          shoot 06-player-vertical 12 -DemoData YES -DemoScreen player-vertical
+          shoot 07-hud-speed 9 -DemoData YES -DemoScreen hud-speed
+          shoot 08-end-portrait 12 -DemoData YES -DemoScreen end-portrait
+          shoot 09-end-landscape 12 -DemoData YES -DemoScreen end-landscape
 
       - name: Release build (no tests)
         run: |

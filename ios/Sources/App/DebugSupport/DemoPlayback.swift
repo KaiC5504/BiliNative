@@ -24,6 +24,10 @@ final class DemoPlayback: PlaybackControlling {
     private(set) var position: Double = 0
     private(set) var duration: Double = 0
     private(set) var buffered: Double = 0
+    /// Reported instead of the test media's own length, so demo screens can show a longer video's bar.
+    var nominalDuration: Double? {
+        didSet { if let nominalDuration { duration = nominalDuration } }
+    }
     private(set) var isPlaying = false
     let videoSize: CGSize? = CGSize(width: 1920, height: 1080)
     var rate: Float = 1 {
@@ -125,7 +129,7 @@ final class DemoPlayback: PlaybackControlling {
         }
         position = seconds
         let total = item.duration.seconds
-        if total.isFinite, total > 0 { duration = total }
+        if total.isFinite, total > 0 { duration = nominalDuration ?? total }
         buffered = item.loadedTimeRanges.map(\.timeRangeValue).map(\.end.seconds).max() ?? seconds
         isPlaying = player.timeControlStatus != .paused
         onPosition?(seconds)

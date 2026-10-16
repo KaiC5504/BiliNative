@@ -89,7 +89,8 @@ final class DanmakuSendTests: XCTestCase {
         let rig = try await makeRig(transport: ClosedHTTP())
         rig.danmaku.load(cid: F.cidA1, bvid: F.bvidA, durationMs: 200_000)
         rig.danmaku.update(positionMs: 0, playing: true)
-        try await waitUntil { rig.danmaku.closed }
+        await rig.danmaku.settle()
+        XCTAssertTrue(rig.danmaku.closed)
         rig.sender.text = "你好"
         let failure = await rig.sender.send()
         XCTAssertEqual(failure, "UP主已关闭弹幕")
@@ -106,7 +107,7 @@ final class DanmakuSendTests: XCTestCase {
 
     // MARK: helpers
 
-    private final class PostHTTP: FixtureHTTP {
+    private final class PostHTTP: FixtureHTTP, @unchecked Sendable {
         let reply: String
 
         init(_ reply: String) {
@@ -119,10 +120,9 @@ final class DanmakuSendTests: XCTestCase {
         }
     }
 
-    /// A closed video answers its segment with state 1 and no danmaku (field 2, varint 1).
-    private final class ClosedHTTP: FixtureHTTP {
+    private final class ClosedHTTP: FixtureHTTP, @unchecked Sendable {
         override func answer(_ request: HTTPRequest) -> (Int, Data) {
-            request.url.path.hasSuffix("/seg.so") ? (200, Data([0x10, 0x01])) : super.answer(request)
+            request.url.path.hasSuffix("/seg.so") ? (200, DanmakuFixtures.segment(index: 1, closed: true)) : super.answer(request)
         }
     }
 
@@ -145,15 +145,5 @@ final class DanmakuSendTests: XCTestCase {
         danmaku.load(cid: F.cidA1, bvid: F.bvidA, durationMs: 200_000)
         let sender = DanmakuSendModel(client: client, page: page, danmaku: danmaku, isVip: { vip }, isLoggedIn: { loggedIn })
         return Rig(sender: sender, danmaku: danmaku, http: transport)
-    }
-
-    private func waitUntil(_ seconds: Double = 5, _ condition: @escaping @MainActor () -> Bool,
-                           file: StaticString = #filePath, line: UInt = #line) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            if condition() { return }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        XCTFail("timed out", file: file, line: line)
     }
 }
