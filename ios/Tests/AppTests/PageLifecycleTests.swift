@@ -186,7 +186,8 @@ final class PageLifecycleTests: XCTestCase {
         navigator.path.removeLast()
         try await waitUntil { top.model.closed }
         XCTAssertTrue(top.model.closed, "kept \(PiPKeeper.shared.kept === top.model), covered \(top.model.covered), "
-                      + "PiP \(top.model.pipActive), presenter \(String(describing: top.model.presenter))")
+                      + "PiP \(top.model.pipActive), lifecycle: "
+                      + ((top.model.presenter as? PageLifecycle)?.diagnostics ?? "none"))
         try await waitUntil { !below.model.covered }
         XCTAssertTrue(topFake.stopped)
         XCTAssertFalse(below.model.closed)
@@ -222,6 +223,20 @@ final class PageLifecycleTests: XCTestCase {
         XCTAssertEqual(shown.bvid, F.bvidC)
         XCTAssertNotEqual(shown.id, page.model.route.id, "a restored page gets a route of its own")
         XCTAssertEqual(navigator.path[3], .recents)
+    }
+
+    /// SwiftUI builds a popped page again while it animates out; it must still find the restored model.
+    func testPoppedRestoredPageKeepsItsModelUntilItCloses() {
+        let navigator = AppNavigator()
+        let page = makePage(VideoRoute(bvid: F.bvidC))
+        navigator.show(page.model)
+        guard case .video(let route) = navigator.path[0] else { return XCTFail("\(navigator.path)") }
+        navigator.path.removeLast()
+        navigator.open(VideoRoute(bvid: F.bvidA))
+        XCTAssertTrue(navigator.existingModel(for: route) === page.model, "a page still animating out lost its model")
+        page.model.close()
+        navigator.open(VideoRoute(bvid: F.bvidA))
+        XCTAssertNil(navigator.existingModel(for: route))
     }
 
     // MARK: helpers

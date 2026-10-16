@@ -18,6 +18,8 @@ final class PageLifecycle {
     fileprivate weak var probe: UIView?
     private weak var page: UIViewController?
     private weak var navigation: UINavigationController?
+    private var settling = 0
+    private var lastPlace: Place?
 
     init() {
         keeper = .shared
@@ -97,12 +99,16 @@ final class PageLifecycle {
     /// page out of `viewControllers`, and puts it back if the swipe is cancelled. The first look is on the next
     /// turn of the main queue, since SwiftUI can report before UIKit has started the transition.
     private func settle(attempt: Int = 0, _ body: @escaping @MainActor (Place) -> Void) {
+        if attempt == 0 { settling += 1 }
         Task { @MainActor in
             if attempt > 0 { try? await Task.sleep(for: .milliseconds(50)) }
             self.locate()
             // About 10 s of retries; a transition never lasts that long.
             guard attempt < 200, let coordinator = self.navigation?.transitionCoordinator ?? self.page?.transitionCoordinator else {
-                body(self.place)
+                self.settling -= 1
+                let place = self.place
+                self.lastPlace = place
+                body(place)
                 return
             }
             var retried = false
@@ -111,11 +117,24 @@ final class PageLifecycle {
                 retried = true
                 self.settle(attempt: attempt + 1, body)
             }
+            // A coordinator caught as its transition ends can accept the completion and never call it, so the
+            // look is repeated on a timer as well.
             let queued = coordinator.animate(alongsideTransition: nil) { _ in
                 MainActor.assumeIsolated { retry() }
             }
-            if !queued { retry() }
+            if queued {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            retry()
         }
+    }
+
+    /// For test failure messages.
+    var diagnostics: String {
+        let inStack = page.flatMap { page in navigation.map { $0.viewControllers.contains(page) } }
+        return "shown \(shown), settling \(settling), last place \(String(describing: lastPlace)), "
+            + "page \(page != nil), navigation \(navigation != nil), in stack \(String(describing: inStack)), "
+            + "probe in window \(probe?.window != nil), place now \(place)"
     }
 
     private func locate() {
