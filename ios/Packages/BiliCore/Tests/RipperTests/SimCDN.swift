@@ -1,0 +1,101 @@
+import Foundation
+import BiliShared
+import DevLog
+@testable import Ripper
+
+/// Serves one byte pattern on every node; each node (by host[:port]) can be made slow, broken or refusing.
+final class SimCDN: RangeTransport, @unchecked Sendable {
+    struct Behavior: Sendable {
+        var firstByteMs: Double = 2
+        var bytesPerSecond: Double = 200_000_000
+        var status = 206
+        /// Throw connection errors until this long after the SimCDN was created.
+        var failForMs: Double = 0
+        var truncateAfter: Int64?
+        var stallAfter: Int64?
+        var wrongRange = false
+    }
+
+    struct ConnectionLost: Error {}
+
+    let content: [UInt8]
+    private let behaviors: Locked<[String: Behavior]>
+    let requests = Locked<[String]>([])
+    private let born = ProcessInfo.processInfo.systemUptime
+
+    init(size: Int, behaviors: [String: Behavior] = [:]) {
+        content = (0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }
+        self.behaviors = Locked(behaviors)
+    }
+
+    func set(_ node: String, _ behavior: Behavior) {
+        behaviors.withLock { $0[node] = behavior }
+    }
+
+    func requestCount() -> Int { requests.current.count }
+
+    func fetch(_ url: URL, range: ByteRange) async throws -> TransportResponse {
+        let node = NodeCatalog.nodeKey(of: url.absoluteString)
+        requests.withLock { $0.append(node) }
+        let behavior = behaviors.current[node] ?? Behavior()
+        try await sleepMs(behavior.firstByteMs)
+        if (ProcessInfo.processInfo.systemUptime - born) * 1000 < behavior.failForMs { throw ConnectionLost() }
+        let empty = AsyncThrowingStream<[UInt8], Error> { $0.finish() }
+        if behavior.status != 206 { return TransportResponse(status: behavior.status, headers: [:], body: empty) }
+        guard range.end < Int64(content.count) else { return TransportResponse(status: 416, headers: [:], body: empty) }
+        let served = behavior.wrongRange ? (ByteRange(start: range.start + 1, end: range.end) ?? range) : range
+        let content = self.content
+        let body = AsyncThrowingStream<[UInt8], Error> { continuation in
+            let task = Task {
+                var offset = served.start
+                while offset <= served.end, !Task.isCancelled {
+                    let sent = offset - served.start
+                    if let limit = behavior.truncateAfter, sent >= limit { break }
+                    if let limit = behavior.stallAfter, sent >= limit {
+                        try? await Task.sleep(nanoseconds: 60_000_000_000)
+                        break
+                    }
+                    var end = min(served.end, offset + 16 * 1024 - 1)
+                    // Cut chunks exactly at the truncation and stall points.
+                    if let limit = behavior.truncateAfter { end = min(end, served.start + limit - 1) }
+                    if let limit = behavior.stallAfter { end = min(end, served.start + limit - 1) }
+                    continuation.yield(Array(content[Int(offset)...Int(end)]))
+                    let ms = Double(end - offset + 1) / behavior.bytesPerSecond * 1000
+                    if ms >= 1 { try? await sleepMs(ms) } else { await Task.yield() }
+                    offset = end + 1
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+        return TransportResponse(status: 206, headers: ["content-range": "bytes \(served.start)-\(served.end)/\(content.count)"], body: body)
+    }
+}
+
+enum TestEngine {
+    static let primary = "https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/1/2/3/v.m4s?deadline=9&os=cosbv"
+    static let cosov = "upos-sz-mirrorcosov.bilivideo.com"
+    static let aliov = "upos-sz-mirroraliov.bilivideo.com"
+    static let hk1 = "cn-hk-eq-01-01.bilivideo.com"
+    static let hk3 = "cn-hk-eq-01-03.bilivideo.com"
+
+    static var config: RipperConfig {
+        var config = RipperConfig()
+        config.firstByteTimeoutMs = 300
+        config.stallTimeoutMs = 300
+        config.attemptTimeoutMs = 3_000
+        config.hedgeDelayMs = 100
+        config.retryWindowMs = 5_000
+        config.fixedConcurrency = 8
+        return config
+    }
+
+    static func context(_ cdn: SimCDN, config: RipperConfig = TestEngine.config, auto: AutoConcurrency? = nil) -> EngineContext {
+        EngineContext(transport: cdn, pool: ConnectionPool(limit: config.fixedConcurrency ?? auto?.threads ?? 8), config: config,
+                      meter: Meter(), stats: EngineStats(), auto: auto, clock: .system, logger: Logger(session: "test"))
+    }
+
+    static func resolver() -> Resolver {
+        Resolver(primary: primary, backups: [], mode: .overseas, bans: BanList())
+    }
+}
