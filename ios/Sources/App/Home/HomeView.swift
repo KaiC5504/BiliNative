@@ -30,7 +30,7 @@ struct HomeView: View {
                 }
                 .background(Theme.card.ignoresSafeArea(edges: .top))
                 if let feed {
-                    FeedGrid(feed: feed, onOpen: { route = VideoRoute(bvid: $0.bvid, cid: $0.cid) }, onWatchLater: watchLater)
+                    FeedGrid(feed: feed, onOpen: { route = VideoRoute(bvid: $0.bvid) }, onWatchLater: watchLater)
                 } else {
                     Theme.pageGrey
                 }

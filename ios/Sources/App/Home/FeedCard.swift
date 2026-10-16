@@ -66,7 +66,10 @@ struct FeedCardView: View {
                 .padding(.leading, 10)
             Text(CountFormat.short(card.danmaku))
             Spacer(minLength: 4)
+            // On a narrow phone the counts give way; the duration is never cut.
             Text(Self.duration(card.duration))
+                .fixedSize()
+                .layoutPriority(1)
         }
         .font(.system(size: FeedMetrics.statSize))
         .monospacedDigit()
