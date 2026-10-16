@@ -142,7 +142,7 @@ final class BlockRuleStoreTests: XCTestCase {
         let client = BiliClient(transport: rig.http, cookies: rig.cookies)
         let model = VideoPageModel(route: VideoRoute(bvid: VideoPageFixtures.bvidA, startSeconds: 0), client: client,
                                    settings: AppSettings(defaults: UserDefaults(suiteName: suite)!), blockRules: rig.store,
-                                   account: { .loggedOut }, makeController: { FakePlayback(item: $0) })
+                                   account: { .loggedOut }, makeController: { FakePlayback(item: $0, player: $1) })
         await model.load()
         try await waitUntil { model.danmaku.rules.count == 4 }
         XCTAssertEqual(rig.http.requests(to: rulesPath).count, 1)
