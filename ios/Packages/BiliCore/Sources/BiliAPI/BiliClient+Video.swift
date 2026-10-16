@@ -41,8 +41,8 @@ extension BiliClient {
     }
 
     public func related(bvid: String) async throws -> [VideoCard] {
-        let items: [Lossy<RelatedItem>] = try await get("/x/web-interface/archive/related", query: ["bvid": bvid], signed: false)
-        return items.compactMap { $0.value?.card }
+        let items: [Lossy<RelatedItem>]? = try await getIfPresent("/x/web-interface/archive/related", query: ["bvid": bvid], signed: false)
+        return items?.compactMap { $0.value?.card } ?? []
     }
 
     public func heartbeat(bvid: String, cid: Int64, playedTime: Int) async throws {

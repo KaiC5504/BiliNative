@@ -13,14 +13,19 @@ public struct HeartbeatSchedule {
     }
 
     public mutating func tick(position: Double, playing: Bool) -> Int? {
-        guard playing, position - baseline >= interval else { return nil }
+        guard playing, position.isFinite, position - baseline >= interval else { return nil }
         baseline = position
-        return Int(position)
+        return seconds(position)
     }
 
     /// For events that always report (pause, seek done, part change, leaving).
     public mutating func mark(position: Double) -> Int {
-        baseline = position
-        return Int(position)
+        baseline = position.isFinite ? position : 0
+        return seconds(position)
+    }
+
+    /// CMTime.seconds is NaN while seeking or leaving; a stray negative must not read as the `finished` marker.
+    private func seconds(_ position: Double) -> Int {
+        Int(position.isFinite ? max(position, 0) : 0)
     }
 }
