@@ -128,6 +128,7 @@ final class RelatedPushTests: XCTestCase {
 
     override func tearDown() async throws {
         UserDefaults.standard.removeObject(forKey: "DemoData")
+        PiPKeeper.shared.release()
         window?.isHidden = true
         window = nil
     }
@@ -138,7 +139,7 @@ final class RelatedPushTests: XCTestCase {
         let model = env.makeVideoPageModel(route: VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         let window = UIWindow(windowScene: scene)
         window.rootViewController = UIHostingController(rootView: NavigationStack {
-            VideoPageView(route: model.route, model: model)
+            VideoPageView(model: model)
         }.environment(env))
         window.makeKeyAndVisible()
         self.window = window
@@ -152,10 +153,15 @@ final class RelatedPushTests: XCTestCase {
         let pushed = await waitUntil(8) { Self.hosts(in: window).contains { $0 !== first } }
         XCTAssertTrue(pushed, "no second page came up")
         XCTAssertEqual(model.pushedRoute?.bvid, card.bvid)
+        let covered = await waitUntil(5) { model.covered }
+        XCTAssertTrue(covered, "the page under the related video should be covered, not closed")
+        XCTAssertFalse(model.closed)
 
         model.pushedRoute = nil
         let back = await waitUntil(8) { Self.hosts(in: window).map(ObjectIdentifier.init) == [ObjectIdentifier(first)] }
         XCTAssertTrue(back, "the first page did not come back alone: \(Self.hosts(in: window).count) hosts")
+        let uncovered = await waitUntil(5) { !model.covered }
+        XCTAssertTrue(uncovered)
     }
 
     private func waitUntil(_ seconds: Double, _ condition: () -> Bool) async -> Bool {

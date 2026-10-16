@@ -24,11 +24,9 @@ struct VideoPageView: View {
     @State private var sendDemo: DanmakuSendBar.Demo?
     #endif
 
-    /// Tests may hand in the model, to drive the page from outside.
-    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil, model: VideoPageModel? = nil) {
+    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil) {
         self.route = route
         panelOverride = panel
-        _model = State(initialValue: model)
     }
 
     /// A page for a model that already exists: the one picture in picture kept after its page closed.
