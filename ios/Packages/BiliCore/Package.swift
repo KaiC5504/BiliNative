@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.iOS("26.0"), .macOS("15.0")],
     products: [
         .library(name: "BiliCore", targets: ["BiliShared", "DevLog", "BiliAPI", "DashHLS", "Ripper", "LocalHTTP"]),
+        .executable(name: "ripper-bench", targets: ["ripper-bench"]),
     ],
     targets: [
         .target(name: "BiliShared"),
@@ -20,6 +21,7 @@ let package = Package(
         .testTarget(name: "RipperTests", dependencies: ["Ripper", "BiliShared", "DevLog"]),
         .target(name: "LocalHTTP", dependencies: ["BiliShared"]),
         .testTarget(name: "LocalHTTPTests", dependencies: ["LocalHTTP", "BiliShared"]),
+        .executableTarget(name: "ripper-bench", dependencies: ["BiliShared", "BiliAPI", "DashHLS", "Ripper", "DevLog"]),
     ],
     swiftLanguageModes: [.v5]
 )
