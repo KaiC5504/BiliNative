@@ -133,12 +133,17 @@ struct SidePanel<Content: View>: View {
         ZStack(alignment: .trailing) {
             Color.black.opacity(shown ? 0.4 : 0)
                 .allowsHitTesting(false)
-            content()
-                .padding(.trailing, insets.right + PanelMetrics.trailingMargin)
-                .frame(width: size.width * 0.28, height: size.height)
-                .contentShape(Rectangle())
-                .onTapGesture {}
-                .opacity(shown ? 1 : 0)
+            // A scroll view, like the side panel's, so UIKit hit testing resolves a touch on the strip to it and not to the
+            // dismiss layer underneath; SwiftUI gestures alone do not stop that.
+            ScrollView(showsIndicators: false) {
+                content()
+                    .padding(.trailing, insets.right + PanelMetrics.trailingMargin)
+                    .frame(minHeight: size.height)
+            }
+            .frame(width: size.width * 0.28, height: size.height)
+            .contentShape(Rectangle())
+            .onTapGesture {}
+            .opacity(shown ? 1 : 0)
                 .background(PanelProbe(identifier: identifier))
                 .accessibilityIdentifier(identifier)
         }
