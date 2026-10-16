@@ -50,6 +50,9 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - No code copied from ATV-Bilibili-demo (GPL-2.0) or PiliPlus (GPL-3.0); read them for endpoints and
   formats only. The BTR port keeps BTR's MIT notice (`ios/Packages/BiliCore/Sources/Ripper/LICENSE-BTR.txt`).
 - No Bilibili logo or wordmark in the app; layout and colours may follow the official app.
+- Bilibili art and PiliPlus images or fonts are never committed. The few the app borrows (the coin dialog art and
+  PiliPlus's icon font, KaiC's call on 2026-10-17) are downloaded by the build at a pinned commit and hash-checked
+  (milestone 2 spec, section 5.3); they must be replaced before any public release.
 - UI text is Simplified Chinese.
 - The network log sink is compiled only with `DEV_TOOLS` and never ships in a public release build.
 - `ios/Packages/BiliCore` is Foundation-only, no third-party packages, Swift 5 language mode, and must build

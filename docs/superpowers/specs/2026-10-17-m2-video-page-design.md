@@ -32,8 +32,9 @@ actions, but faster playback.
 | End of video | Next 分P or 合集 episode; a single video stops on the end screen | KaiC |
 | Extras | Chapters yes; subtitles, seek thumbnails, tap-a-danmaku and 当前弹幕列表 no | KaiC |
 | ⋮ panel | 定时关闭, 自动连播, 循环播放, 稍后再看, 画面尺寸, 镜像翻转. Not 听视频, 后台听视频, 投屏, 色觉辅助, 播放反馈, 编辑播放器 | KaiC |
-| Coin dialog art | The official 22娘/33娘 art, loaded at run time from Bilibili's own servers, never committed (falls back to our own drawing) | Claude, after KaiC asked for the official art |
-| Icons | Drawn by us as vectors to match the screenshots, or SF Symbols where one matches. Nothing copied from PiliPlus (GPL) or Bilibili's app | Claude, KaiC asked to be told if PiliPlus's icons could not be used |
+| Coin dialog art and Bilibili-style icons | PiliPlus's images: the coin dialog PNGs (`assets/images/paycoins/`) and the glyphs in its icon font (`assets/fonts/custom_icon.ttf`: 弹 on/off, 弹 settings and the rest). Personal use; KaiC accepts that they are Bilibili's art and GPL-licensed in PiliPlus | KaiC |
+| How those images get in | Downloaded from PiliPlus's GitHub at one pinned commit by the build workflows and copied into the app bundle; never committed to this public repo, so the repo cannot draw a takedown that would stop the free Mac builds. They must be replaced before any public release | Claude |
+| Other icons | PiliPlus's remaining icons are Google Material icons, which don't match the official look; ours are drawn as vectors to match the screenshots, or SF Symbols where one matches | Claude |
 | 充电 | Left out everywhere: it spends real money | Claude |
 | API source | Bilibili's web API with the existing cookie login, signed with WBI and the `bili_jct` CSRF token. The app API only for 不喜欢 | Claude |
 
@@ -266,7 +267,7 @@ the server's message as a toast.
 | 点赞 | Tap toggles; clears 不喜欢 | `POST /x/web-interface/archive/like` `aid`, `like` (1 like, 2 undo), `csrf` |
 | 长按三连 | Hold 点赞: after 0.2 s a ring fills around 点赞, 投币 and 收藏 over 1.2 s; releasing early cancels; completing fires 三连 with a burst; "已三连" if all three are already done | `POST /x/web-interface/archive/like/triple` `aid`, `csrf` |
 | 不喜欢 | Tap toggles; clears 点赞. Needs the app token (4.14); without it the button is grey and tapping explains | `POST https://app.bilibili.com/x/v2/view/dislike` `aid`, `dislike` (0 dislike, 1 undo), APP-signed |
-| 投币 | The coin dialog (15): two cards 1/2 硬币, ◀ ▶ or swipe to choose, swipe up or tap to throw, the balance, "同时点赞内容" (remembered), ✕. 2 is disabled for reposts (`copyright == 2`), after one coin was given, or with a balance under 2. At the limit: "已投满2个硬币". The mascot and crate art load from Bilibili's web static server; if they fail, our own drawing | `POST /x/web-interface/coin/add` `aid`, `multiply`, `select_like`, `csrf`; balance from `GET https://account.bilibili.com/site/getCoin` |
+| 投币 | The coin dialog (15): two cards 1/2 硬币, ◀ ▶ or swipe to choose, swipe up or tap to throw, the balance, "同时点赞内容" (remembered), ✕. 2 is disabled for reposts (`copyright == 2`), after one coin was given, or with a balance under 2. At the limit: "已投满2个硬币". The mascot, crate and coin art are PiliPlus's paycoins PNGs (section 5.3); not enough coins shows its "not enough" mascot | `POST /x/web-interface/coin/add` `aid`, `multiply`, `select_like`, `csrf`; balance from `GET https://account.bilibili.com/site/getCoin` |
 | 收藏 | A bottom sheet "选择收藏夹": folders with checkmarks (this video's current folders ticked), private folders with a lock, "+ 新建收藏夹" (name and a 私密 switch), 完成 applies the difference | `GET /x/v3/fav/folder/created/list-all` `up_mid`, `rid`, `type=2`; `POST /x/v3/fav/resource/batch-deal` `rid`, `type=2`, `add_media_ids`, `del_media_ids`, `csrf`; `POST /x/v3/fav/folder/add` |
 | 分享 | The iOS share sheet with the title and `https://www.bilibili.com/video/<bvid>` (`?p=N` for parts); a completed share is counted | `POST /x/web-interface/share/add` `aid`, `csrf` |
 | 关注 | Follow at once; unfollow after a confirm | `POST /x/relation/modify` `fid`, `act` (1, 2), `re_src=14`, `csrf` |
@@ -385,6 +386,18 @@ for the builder to confirm on a device.
   plus disk cache), with the `Referer` header Bilibili's image servers expect. No third-party image library.
 - Photos permission for the screenshot button: add-only (`NSPhotoLibraryAddUsageDescription`).
 
+### 5.3 Borrowed images
+
+- A script (`scripts/fetch_borrowed_assets.py`) downloads the files the app uses from
+  `https://raw.githubusercontent.com/bggRGjQaUbCoE/PiliPlus/<pinned commit>/…` into `ios/Generated/Borrowed/`
+  (gitignored), checks each file's SHA-256 against a list in the script, and fails the build on a mismatch.
+- `ios-compile.yml` and `testflight.yml` run it before XcodeGen; the files go into the app bundle as resources.
+  On the PC nothing needs them (BiliCore never touches images).
+- The app reads the icon font's glyphs by code point, wrapped in one `BorrowedIcon` enum, so a later swap to our
+  own drawings changes one file.
+- The pinned commit is `bb2d86c` (2026-10-15) unless the builder finds the files changed; the list of files is
+  the builder's, from what the screens need.
+
 ## 6. Failure handling
 
 - Any API failure on the page shows inline (a retry row in the list, or a toast for actions) and never blocks
@@ -400,8 +413,8 @@ for the builder to confirm on a device.
   `access_key`, `access_token`, `csrf` and `sign` values in logged URLs and bodies.
 - Heartbeats write to KaiC's own Bilibili history, as KaiC chose. Nothing else leaves the phone except the
   requests the features need.
-- No art, icon or code from Bilibili's app or PiliPlus enters the repo. The coin dialog art is fetched at run time
-  from Bilibili's servers and cached like any image.
+- No code from PiliPlus enters the repo, and no Bilibili or PiliPlus image or font is committed: the build fetches
+  them (section 5.3).
 
 ## 8. Testing
 
@@ -430,7 +443,7 @@ for the builder to confirm on a device.
 | Web POST actions hit risk control (-352) for a native client | Send the browser user agent, `Origin`/`Referer` of the video page, and the cookies the web sends; log codes; if one action keeps failing on the phone, fix that call in build B's tail |
 | The TV-login token doesn't work for dislike | 不喜欢 stays grey with an explanation; nothing else depends on it |
 | `x/v2/reply/wbi/main` refuses us | Fall back to `/x/v2/reply/main` |
-| Coin art URLs move | Our own drawing is the fallback |
+| PiliPlus's pinned files disappear from GitHub | The hash check fails the build loudly; replace them with our own drawings then |
 | Danmaku rendering costs frames at 4K with heavy danmaku | Cap visible danmaku per lane set, reuse layers, measure on the phone; the engine runs off the main thread already |
 | Rotation and PiP with a custom layer crash like build 1's full screen did | Simulator tests for every transition (section 8) |
 | Hidden `MPVolumeView` slider behaviour changes in an iOS update | Volume gesture degrades to doing nothing; logged |
@@ -439,7 +452,6 @@ for the builder to confirm on a device.
 
 - Exact sizes, paddings and font weights, read from the screenshots.
 - Whether danmaku layers are `CATextLayer` or prerendered images, as long as 4.9's behaviour holds.
-- The coin art URLs on Bilibili's static server.
 - The 活动 tag's source field in the view response (if none is found, no tag).
 - Which app key signs the dislike call.
 - Task order inside each build, as long as build A ships before build B starts.
