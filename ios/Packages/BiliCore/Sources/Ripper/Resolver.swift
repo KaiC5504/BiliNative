@@ -57,6 +57,20 @@ public final class Resolver: @unchecked Sendable {
         }
     }
 
+    /// After a network change, failures seen on the old path say nothing about the new one. A new
+    /// interface also invalidates the measured speeds, so the next ranges measure wide again.
+    public func resetHealth(clearMeasurements: Bool) {
+        state.withLock { value in
+            value.health = [:]
+            guard clearMeasurements else { return }
+            for key in value.routes.keys {
+                value.routes[key]?.bps = 0
+                value.routes[key]?.lastMeasuredAt = 0
+            }
+            value.mediaRangeCount = 0
+        }
+    }
+
     public func allURLs() -> [String] {
         let value = state.current
         return NodeCatalog.representationURLs(primary: value.primary, backups: value.backups, mode: mode, policy: policy)

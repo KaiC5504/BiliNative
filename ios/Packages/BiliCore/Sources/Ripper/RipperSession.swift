@@ -163,6 +163,14 @@ public final class RipperSession: @unchecked Sendable {
         ctx.logger.info(.engine, "urls replaced", ["track": .init(track.rawValue), "url": .init(primary)])
     }
 
+    /// The phone's network path changed: bans and backoffs from the old path are dropped, and with
+    /// a different interface the speed measurements too.
+    public func networkChanged(interfaceChanged: Bool) {
+        bans.reset()
+        for resolver in resolvers.values { resolver.resetHealth(clearMeasurements: interfaceChanged) }
+        ctx.logger.info(.engine, "network changed, node health reset", ["interfaceChanged": .init(interfaceChanged)])
+    }
+
     /// Memory warning: drops cached and still-downloading prefetched segments; playback goes on.
     public func dropCache() {
         let tasks = state.withLock { value -> [Task<[UInt8], Error>] in
