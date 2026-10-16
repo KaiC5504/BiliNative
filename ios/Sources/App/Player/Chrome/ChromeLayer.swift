@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AppLogic
 import BiliAPI
 
@@ -71,6 +72,20 @@ struct ChromeLayer: View {
         } else {
             dismiss()
         }
+    }
+}
+
+/// The screen's safe area. A reader that ignores the safe area is told it has none (the first compile check's
+/// full-screen shots drew under the status bar and the notch), so the window is asked as well.
+@MainActor
+enum ScreenInsets {
+    static func current(merging proxy: EdgeInsets) -> EdgeInsets {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        let window = scene?.keyWindow ?? scene?.windows.first
+        let insets = window?.safeAreaInsets ?? .zero
+        return EdgeInsets(top: max(proxy.top, insets.top), leading: max(proxy.leading, insets.left),
+                          bottom: max(proxy.bottom, insets.bottom), trailing: max(proxy.trailing, insets.right))
     }
 }
 

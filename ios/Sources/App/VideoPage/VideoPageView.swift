@@ -136,9 +136,9 @@ private struct PageLayout: View {
         GeometryReader { geometry in
             let box = CGSize(width: geometry.size.width, height: inline ? geometry.size.width * 9 / 16 : geometry.size.height)
             VStack(spacing: 0) {
-                // Full screen ignores the safe area, so the reader's insets are the screen's and the chrome keeps clear of them.
+                // Full screen ignores the safe area, so the chrome keeps clear of it itself.
                 PlayerBox(model: model, chrome: chrome, panel: $panel, danmaku: danmaku, size: box, presentation: presentation,
-                          insets: geometry.safeAreaInsets, danmakuEnabled: danmakuEnabled,
+                          insets: ScreenInsets.current(merging: geometry.safeAreaInsets), danmakuEnabled: danmakuEnabled,
                           onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
                     .frame(width: box.width, height: box.height)
                     .background(Color.black.ignoresSafeArea(edges: .top))
