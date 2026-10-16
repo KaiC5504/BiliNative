@@ -33,7 +33,7 @@ actions, but faster playback.
 | Extras | Chapters yes; subtitles, seek thumbnails, tap-a-danmaku and 当前弹幕列表 no | KaiC |
 | ⋮ panel | 定时关闭, 自动连播, 循环播放, 稍后再看, 画面尺寸, 镜像翻转. Not 听视频, 后台听视频, 投屏, 色觉辅助, 播放反馈, 编辑播放器 | KaiC |
 | Coin dialog art and Bilibili-style icons | PiliPlus's images: the coin dialog PNGs (`assets/images/paycoins/`) and the glyphs in its icon font (`assets/fonts/custom_icon.ttf`: 弹 on/off, 弹 settings and the rest). Personal use; KaiC accepts that they are Bilibili's art and GPL-licensed in PiliPlus | KaiC |
-| How those images get in | Downloaded from PiliPlus's GitHub at one pinned commit by the build workflows and copied into the app bundle; never committed to this public repo, so the repo cannot draw a takedown that would stop the free Mac builds. They must be replaced before any public release | Claude |
+| How those images get in | Copied from PiliPlus (commit `bb2d86c`) into `ios/Resources/Borrowed/` and committed. Whether to replace them is decided later, if the app is ever published | KaiC, after Claude proposed fetching them at build time |
 | Other icons | PiliPlus's remaining icons are Google Material icons, which don't match the official look; ours are drawn as vectors to match the screenshots, or SF Symbols where one matches | Claude |
 | 充电 | Left out everywhere: it spends real money | Claude |
 | API source | Bilibili's web API with the existing cookie login, signed with WBI and the `bili_jct` CSRF token. The app API only for 不喜欢 | Claude |
@@ -231,7 +231,7 @@ surrounding `/`), user rules compare `midHash`. Logged out, the list is empty an
 
 **Sending (22, 23).** Tapping the danmaku field opens the dark input bar above the keyboard with the A button,
 the field (100 characters) and a send arrow. A swaps the keyboard for the style panel: 弹幕字号 默认 (25) / 较小 (18),
-弹幕类型 滚动 (1) / 置顶 (5) / 置底 (4), 弹幕颜色: white plus the 13 presets in 23's order, and the 会员 gradient
+弹幕类型 滚动 (1) / 置顶 (5) / 置底 (4), 弹幕颜色: white, then the 11 colours in 23's order, and the 会员 gradient
 chip (`colorful=60001`), which is the only 大会员-only choice (23 marks only it 会员). A colour the server refuses
 for the account's level shows the server's message. `POST /x/v2/dm/post` with `type=1`, `oid` (cid), `bvid`, `msg`, `mode`, `fontsize`,
 `color` (decimal RGB), `progress` (ms), `rnd` (current time in microseconds), `pool=0`, `csrf`. On success the
@@ -330,7 +330,7 @@ Bilibili's TV-login confirm page in the in-app web view, which already holds the
    sheet says so and offers to retry).
 
 The TV app key and secret (Bilibili's public client pair) never enter the repo: they come from a GitHub secret
-`BILI_APP_KEYS` at build time (written into a generated, gitignored xcconfig and read through Info.plist), in both
+`BILI_APP_KEYS` at build time (written into a generated, gitignored Swift file under `ios/Generated/`), in both
 `ios-compile.yml` and `testflight.yml`, masked in the log. BiliCore takes the key and secret as parameters; its
 signing tests use a made-up pair and the documented algorithm. A build without the secret hides 不喜欢. KaiC adds
 the secret in GitHub (the plan gives the click path).
@@ -388,15 +388,11 @@ for the builder to confirm on a device.
 
 ### 5.3 Borrowed images
 
-- A script (`scripts/fetch_borrowed_assets.py`) downloads the files the app uses from
-  `https://raw.githubusercontent.com/bggRGjQaUbCoE/PiliPlus/<pinned commit>/…` into `ios/Generated/Borrowed/`
-  (gitignored), checks each file's SHA-256 against a list in the script, and fails the build on a mismatch.
-- `ios-compile.yml` and `testflight.yml` run it before XcodeGen; the files go into the app bundle as resources.
-  On the PC nothing needs them (BiliCore never touches images).
+- The coin dialog PNGs (`assets/images/paycoins/`) and the icon font (`assets/fonts/custom_icon.ttf`) are copied
+  from PiliPlus at commit `bb2d86c` (the local clone at `D:\Repos\Apps\PiliPlus`) into `ios/Resources/Borrowed/`
+  and committed; they ship in the app bundle as resources.
 - The app reads the icon font's glyphs by code point, wrapped in one `BorrowedIcon` enum, so a later swap to our
   own drawings changes one file.
-- The pinned commit is `bb2d86c` (2026-10-15) unless the builder finds the files changed; the list of files is
-  the builder's, from what the screens need.
 
 ## 6. Failure handling
 
@@ -413,8 +409,7 @@ for the builder to confirm on a device.
   `access_key`, `access_token`, `csrf` and `sign` values in logged URLs and bodies.
 - Heartbeats write to KaiC's own Bilibili history, as KaiC chose. Nothing else leaves the phone except the
   requests the features need.
-- No code from PiliPlus enters the repo, and no Bilibili or PiliPlus image or font is committed: the build fetches
-  them (section 5.3).
+- No code from PiliPlus enters the repo. Its coin art and icon font are the only borrowed files (section 5.3).
 
 ## 8. Testing
 
@@ -443,7 +438,6 @@ for the builder to confirm on a device.
 | Web POST actions hit risk control (-352) for a native client | Send the browser user agent, `Origin`/`Referer` of the video page, and the cookies the web sends; log codes; if one action keeps failing on the phone, fix that call in build B's tail |
 | The TV-login token doesn't work for dislike | 不喜欢 stays grey with an explanation; nothing else depends on it |
 | `x/v2/reply/wbi/main` refuses us | Fall back to `/x/v2/reply/main` |
-| PiliPlus's pinned files disappear from GitHub | The hash check fails the build loudly; replace them with our own drawings then |
 | Danmaku rendering costs frames at 4K with heavy danmaku | Cap visible danmaku per lane set, reuse layers, measure on the phone; the engine runs off the main thread already |
 | Rotation and PiP with a custom layer crash like build 1's full screen did | Simulator tests for every transition (section 8) |
 | Hidden `MPVolumeView` slider behaviour changes in an iOS update | Volume gesture degrades to doing nothing; logged |
