@@ -39,6 +39,9 @@ final class FavouritesModel {
     @ObservationIgnored private let client: BiliClient
     @ObservationIgnored private let aid: Int64
     @ObservationIgnored private let mid: () async -> Int64?
+    /// Folders made in this sheet. 新建收藏夹 works while the list loads or after it failed, and a load that lands
+    /// later must keep them, ticked as the user left them.
+    @ObservationIgnored private var created: [FavFolder] = []
 
     init(client: BiliClient, aid: Int64, mid: @escaping () async -> Int64?) {
         self.client = client
@@ -54,10 +57,15 @@ final class FavouritesModel {
             return
         }
         do {
-            let list = try await client.favouriteFolders(mid: mid, aid: aid)
+            var list = try await client.favouriteFolders(mid: mid, aid: aid)
+            let listed = Set(list.map(\.id))
+            for folder in created where !listed.contains(folder.id) {
+                list.insert(folder, at: list.firstIndex { !$0.isDefault } ?? list.count)
+            }
+            let createdIDs = Set(created.map(\.id))
             folders = list
-            original = Set(list.filter(\.contains).map(\.id))
-            ticked = original
+            original = Set(list.filter(\.contains).map(\.id)).subtracting(createdIDs)
+            ticked = original.union(ticked.intersection(createdIDs))
             phase = .loaded
         } catch {
             Logger.shared.warn(.api, "favourite folders failed", ["error": .init(String(describing: error))])
@@ -90,6 +98,7 @@ final class FavouritesModel {
         do {
             let folder = try await client.createFolder(title: title, isPrivate: isPrivate)
             folders.insert(folder, at: folders.firstIndex { !$0.isDefault } ?? folders.count)
+            created.append(folder)
             ticked.insert(folder.id)
             return true
         } catch {

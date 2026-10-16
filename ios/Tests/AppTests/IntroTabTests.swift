@@ -36,6 +36,18 @@ final class IntroTabTests: XCTestCase {
         XCTAssertTrue(fake.isPlaying)
     }
 
+    func testDescriptionWebAddressesAreLinks() throws {
+        let runs = TitleBlock.descriptionRuns([DescPart(text: "工程文件 https://example.com/files?id=3 自取，邮箱 a@b.cn，03:15 开始")])
+        XCTAssertEqual(runs.first, .text("工程文件 "))
+        XCTAssertTrue(runs.contains(.link(title: "https://example.com/files?id=3", url: "https://example.com/files?id=3")), "\(runs)")
+        XCTAssertTrue(runs.contains(.timestamp(label: "03:15", seconds: 195)))
+        XCTAssertFalse(runs.contains { if case .link(_, let url) = $0 { return url.hasPrefix("mailto") } else { return false } },
+                       "only web addresses are links")
+        let link = try XCTUnwrap(runs.first { if case .link = $0 { return true } else { return false } })
+        XCTAssertEqual(RichLink.url(for: link)?.host, "example.com")
+        XCTAssertNil(RichLink.url(for: .link(title: "搜索词", url: "搜索词")), "a jump word without an address is not tappable")
+    }
+
     func testRelatedTapPushesANewRoute() async throws {
         let page = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         await page.model.load()

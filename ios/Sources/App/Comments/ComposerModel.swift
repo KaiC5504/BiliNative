@@ -8,7 +8,7 @@ import BiliAPI
 final class ComposerModel {
     let target: ReplyTarget
     var text: String {
-        didSet { comments.drafts[draftKey] = text }
+        didSet { comments.drafts.texts[draftKey] = text }
     }
     var syncToDynamic = false
     var showingEmotes = false
@@ -27,7 +27,7 @@ final class ComposerModel {
         self.target = target
         self.comments = comments
         self.defaults = defaults
-        text = comments.drafts[Self.draftKey(target)] ?? ""
+        text = comments.drafts.texts[Self.draftKey(target, aid: aid)] ?? ""
         recent = RecentEmotes.list(defaults: defaults)
     }
 
@@ -39,7 +39,7 @@ final class ComposerModel {
         }
     }
 
-    var canPost: Bool { !trimmed.isEmpty && !posting }
+    var canPost: Bool { !trimmed.isEmpty && !posting && !comments.drafts.posting.contains(draftKey) }
 
     func insert(_ emote: Emote) {
         text += emote.token
@@ -51,13 +51,17 @@ final class ComposerModel {
         guard canPost else { return false }
         let fields = postFields()
         posting = true
-        defer { posting = false }
+        comments.drafts.setPosting(draftKey, true)
+        defer {
+            posting = false
+            comments.drafts.setPosting(draftKey, false)
+        }
         do {
             let posted = try await client.postComment(aid: aid, message: fields.message, root: fields.root,
                                                       parent: fields.parent, syncToDynamic: syncToDynamic)
             comments.inserted(posted)
             text = ""
-            comments.drafts[draftKey] = nil
+            comments.drafts.texts[draftKey] = nil
             return true
         } catch {
             comments.fail(error)
@@ -79,11 +83,12 @@ final class ComposerModel {
         }
     }
 
-    private var draftKey: String { Self.draftKey(target) }
+    private var draftKey: String { Self.draftKey(target, aid: aid) }
 
-    static func draftKey(_ target: ReplyTarget) -> String {
+    /// Drafts outlive a switch to another video of the page, so a comment on the video itself names the video.
+    static func draftKey(_ target: ReplyTarget, aid: Int64) -> String {
         switch target {
-        case .video: return "video"
+        case .video: return "video.\(aid)"
         case .comment(let comment): return "comment.\(comment.rpid)"
         case .threadReply(_, let reply): return "reply.\(reply.rpid)"
         }

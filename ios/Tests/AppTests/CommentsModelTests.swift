@@ -155,6 +155,70 @@ final class CommentsModelTests: XCTestCase {
         XCTAssertTrue(body.contains("oid=\(Payload.aid)"), body)
     }
 
+    func testDeletingThePinnedCommentLowersTheTotal() async throws {
+        let http = CommentsHTTP()
+        http.list = { _ in Payload.page([1, 2], next: nil, end: true, total: 3, top: 9) }
+        let model = makeModel(http)
+        await model.loadMore()
+        let pinned = try XCTUnwrap(model.pinned)
+
+        await model.delete(pinned)
+        XCTAssertNil(model.pinned)
+        XCTAssertEqual(model.total, 2)
+    }
+
+    /// A reply posted and then deleted inside an open thread moves the root's count by one each way, in the thread
+    /// and in the list.
+    func testAReplyInAnOpenThreadCountsOnce() async throws {
+        let http = CommentsHTTP()
+        http.list = { _ in Payload.page([1], next: nil, end: true, total: 1) }
+        http.thread = { _ in Payload.thread(root: 1, replies: [101, 102], page: 1, count: 2) }
+        let model = makeModel(http)
+        await model.loadMore()
+        await model.openThread(try XCTUnwrap(model.comments.first))
+        let threadCount = try XCTUnwrap(model.thread?.root.replyCount)
+        let listCount = try XCTUnwrap(model.comments.first?.replyCount)
+        let member = try XCTUnwrap(model.thread?.replies.first?.member)
+
+        let reply = Comment(rpid: 999, oid: Payload.aid, root: 1, parent: 1, member: member, message: "新回复")
+        model.inserted(reply)
+        XCTAssertEqual(model.thread?.root.replyCount, threadCount + 1)
+        XCTAssertEqual(model.comments.first?.replyCount, listCount + 1)
+        XCTAssertEqual(model.thread?.total, 3)
+        XCTAssertEqual(model.thread?.replies.first?.rpid, 999)
+
+        await model.delete(reply)
+        XCTAssertEqual(model.thread?.root.replyCount, threadCount)
+        XCTAssertEqual(model.comments.first?.replyCount, listCount)
+        XCTAssertEqual(model.thread?.total, 2)
+    }
+
+    /// The first page for 热门 answers after the switch to 最新: it is dropped, and the list is 最新's.
+    func testALatePageForTheOldSortIsDropped() async throws {
+        let http = CommentsHTTP()
+        http.list = { query in
+            query["mode"] == "2"
+                ? Payload.page([7, 8], next: nil, end: true, total: 2)
+                : Payload.page([1, 2], next: "PAGE2", end: false, total: 40, top: 9)
+        }
+        http.gated = listPath
+        let model = makeModel(http)
+        let hot = Task { await model.loadMore() }
+        let asked = await waitUntil { http.gate.waiting == 1 }
+        XCTAssertTrue(asked)
+        let time = Task { await model.setSort(.time) }
+        let both = await waitUntil { http.gate.waiting == 2 }
+        XCTAssertTrue(both)
+
+        http.gate.open()
+        await hot.value
+        await time.value
+        XCTAssertEqual(model.comments.map(\.rpid), [7, 8])
+        XCTAssertNil(model.pinned)
+        XCTAssertEqual(model.total, 2)
+        XCTAssertFalse(model.loading)
+    }
+
     func testLoggedOutReactionAsksForLoginWithoutARequest() async throws {
         let http = CommentsHTTP()
         http.list = { _ in Payload.page([1], next: nil, end: true, total: 1) }

@@ -46,6 +46,8 @@ enum CommentsDemo {
             case "comments-thread", "composer-emotes":
                 // As in 13: paused and scrolled, so the player is down to its bar.
                 page.pause()
+                // The player shrinks by what is scrolled after the pause.
+                try? await Task.sleep(for: .milliseconds(300))
                 tabs.scroll(.comments, toY: 480)
                 guard let root = model.comments.first(where: { $0.rpid == CommentFixtures.threadRoot }) else { return }
                 await model.openThread(root)

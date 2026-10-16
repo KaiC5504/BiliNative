@@ -187,6 +187,8 @@ struct Composer: View {
     }
 
     private func close() {
+        // Closing mid-post would let a reopened composer post the same text again.
+        guard !model.posting else { return }
         focused = false
         withAnimation(.smooth(duration: 0.2)) { shown = false }
         Task {

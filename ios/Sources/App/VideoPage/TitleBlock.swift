@@ -111,8 +111,22 @@ struct TitleBlock: View {
     static func descriptionRuns(_ parts: [DescPart]) -> [RichRun] {
         parts.flatMap { part -> [RichRun] in
             if let mid = part.mentionMid { return [.mention(name: part.text, mid: mid)] }
-            return RichText.runs(part.text, emotes: [:], mentions: [:], links: [:])
+            return RichText.runs(part.text, emotes: [:], mentions: [:], links: webLinks(in: part.text))
         }
+    }
+
+    /// The view API sends no jump links for a description, only its text: web addresses written out in it are
+    /// the links.
+    static func webLinks(in text: String) -> [String: LinkRef] {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return [:] }
+        var links: [String: LinkRef] = [:]
+        for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range, in: text), let url = match.url,
+                  let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { continue }
+            let written = String(text[range])
+            links[written] = LinkRef(title: written, url: url.absoluteString)
+        }
+        return links
     }
 }
 

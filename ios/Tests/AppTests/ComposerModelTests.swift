@@ -94,6 +94,49 @@ final class ComposerModelTests: XCTestCase {
         XCTAssertEqual(other.text, "")
     }
 
+    /// Closed while posting and opened again on the same target: the draft is back, but 发布 waits for the first post.
+    func testAReopenedComposerCannotPostTheSameTextTwice() async throws {
+        let http = ComposerHTTP()
+        let held = AsyncStream<Void>.makeStream()
+        http.hold = held.stream
+        let comments = makeComments(http)
+        let first = makeComposer(http, target: .video, comments: comments)
+        first.text = "只发一次"
+        let posting = Task { await first.post() }
+        while http.requests(to: addPath).isEmpty { await Task.yield() }
+
+        let second = makeComposer(http, target: .video, comments: comments)
+        XCTAssertEqual(second.text, "只发一次")
+        XCTAssertFalse(second.canPost)
+        let refused = await second.post()
+        XCTAssertFalse(refused)
+
+        held.continuation.finish()
+        let posted = await posting.value
+        XCTAssertTrue(posted)
+        XCTAssertEqual(http.requests(to: addPath).count, 1)
+    }
+
+    /// The page keeps the drafts through a switch to another video of its 合集 and back.
+    func testDraftsOutliveASwitchToAnotherVideo() {
+        let http = ComposerHTTP()
+        let drafts = CommentDrafts()
+        func comments(_ aid: Int64) -> CommentsModel {
+            CommentsModel(client: client(http), aid: aid, upMid: 42, isLoggedIn: { true }, requestLogin: {}, drafts: drafts)
+        }
+        let first = comments(aid)
+        makeComposer(http, target: .video, comments: first).text = "视频草稿"
+        makeComposer(http, target: .comment(comment(10, name: "小红")), comments: first).text = "回复草稿"
+
+        let next = comments(aid + 1)
+        let other = ComposerModel(client: client(http), aid: aid + 1, target: .video, comments: next)
+        XCTAssertEqual(other.text, "", "another video's own comment starts empty")
+
+        let back = comments(aid)
+        XCTAssertEqual(makeComposer(http, target: .video, comments: back).text, "视频草稿")
+        XCTAssertEqual(makeComposer(http, target: .comment(comment(10, name: "小红")), comments: back).text, "回复草稿")
+    }
+
     func testRecentEmotesAreMostRecentFirstAndCapped() throws {
         let suite = "ComposerModelTests.recent"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -170,6 +213,16 @@ private final class ComposerHTTP: FixtureHTTP, @unchecked Sendable {
     var postedRoot: Int64 = 0
     var post: String?
     var thread: ([String: String]) -> String = { _ in #"{"code":-404,"message":"啥都木有","ttl":1}"# }
+    /// When set, a post waits until the stream finishes.
+    var hold: AsyncStream<Void>?
+
+    override func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let response = try await super.send(request)
+        if request.url.path == "/x/v2/reply/add", let hold {
+            for await _ in hold {}
+        }
+        return response
+    }
 
     override func answer(_ request: HTTPRequest) -> (Int, Data) {
         let items = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []

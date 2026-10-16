@@ -23,6 +23,7 @@ struct VideoPageView: View {
     /// Made once the video's aid is known, and again for each video the page switches to.
     @State private var comments: CommentsModel?
     @State private var composer: ComposerModel?
+    @State private var drafts = CommentDrafts()
     @State private var loginRequested = false
     @State private var tvLoginRequested = false
     @State private var actions: ActionsModel?
@@ -186,7 +187,7 @@ struct VideoPageView: View {
         let env = self.env
         let signals = self.signals
         return CommentsModel(client: env.client, aid: aid, upMid: upMid, isLoggedIn: { Self.loggedIn(env.account) },
-                             requestLogin: { signals.logins += 1 }, ownMid: { env.mid })
+                             requestLogin: { signals.logins += 1 }, ownMid: { env.mid }, drafts: drafts)
     }
 
     /// Still checking the account: the server's answer decides.
@@ -304,12 +305,18 @@ struct VideoPageView: View {
             prompts.balance = nil
             prompts.overlay = .coin
             let client = env.client
+            // The balance decides which crates are open, so a failed ask is tried again while the dialog stays up.
             Task {
-                do {
-                    let balance = try await client.coinBalance()
-                    if prompts.overlay == .coin { prompts.balance = balance }
-                } catch {
-                    Logger.shared.warn(.api, "coin balance failed", ["error": .init(String(describing: error))])
+                for attempt in 0..<3 {
+                    if attempt > 0 { try? await Task.sleep(for: .seconds(Double(attempt))) }
+                    guard prompts.overlay == .coin else { return }
+                    do {
+                        let balance = try await client.coinBalance()
+                        if prompts.overlay == .coin { prompts.balance = balance }
+                        return
+                    } catch {
+                        Logger.shared.warn(.api, "coin balance failed", ["attempt": .init(attempt), "error": .init(String(describing: error))])
+                    }
                 }
             }
         case .favourites:
@@ -420,17 +427,28 @@ private struct PlayerArea: View {
     let onCompose: (ReplyTarget, _ emotes: Bool) -> Void
     let onComments: () -> Void
     @Environment(\.dismiss) private var dismiss
+    /// Where the tab stood when playback paused: the player shrinks only by what is scrolled after that, so a pause
+    /// halfway down the page does not snap it to the bar.
+    @State private var collapseFrom: CGFloat = 0
 
     private var inline: Bool { presentation == .inline }
 
-    /// Loaded and not playing, or at the end: only then does scrolling shrink the player.
+    /// Loaded and paused: only then does scrolling shrink the player. Not at the end, whose screen (26, 27) is
+    /// in the player and must stay seen.
     private var paused: Bool {
-        guard let controller = model.controller else { return false }
-        return model.ended || (controller.phase == .playing && !controller.isPlaying)
+        guard let controller = model.controller, !model.ended else { return false }
+        return controller.phase == .playing && !controller.isPlaying
+    }
+
+    /// The tab's offset only while it can change the height, so playing the page does not redraw the player at
+    /// scroll rate.
+    private var collapsingOffset: CGFloat? {
+        inline && paused ? tabs.offset : nil
     }
 
     var body: some View {
-        let height = inline ? collapsing.height(forOffset: tabs.offset, paused: paused) : collapsing.fullHeight
+        let offset = collapsingOffset
+        let height = offset.map { collapsing.height(forOffset: $0 - collapseFrom, paused: true) } ?? collapsing.fullHeight
         let progress = inline ? collapsing.progress(height: height) : 0
         let box = CGSize(width: width, height: height)
         ZStack(alignment: .top) {
@@ -467,6 +485,13 @@ private struct PlayerArea: View {
         .animation(.smooth(duration: 0.3), value: comments?.thread?.root.rpid)
         .animation(.smooth(duration: 0.3), value: paused)
         .animation(.smooth(duration: 0.3), value: tabs.selection)
+        .onChange(of: paused, initial: true) { _, paused in
+            if paused { collapseFrom = tabs.offset }
+        }
+        .onChange(of: offset) { _, offset in
+            // Scrolling back above the pause point moves it up, so the way down shrinks the player from there.
+            if let offset, offset < collapseFrom { collapseFrom = max(0, offset) }
+        }
     }
 
     @ViewBuilder

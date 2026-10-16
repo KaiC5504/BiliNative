@@ -13,7 +13,12 @@ enum RichLink {
         case .video(let id) where id.hasPrefix("BV"):
             return URL(string: "\(scheme)://video/\(id)")
         case .link(_, let url):
-            return URL(string: url)
+            // A jump word without a web address falls back to its own text, which would be a blue word that does
+            // nothing; only real web links are made tappable.
+            guard let link = URL(string: url), let scheme = link.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+                return nil
+            }
+            return link
         default:
             return nil
         }

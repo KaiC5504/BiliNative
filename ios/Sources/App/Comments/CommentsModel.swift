@@ -16,6 +16,20 @@ struct PictureViewing: Equatable {
     var index: Int
 }
 
+/// The composer's unsent text per reply target (`ComposerModel.draftKey`), and the targets being posted to. The page
+/// keeps one for as long as it lives and hands it to the comments of every video it switches to.
+@MainActor
+@Observable
+final class CommentDrafts {
+    @ObservationIgnored var texts: [String: String] = [:]
+    /// A composer closed while posting must not let a reopened one post the same text again.
+    private(set) var posting: Set<String> = []
+
+    func setPosting(_ key: String, _ on: Bool) {
+        if on { posting.insert(key) } else { posting.remove(key) }
+    }
+}
+
 /// The 评论 tab: the list with its sort and paging, the open reply thread, and the reactions on both.
 @MainActor
 @Observable
@@ -49,8 +63,7 @@ final class CommentsModel {
     /// Set by a failed reaction or delete; the page shows it as a toast and clears it.
     var toast: String?
     var viewing: PictureViewing?
-    /// The composer's unsent text per reply target (`ComposerModel.draftKey`), kept while the page lives.
-    @ObservationIgnored var drafts: [String: String] = [:]
+    @ObservationIgnored let drafts: CommentDrafts
 
     @ObservationIgnored private let client: BiliClient
     @ObservationIgnored private let isLoggedIn: () -> Bool
@@ -62,8 +75,9 @@ final class CommentsModel {
     @ObservationIgnored private var threadGeneration = 0
 
     init(client: BiliClient, aid: Int64, upMid: Int64, isLoggedIn: @escaping () -> Bool, requestLogin: @escaping () -> Void,
-         ownMid: @escaping () -> Int64? = { nil }) {
+         ownMid: @escaping () -> Int64? = { nil }, drafts: CommentDrafts? = nil) {
         self.client = client
+        self.drafts = drafts ?? CommentDrafts()
         self.aid = aid
         self.upMid = upMid
         self.isLoggedIn = isLoggedIn
@@ -145,8 +159,8 @@ final class CommentsModel {
         if thread?.root.rpid == comment.root {
             thread?.replies.insert(comment, at: 0)
             thread?.total += 1
-            thread?.root.replyCount += 1
         }
+        // Also the thread's own copy of the root.
         update(comment.root) { root in
             root.replyCount += 1
             root.previewReplies.insert(comment, at: 0)
@@ -190,14 +204,13 @@ final class CommentsModel {
             return
         }
         if thread?.root.rpid == comment.rpid { closeThread() }
+        let before = comments.count + (pinned == nil ? 0 : 1)
         if pinned?.rpid == comment.rpid { pinned = nil }
-        let before = comments.count
         comments.removeAll { $0.rpid == comment.rpid }
-        if comments.count < before { total = max(0, total - 1) }
+        if comments.count + (pinned == nil ? 0 : 1) < before { total = max(0, total - 1) }
         if thread != nil, let index = thread?.replies.firstIndex(where: { $0.rpid == comment.rpid }) {
             thread?.replies.remove(at: index)
             thread?.total = max(0, (thread?.total ?? 1) - 1)
-            thread?.root.replyCount = max(0, (thread?.root.replyCount ?? 1) - 1)
         }
         if comment.root != 0 {
             update(comment.root) { root in

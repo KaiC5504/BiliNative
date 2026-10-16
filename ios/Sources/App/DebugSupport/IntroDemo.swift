@@ -38,6 +38,8 @@ enum IntroDemo {
             case "sheet-collection":
                 tabs.sheet = .collection
             case "page-collapsed":
+                // The player shrinks by what is scrolled after the pause.
+                try? await Task.sleep(for: .milliseconds(300))
                 tabs.scroll(.intro, toY: 420)
             default:
                 break

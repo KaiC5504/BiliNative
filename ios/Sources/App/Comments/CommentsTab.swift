@@ -36,7 +36,8 @@ struct CommentsTab: View {
             CommentBar { emotes in onCompose(.video, emotes) }
         }
         .background(Theme.Comments.background)
-        .task {
+        // Keyed by the model: a switch to another video brings a new one, which must load though the view stays.
+        .task(id: ObjectIdentifier(model)) {
             if !model.hasLoaded { await model.loadMore() }
         }
     }
