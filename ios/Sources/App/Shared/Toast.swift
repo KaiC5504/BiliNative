@@ -10,7 +10,7 @@ struct Toast: View {
             .lineLimit(1)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
-            .background(Theme.panel, in: Capsule())
+            .background(Theme.toastFill, in: Capsule())
     }
 }
 

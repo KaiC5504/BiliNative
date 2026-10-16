@@ -141,7 +141,8 @@ public enum RichText {
             guard end <= characters.count, characters[(index + 2)..<end].allSatisfy(isASCIIAlphanumeric) else { return nil }
             return (12, .video(id: String(characters[index..<end])))
         }
-        if matches(characters, at: index, ["a", "v"]) {
+        // "lav12" is a word, not a video.
+        if matches(characters, at: index, ["a", "v"]), index == 0 || !isASCIIAlphanumeric(characters[index - 1]) {
             let end = endOfDigits(characters, from: index + 2)
             guard end > index + 2 else { return nil }
             return (end - index, .video(id: String(characters[index..<end])))
@@ -163,7 +164,7 @@ public enum RichText {
             fields.append(number(characters, end + 1, end + 3))
             end += 3
         }
-        guard !isDigit(characters, at: end) else { return nil }
+        guard !isDigit(characters, at: end), fields.dropFirst().allSatisfy({ $0 < 60 }) else { return nil }
         let seconds = fields.reduce(0) { $0 * 60 + $1 }
         return (end - index, .timestamp(label: String(characters[index..<end]), seconds: seconds))
     }

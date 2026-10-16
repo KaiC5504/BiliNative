@@ -2,76 +2,41 @@ import SwiftUI
 import BiliAPI
 import DevLog
 
+/// 首页 (01): the avatar and the link field, the 推荐 tab, and the feed.
 struct HomeView: View {
     @Environment(AppEnvironment.self) private var env
-    @State private var manualText = ""
+    @State private var feed: FeedModel?
+    @State private var linkText = ""
     @State private var opening = false
-    @State private var errorText: String?
+    @State private var toast: String?
     @State private var partChoice: VideoView?
+    @State private var menuOpen = false
     @State private var showLogin = false
     @State private var showSettings = false
-    @State private var confirmClear = false
 
     var body: some View {
         @Bindable var navigator = env.navigator
         NavigationStack(path: $navigator.path) {
-            List {
-                Section("账号") { AccountRow(showLogin: $showLogin) }
-                Section {
-                    PasteButton(payloadType: String.self) { strings in
-                        Task { await open(strings.first ?? "") }
-                    }
-                    .buttonBorderShape(.capsule)
-                    .disabled(opening)
-                    HStack {
-                        TextField("粘贴链接、BV 号或分享文字", text: $manualText)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .submitLabel(.go)
-                            .onSubmit { Task { await open(manualText) } }
-                        Button("打开") { Task { await open(manualText) } }
-                            .buttonStyle(.borderedProminent)
-                            .buttonBorderShape(.capsule)
-                            .disabled(opening || manualText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    if let errorText {
-                        Label(errorText, systemImage: "exclamationmark.circle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                } header: {
-                    Text("打开视频")
-                } footer: {
-                    Text("支持 b23.tv 短链、BV 号、av 号和 App 里的分享文字")
+            VStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    TopRow(text: $linkText, opening: opening, face: env.face,
+                           onAvatar: { withAnimation(.snappy(duration: 0.25)) { menuOpen.toggle() } },
+                           onSubmit: { Task { await open(linkText) } },
+                           onPaste: { text in Task { await open(text) } })
+                    RecommendTab()
+                    Theme.divider.frame(height: 0.5)
                 }
-                if !env.recents.items.isEmpty {
-                    Section {
-                        ForEach(env.recents.items) { item in
-                            Button { env.navigator.open(item.videoRoute) } label: { RecentRow(item: item) }
-                        }
-                    } header: {
-                        HStack {
-                            Text("最近打开")
-                            Spacer()
-                            Button("清空") { confirmClear = true }
-                                .font(.footnote)
-                                .confirmationDialog("清空最近打开的视频？", isPresented: $confirmClear, titleVisibility: .visible) {
-                                    Button("清空", role: .destructive) { env.recents.clear() }
-                                }
-                        }
-                    }
+                .background(Theme.card.ignoresSafeArea(edges: .top))
+                if let feed {
+                    FeedGrid(feed: feed, onOpen: { openVideo(VideoRoute(bvid: $0.bvid)) }, onWatchLater: watchLater)
+                } else {
+                    Theme.pageGrey
                 }
             }
-            .animation(.snappy, value: env.recents.items)
-            .animation(.snappy, value: errorText)
-            .navigationTitle(AppInfo.displayName)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
-                }
-            }
-            .videoPageDestinations()
+            .background(Theme.pageGrey)
+            .overlay(alignment: .topLeading) { menu }
+            .toolbar(.hidden, for: .navigationBar)
+            .videoPageDestinations(history: { HistoryView() }, recents: { RecentsView() })
             .sheet(isPresented: $showLogin) { LoginView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),
@@ -86,42 +51,100 @@ struct HomeView: View {
                 if opening {
                     ProgressView()
                         .controlSize(.large)
+                        .tint(Theme.panelText)
                         .padding(28)
-                        .glassEffect(in: .rect(cornerRadius: 22))
+                        .background(Theme.toastFill, in: RoundedRectangle(cornerRadius: 16))
                         .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
             }
             .animation(.spring(duration: 0.3), value: opening)
+            .toast($toast)
             .task {
-                #if DEBUG
-                switch UserDefaults.standard.string(forKey: "DemoScreen") {
-                case "settings": showSettings = true
-                case "page": env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA))
-                case "danmaku-send", "danmaku-style":
-                    env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
-                case "danmaku-portrait":
-                    env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
-                case "danmaku-landscape":
-                    env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
-                    Task {
-                        try? await Task.sleep(for: .seconds(2))
-                        OrientationController.shared.enterLandscape()
-                    }
-                case let name:
-                    if let demo = ChromeDemo.route(for: name) { env.navigator.open(demo) }
+                // The task runs again whenever a pushed page is popped; the feed and the demo staging happen once.
+                if feed == nil {
+                    let model = FeedModel(client: env.client)
+                    feed = model
+                    Task { await model.refresh() }
+                    #if DEBUG
+                    stageDemo()
+                    #endif
                 }
-                #endif
                 if env.account == .unknown { await env.refreshAccount() }
             }
         }
-        .tint(.pink)
+        .tint(Theme.pink)
+    }
+
+    #if DEBUG
+    private func stageDemo() {
+        switch UserDefaults.standard.string(forKey: "DemoScreen") {
+        case "settings": showSettings = true
+        case "history": env.navigator.open(.history)
+        case "home-menu": menuOpen = true
+        case "page": openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA))
+        case "danmaku-send", "danmaku-style":
+            openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
+        case "danmaku-portrait":
+            openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
+        case "danmaku-landscape":
+            openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                OrientationController.shared.enterLandscape()
+            }
+        case let name:
+            if let demo = ChromeDemo.route(for: name) { openVideo(demo) }
+        }
+    }
+    #endif
+
+    private var menu: some View {
+        ZStack(alignment: .topLeading) {
+            if menuOpen {
+                Theme.scrim
+                    .ignoresSafeArea()
+                    .onTapGesture { closeMenu() }
+                    .transition(.opacity)
+            }
+            if menuOpen {
+                AvatarMenu { item in
+                    closeMenu()
+                    switch item {
+                    case .login: showLogin = true
+                    case .history: env.navigator.open(.history)
+                    case .recents: env.navigator.open(.recents)
+                    case .settings: showSettings = true
+                    }
+                }
+                .padding(.leading, TopRow.margin)
+                .padding(.top, TopRow.height + 2)
+                .transition(.scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity))
+            }
+        }
+    }
+
+    private func closeMenu() {
+        withAnimation(.snappy(duration: 0.2)) { menuOpen = false }
+    }
+
+    private func watchLater(_ card: FeedCard) {
+        Task {
+            do {
+                try await env.client.addToWatchLater(aid: card.aid)
+                toast = "已添加至稍后再看"
+            } catch let error as BiliError where error.needsLogin {
+                showLogin = true
+            } catch {
+                Logger.shared.warn(.ui, "watch later failed", ["error": .init(String(describing: error))])
+                toast = FeedModel.message(for: error)
+            }
+        }
     }
 
     private func open(_ text: String) async {
         guard !opening else { return }
-        errorText = nil
         guard let link = LinkParser.parse(text) else {
-            errorText = BiliError.invalidLink.userMessage
+            toast = BiliError.invalidLink.userMessage
             return
         }
         opening = true
@@ -137,14 +160,14 @@ struct HomeView: View {
                 go(view, first)
             } else {
                 Logger.shared.warn(.ui, "video has no pages", ["bvid": .init(view.bvid)])
-                errorText = "该视频没有可播放的分P"
+                toast = "该视频没有可播放的分P"
             }
-            manualText = ""
+            linkText = ""
         } catch is CancellationError {
             return
         } catch {
             Logger.shared.warn(.ui, "open failed", ["error": .init(String(describing: error))])
-            errorText = Self.userMessage(error)
+            toast = Self.userMessage(error)
         }
     }
 
@@ -152,13 +175,199 @@ struct HomeView: View {
         partChoice = nil
         let next = PlayerRoute(bvid: view.bvid, cid: page.cid, title: view.title, part: page.part, page: page.page, pageCount: view.pages.count)
         env.recents.add(next)
-        env.navigator.open(next.videoRoute)
+        openVideo(next.videoRoute)
+    }
+
+    /// Every video page home opens (feed cards, pasted links, demo screens) goes through here.
+    private func openVideo(_ next: VideoRoute) {
+        env.navigator.open(next)
     }
 
     private static func userMessage(_ error: Error) -> String {
         if let error = error as? BiliError { return error.userMessage }
         if error is URLError { return "网络连接失败，请检查网络后重试" }
         return "打开视频失败，请稍后重试"
+    }
+}
+
+/// The avatar and the rounded link field (01's search field).
+private struct TopRow: View {
+    static let height: CGFloat = 44
+    static let margin: CGFloat = 15
+    private static let avatar: CGFloat = 38
+    private static let fieldHeight: CGFloat = 34
+
+    @Binding var text: String
+    let opening: Bool
+    let face: String?
+    let onAvatar: () -> Void
+    let onSubmit: () -> Void
+    let onPaste: (String) -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: onAvatar) {
+                AccountAvatar(face: face, size: Self.avatar)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("账号")
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Theme.secondaryText)
+                TextField("", text: $text, prompt: Text("粘贴链接或BV号").foregroundStyle(Theme.secondaryText))
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.text)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.go)
+                    .focused($focused)
+                    .onSubmit(onSubmit)
+                    .disabled(opening)
+                    .onChange(of: text) { old, new in
+                        // A paste lands as one big change; typing adds a character at a time.
+                        if new.count - old.count > 1, LinkParser.parse(new) != nil {
+                            focused = false
+                            onPaste(new)
+                        }
+                    }
+                if text.isEmpty {
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let first = strings.first else { return }
+                        Task { @MainActor in onPaste(first) }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.mini)
+                    .tint(Theme.pink)
+                    .disabled(opening)
+                } else {
+                    Button { text = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Theme.divider)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("清空")
+                }
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .frame(height: Self.fieldHeight)
+            .overlay(Capsule().stroke(Theme.secondaryText, lineWidth: 0.67))
+            .contentShape(Capsule())
+            .onTapGesture { focused = true }
+        }
+        .padding(.horizontal, Self.margin)
+        .frame(height: Self.height)
+    }
+}
+
+/// 01's tab row, with only 推荐 and that one selected.
+private struct RecommendTab: View {
+    var body: some View {
+        VStack(spacing: 5) {
+            Text("推荐")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.pink)
+            Capsule()
+                .fill(Theme.pink)
+                .frame(width: 18, height: 3)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits([.isHeader, .isSelected])
+    }
+}
+
+private struct FeedGrid: View {
+    let feed: FeedModel
+    let onOpen: (FeedCard) -> Void
+    let onWatchLater: (FeedCard) -> Void
+
+    private let columns = [GridItem(.flexible(), spacing: FeedMetrics.spacing), GridItem(.flexible(), spacing: FeedMetrics.spacing)]
+
+    var body: some View {
+        ScrollView {
+            if feed.cards.isEmpty {
+                placeholder
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 160)
+            } else {
+                LazyVGrid(columns: columns, spacing: FeedMetrics.spacing) {
+                    ForEach(Array(feed.cards.enumerated()), id: \.element.id) { index, card in
+                        FeedCardView(card: card, onOpen: { onOpen(card) }, onWatchLater: { onWatchLater(card) })
+                            .onAppear {
+                                // Starts the next page a few cards before the end, so scrolling rarely waits.
+                                if index >= feed.cards.count - 4, feed.error == nil {
+                                    Task { await feed.loadMore() }
+                                }
+                            }
+                    }
+                }
+                .padding(FeedMetrics.spacing)
+                footer
+            }
+        }
+        .refreshable { await feed.refresh() }
+    }
+
+    @ViewBuilder
+    private var placeholder: some View {
+        if let error = feed.error, !feed.loading {
+            RetryMessage(message: error) { Task { await feed.refresh() } }
+        } else {
+            ProgressView()
+        }
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        Group {
+            if let error = feed.error {
+                RetryMessage(message: error) { Task { await feed.loadMore() } }
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 24)
+    }
+}
+
+/// The M1 recents list, now behind 最近打开.
+struct RecentsView: View {
+    @Environment(AppEnvironment.self) private var env
+    @State private var confirmClear = false
+
+    var body: some View {
+        List {
+            ForEach(env.recents.items) { item in
+                Button { env.navigator.open(item.videoRoute) } label: { RecentRow(item: item) }
+            }
+        }
+        .overlay {
+            if env.recents.items.isEmpty {
+                Text("还没有打开过视频")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.secondaryText)
+            }
+        }
+        .animation(.snappy, value: env.recents.items)
+        .navigationTitle("最近打开")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !env.recents.items.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("清空") { confirmClear = true }
+                }
+            }
+        }
+        .confirmationDialog("清空最近打开的视频？", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清空", role: .destructive) { env.recents.clear() }
+        }
     }
 }
 
@@ -169,19 +378,19 @@ private struct RecentRow: View {
         HStack(spacing: 12) {
             Image(systemName: "play.rectangle.fill")
                 .font(.title3)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.card)
                 .frame(width: 40, height: 40)
-                .background(Color.pink.gradient, in: RoundedRectangle(cornerRadius: 10))
+                .background(Theme.pink.gradient, in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title).lineLimit(2).foregroundStyle(.primary)
+                Text(item.title).lineLimit(2).foregroundStyle(Theme.text)
                 if item.pageCount > 1 {
-                    Text("P\(item.page) \(item.part)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text("P\(item.page) \(item.part)").font(.caption).foregroundStyle(Theme.secondaryText).lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.divider)
         }
         .contentShape(Rectangle())
     }

@@ -71,7 +71,11 @@ exec 9>"$stage/.lock"
 flock 9
 
 start=$(date +%s)
-rsync -a --delete "$repo/ios/Sources/App/" "$stage/App/"
+# CI writes AppKeys.swift from a secret before XcodeGen runs. Here it is always the nil version, which compiles
+# the same code paths; it is kept out of the --delete and rewritten only when it changes.
+rsync -a --delete --exclude /AppKeys.swift "$repo/ios/Sources/App/" "$stage/App/"
+env -u BILI_APP_KEYS python3 "$(cd "$(dirname "$0")" && pwd)/write_app_keys.py" "$stage/AppKeys.swift.new" >/dev/null
+cmp -s "$stage/AppKeys.swift.new" "$stage/App/AppKeys.swift" || cp "$stage/AppKeys.swift.new" "$stage/App/AppKeys.swift"
 rsync -a --delete "$repo/ios/Tests/AppTests/" "$stage/AppTests/"
 rsync -a --delete --exclude .build --exclude .swiftpm "$repo/ios/Packages/BiliCore/" "$stage/BiliCore/"
 cp -p "$manifest" "$stage/Package.swift"

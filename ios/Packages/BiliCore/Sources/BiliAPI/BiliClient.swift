@@ -105,7 +105,7 @@ public final class BiliClient: @unchecked Sendable {
         return String(seconds / 86_400)
     }
 
-    private func checked<T>(_ envelope: BiliEnvelope<T>) throws -> T {
+    func checked<T>(_ envelope: BiliEnvelope<T>) throws -> T {
         guard envelope.code == 0, let data = envelope.data else {
             throw BiliError.api(code: envelope.code, message: envelope.message ?? "")
         }
@@ -135,15 +135,15 @@ public final class BiliClient: @unchecked Sendable {
     }
 
     public func post<T: Decodable>(_ path: String, form: [String: String], referer: String? = nil,
-                                   host: String = BiliClient.api) async throws -> T {
-        let envelope: BiliEnvelope<T> = try await postEnvelope(path, form: form, referer: referer, host: host)
+                                   host: String = BiliClient.api, cookies: Bool = true) async throws -> T {
+        let envelope: BiliEnvelope<T> = try await postEnvelope(path, form: form, referer: referer, host: host, cookies: cookies)
         return try checked(envelope)
     }
 
     /// For writes whose success carries no data (`data` may be null).
     public func post(_ path: String, form: [String: String], referer: String? = nil,
-                     host: String = BiliClient.api) async throws {
-        let envelope: BiliEnvelope<Ignored> = try await postEnvelope(path, form: form, referer: referer, host: host)
+                     host: String = BiliClient.api, cookies: Bool = true) async throws {
+        let envelope: BiliEnvelope<Ignored> = try await postEnvelope(path, form: form, referer: referer, host: host, cookies: cookies)
         guard envelope.code == 0 else { throw BiliError.api(code: envelope.code, message: envelope.message ?? "") }
     }
 
@@ -158,10 +158,10 @@ public final class BiliClient: @unchecked Sendable {
         return try decodeEnvelope(sent, path: path)
     }
 
-    private func postEnvelope<T: Decodable>(_ path: String, form: [String: String], referer: String?,
-                                            host: String) async throws -> BiliEnvelope<T> {
+    func postEnvelope<T: Decodable>(_ path: String, form: [String: String], referer: String?,
+                                    host: String, cookies: Bool = true) async throws -> BiliEnvelope<T> {
         let sent = try await send(method: "POST", path: path, query: [:], signed: false, host: host,
-                                  form: form, referer: referer, accept: "application/json")
+                                  form: form, referer: referer, accept: "application/json", cookies: cookies)
         return try decodeEnvelope(sent, path: path)
     }
 
@@ -177,17 +177,21 @@ public final class BiliClient: @unchecked Sendable {
     }
 
     /// Logs the path only: the query and form can carry the csrf token or a comment the user typed.
+    /// `cookies: false` is for the app API: no session cookies, no csrf field (its calls carry a signature and
+    /// an access token instead), and no 412 retry, since fresh fingerprint cookies would not be sent anyway.
     private func send(method: String, path: String, query: [String: String], signed: Bool, host: String,
-                      form: [String: String]?, referer: String?, accept: String,
+                      form: [String: String]?, referer: String?, accept: String, cookies sendCookies: Bool = true,
                       retried: Bool = false) async throws -> (response: HTTPResponse, ms: Double) {
         var body: Data?
         var headers = ["User-Agent": Self.userAgent, "Referer": referer ?? Self.referer, "Accept": accept]
         if let form {
-            guard let token = csrf else { throw BiliError.api(code: -101, message: "账号未登录") }
             var fields = form
-            fields["csrf"] = token
+            if sendCookies {
+                guard let token = csrf else { throw BiliError.api(code: -101, message: "账号未登录") }
+                fields["csrf"] = token
+                headers["Origin"] = Self.origin
+            }
             body = FormEncoding.encode(fields)
-            headers["Origin"] = Self.origin
             headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
         }
         let queryString: String
@@ -202,7 +206,7 @@ public final class BiliClient: @unchecked Sendable {
         }
         // The session cookies and the csrf token must never leave Bilibili's own hosts.
         if BiliHosts.isBilibili(url.host ?? "") {
-            if let cookie = cookies.headerValue { headers["Cookie"] = cookie }
+            if sendCookies, let cookie = cookies.headerValue { headers["Cookie"] = cookie }
         } else if form != nil {
             throw BiliError.invalidLink
         }
@@ -218,12 +222,12 @@ public final class BiliClient: @unchecked Sendable {
         guard (200..<300).contains(response.status) else {
             logger.warn(.api, path, ["status": .init(response.status), "ms": .init(ms.rounded())])
             // 412 is risk control; fresh fingerprint cookies usually clear it once.
-            if response.status == 412 && !retried && path != "/x/frontend/finger/spi" {
+            if response.status == 412 && !retried && sendCookies && path != "/x/frontend/finger/spi" {
                 cookies.remove("buvid3")
                 cookies.remove("buvid4")
                 try await ensureRiskCookies()
                 return try await send(method: method, path: path, query: query, signed: signed, host: host,
-                                      form: form, referer: referer, accept: accept, retried: true)
+                                      form: form, referer: referer, accept: accept, cookies: sendCookies, retried: true)
             }
             throw BiliError.http(response.status)
         }
