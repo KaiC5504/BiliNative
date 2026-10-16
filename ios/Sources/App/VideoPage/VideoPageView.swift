@@ -5,11 +5,13 @@ import AppLogic
 
 struct VideoPageView: View {
     let route: VideoRoute
+    /// Tests drive the open panel from outside; the page owns it otherwise.
+    private let panelOverride: Binding<PlayerPanel?>?
     @Environment(AppEnvironment.self) private var env
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: VideoPageModel?
     @State private var chrome = ChromeState()
-    @State private var panel: PlayerPanel?
+    @State private var ownPanel: PlayerPanel?
     @State private var danmakuSlot = DanmakuSlot()
     @State private var sender: DanmakuSendModel?
     @State private var sendBarOpen = false
@@ -18,12 +20,21 @@ struct VideoPageView: View {
     @State private var sendDemo: DanmakuSendBar.Demo?
     #endif
 
+    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil) {
+        self.route = route
+        panelOverride = panel
+    }
+
+    private var panel: Binding<PlayerPanel?> { panelOverride ?? $ownPanel }
+
     var body: some View {
         ZStack {
             if let model {
-                PageLayout(model: model, chrome: chrome, panel: $panel, danmaku: danmakuView(for: model),
+                PageLayout(model: model, chrome: chrome, panel: panel, danmaku: danmakuView(for: model),
                            danmakuEnabled: env.settings.danmaku.enabled,
                            onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar)
+                PanelLayer(panel: panel, model: model)
+                    .ignoresSafeArea()
             } else {
                 Color.black.ignoresSafeArea()
             }
@@ -56,7 +67,7 @@ struct VideoPageView: View {
             if needsLogin == true { presentLogin() }
         }
         .onChange(of: sendBarOpen) { _, open in
-            chrome.panelOpen = open || panel != nil
+            chrome.panelOpen = open || panel.wrappedValue != nil
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { model?.backgrounded() }
@@ -64,9 +75,22 @@ struct VideoPageView: View {
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             OrientationController.shared.videoIsVertical = vertical ?? false
         }
-        .onChange(of: panel == nil) { _, closed in
-            chrome.panelOpen = !closed
+        .onChange(of: panel.wrappedValue == nil) { _, closed in
+            chrome.panelOpen = !closed || sendBarOpen
         }
+        .task { await openDemoPanel() }
+    }
+
+    private func openDemoPanel() async {
+        #if DEBUG
+        guard let demo = DemoPanel.requested else { return }
+        if DemoPanel.landscape {
+            try? await Task.sleep(for: .seconds(1))
+            OrientationController.shared.enterLandscape()
+        }
+        try? await Task.sleep(for: .seconds(2.5))
+        panel.wrappedValue = demo
+        #endif
     }
 
     private func danmakuView(for model: VideoPageModel) -> UIView? {
@@ -186,7 +210,8 @@ private struct PlayerBox: View {
                           allowsLevelGestures: !inline,
                           onGesture: { chrome.handle($0, page: model, size: size) },
                           // The end screens (26, 27) show no danmaku over the last frame.
-                          danmaku: model.ended ? nil : danmaku)
+                          danmaku: model.ended ? nil : danmaku,
+                          onHost: { [weak model] in model?.host = $0 })
                 .frame(height: surfaceHeight)
                 .frame(maxHeight: .infinity, alignment: .top)
             if let controller = model.controller {
@@ -200,7 +225,6 @@ private struct PlayerBox: View {
             ChromeLayer(model: model, chrome: chrome, panel: $panel, insets: insets, danmakuEnabled: danmakuEnabled,
                         onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
             status
-            PanelLayer(panel: $panel, model: model)
         }
         .clipped()
         .animation(.smooth(duration: 0.25), value: env.settings.showOverlay)

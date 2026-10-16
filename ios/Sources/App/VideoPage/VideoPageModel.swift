@@ -23,6 +23,8 @@ final class VideoPageModel {
     var rate: Float = 1 { didSet { controller?.rate = rate } }
     var mirrored = false
     private(set) var sleepDeadline: Date?
+    /// What 定时关闭 was set to, for the panel to show which choice is on.
+    private(set) var sleepMinutes: Int?
 
     @ObservationIgnored let client: BiliClient
     @ObservationIgnored let settings: AppSettings
@@ -33,6 +35,8 @@ final class VideoPageModel {
     @ObservationIgnored private let onlineInterval: Double
     @ObservationIgnored private let isAppActive: @MainActor () -> Bool
 
+    /// The player surface's host view, handed over by the page so 小窗播放 can start picture in picture on it.
+    @ObservationIgnored weak var host: PlayerHostView?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var appeared = false
     /// Set by disappear: the controller was stopped because another page covered this one.
@@ -309,8 +313,10 @@ final class VideoPageModel {
         guard let minutes, minutes > 0 else {
             sleepTask = nil
             sleepDeadline = nil
+            sleepMinutes = nil
             return
         }
+        sleepMinutes = minutes
         let seconds = Double(minutes) * 60
         let deadline = Date().addingTimeInterval(seconds)
         sleepDeadline = deadline
@@ -321,7 +327,12 @@ final class VideoPageModel {
             Logger.shared.info(.ui, "sleep timer fired")
             self.pause()
             self.sleepDeadline = nil
+            self.sleepMinutes = nil
         }
+    }
+
+    func startPiP() {
+        host?.startPiP()
     }
 
     // MARK: heartbeats
