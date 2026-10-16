@@ -33,7 +33,12 @@ jobs:
           if [ -n "$NEWEST" ]; then sudo xcode-select -s "$NEWEST"; fi
           xcodebuild -version
 
-      # Booting takes over a minute, so it runs while everything up to the tests happens.
+      - name: Core package tests
+        if: env.FULL_RUN == 'true'
+        run: swift test --package-path ios/Packages/BiliCore
+
+      # Booting takes over a minute, so it runs during the app build. Not earlier: it would slow the BiliCore
+      # tests, some of which are timed.
       - name: Start a simulator
         id: sim
         run: |
@@ -50,10 +55,6 @@ jobs:
           ")
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           xcrun simctl boot "$UDID"
-
-      - name: Core package tests
-        if: env.FULL_RUN == 'true'
-        run: swift test --package-path ios/Packages/BiliCore
 
       - name: Install XcodeGen
         run: brew install xcodegen
