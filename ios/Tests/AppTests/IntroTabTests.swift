@@ -42,9 +42,11 @@ final class IntroTabTests: XCTestCase {
         try await waitUntil { !page.model.related.isEmpty }
         let card = page.model.related[0]
         page.model.openRelated(card)
-        XCTAssertEqual(page.model.pushedRoute?.bvid, card.bvid)
-        XCTAssertNil(page.model.pushedRoute?.cid)
-        XCTAssertNil(page.model.pushedRoute?.startSeconds)
+        XCTAssertEqual(page.navigator.path.count, 1)
+        let pushed = try XCTUnwrap(page.navigator.path.last)
+        XCTAssertEqual(pushed.bvid, card.bvid)
+        XCTAssertNil(pushed.cid)
+        XCTAssertNil(pushed.startSeconds)
         XCTAssertEqual(page.model.current?.bvid, F.bvidA, "the page itself keeps playing its own video")
     }
 
@@ -85,6 +87,7 @@ final class IntroTabTests: XCTestCase {
         let model: VideoPageModel
         let fakes: Fakes
         let http: FixtureHTTP
+        let navigator: AppNavigator
     }
 
     private func makePage(_ route: VideoRoute, loggedIn: Bool = false) -> Page {
@@ -95,14 +98,16 @@ final class IntroTabTests: XCTestCase {
         let suite = "intro-tab-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
+        let navigator = AppNavigator()
         let model = VideoPageModel(route: route, client: client, settings: settings, account: { account },
                                    makeController: { item, player in
                                        let fake = FakePlayback(item: item, player: player)
                                        fakes.all.append(fake)
                                        return fake
                                    },
-                                   sleep: { _ in _ = try? await Task.sleep(nanoseconds: 3_600_000_000_000) })
-        return Page(model: model, fakes: fakes, http: http)
+                                   sleep: { _ in _ = try? await Task.sleep(nanoseconds: 3_600_000_000_000) },
+                                   openPage: { navigator.open($0) })
+        return Page(model: model, fakes: fakes, http: http, navigator: navigator)
     }
 
     private func waitUntil(_ seconds: Double = 5, _ condition: @escaping @MainActor () -> Bool,
@@ -116,7 +121,7 @@ final class IntroTabTests: XCTestCase {
     }
 }
 
-/// A related video pushes a whole second video page, player host and all, onto the navigation stack; back pops it.
+/// A related video pushes a whole second video page, player host and all, through the app navigator; back pops it.
 @MainActor
 final class RelatedPushTests: XCTestCase {
     private typealias F = VideoPageFixtures
@@ -138,9 +143,8 @@ final class RelatedPushTests: XCTestCase {
         let env = AppEnvironment()
         let model = env.makeVideoPageModel(route: VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         let window = UIWindow(windowScene: scene)
-        window.rootViewController = UIHostingController(rootView: NavigationStack {
-            VideoPageView(model: model)
-        }.environment(env))
+        window.rootViewController = UIHostingController(rootView: StackRoot(navigator: env.navigator).environment(env))
+        env.navigator.show(model)
         window.makeKeyAndVisible()
         self.window = window
 
@@ -152,12 +156,12 @@ final class RelatedPushTests: XCTestCase {
         model.openRelated(card)
         let pushed = await waitUntil(8) { Self.hosts(in: window).contains { $0 !== first } }
         XCTAssertTrue(pushed, "no second page came up")
-        XCTAssertEqual(model.pushedRoute?.bvid, card.bvid)
+        XCTAssertEqual(env.navigator.path.last?.bvid, card.bvid)
         let covered = await waitUntil(5) { model.covered }
         XCTAssertTrue(covered, "the page under the related video should be covered, not closed")
         XCTAssertFalse(model.closed)
 
-        model.pushedRoute = nil
+        env.navigator.path.removeLast()
         let back = await waitUntil(8) { Self.hosts(in: window).map(ObjectIdentifier.init) == [ObjectIdentifier(first)] }
         XCTAssertTrue(back, "the first page did not come back alone: \(Self.hosts(in: window).count) hosts")
         let uncovered = await waitUntil(5) { !model.covered }
@@ -175,5 +179,15 @@ final class RelatedPushTests: XCTestCase {
 
     private static func hosts(in view: UIView) -> [PlayerHostView] {
         (view as? PlayerHostView).map { [$0] } ?? view.subviews.flatMap { hosts(in: $0) }
+    }
+}
+
+private struct StackRoot: View {
+    @Bindable var navigator: AppNavigator
+
+    var body: some View {
+        NavigationStack(path: $navigator.path) {
+            Color.clear.videoPageDestinations()
+        }
     }
 }
