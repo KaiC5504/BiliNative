@@ -252,6 +252,8 @@ final class TVLoginSheetPresentationTests: XCTestCase {
         self.window = window
         let laidOut = await waitUntil(5) { (window.rootViewController?.view.bounds.width ?? 0) > 0 }
         XCTAssertTrue(laidOut, "the host never laid out")
+        // onChange only sees changes made after the first pass has attached it.
+        try await Task.sleep(for: .milliseconds(500))
         return window
     }
 
