@@ -86,8 +86,6 @@ jobs:
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -configuration Debug \
             -derivedDataPath build \
-            COMPILATION_CACHE_ENABLE_CACHING=YES \
-            COMPILATION_CACHE_CAS_PATH="$RUNNER_TEMP/xcode-cas" \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
