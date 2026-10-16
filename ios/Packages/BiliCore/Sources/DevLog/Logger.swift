@@ -21,8 +21,13 @@ public final class Logger: @unchecked Sendable {
         return String(repeating: "0", count: 16 - hex.count) + hex
     }
 
-    public func add(_ sink: LogSink) {
-        state.withLock { $0.sinks.append(sink) }
+    /// Returns the last seq handed out before the sink joined: every later event reaches it, no earlier one does.
+    @discardableResult
+    public func add(_ sink: LogSink) -> Int64 {
+        state.withLock { value -> Int64 in
+            value.sinks.append(sink)
+            return value.seq
+        }
     }
 
     public func remove(_ sink: LogSink) {

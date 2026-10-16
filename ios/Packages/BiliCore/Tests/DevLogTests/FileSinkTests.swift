@@ -132,4 +132,33 @@ final class FileSinkTests: XCTestCase {
         XCTAssertEqual(unsent.map(\.msg), ["c"])
         XCTAssertEqual(AckStore(url: dir.appendingPathComponent("ack.json")).lastSeq("s1"), 2)
     }
+
+    func testReplayIncludesTheCurrentSessionBetweenAckAndCut() throws {
+        let dir = tempDir()
+        let sink = try FileSink(directory: dir, session: "now")
+        let logger = Logger(session: "now")
+        logger.add(sink)
+        for index in 1...5 { logger.info(.app, "e\(index)") }
+        sink.flush()
+        let ack = AckStore(url: dir.appendingPathComponent("ack.json"))
+        let unsent = ReplayPlanner.unsent(files: sink.sessionFiles(), currentSession: "now", ack: ack, current: (after: 1, through: 4))
+        XCTAssertEqual(unsent.map(\.msg), ["e2", "e3", "e4"])
+    }
+
+    func testReplayLimitKeepsTheNewestEvents() throws {
+        let dir = tempDir()
+        for (session, year) in [("a", 2020), ("b", 2021)] {
+            let sink = try FileSink(directory: dir, session: session)
+            let logger = Logger(session: session)
+            logger.add(sink)
+            for index in 1...3 { logger.info(.app, "\(session)\(index)") }
+            sink.flush()
+            let date = Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: 1, day: 1))!
+            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: sink.fileURL.path)
+        }
+        let probe = try FileSink(directory: dir, session: "c")
+        let ack = AckStore(url: dir.appendingPathComponent("ack.json"))
+        let unsent = ReplayPlanner.unsent(files: probe.sessionFiles(), currentSession: "c", ack: ack, limit: 4)
+        XCTAssertEqual(unsent.map(\.msg), ["a3", "b1", "b2", "b3"])
+    }
 }

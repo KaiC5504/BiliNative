@@ -18,6 +18,17 @@ final class LoggerTests: XCTestCase {
         XCTAssertEqual(sink.events.count, 2)
     }
 
+    func testAddReturnsTheLastSeqHandedOutBeforeTheSink() {
+        let logger = Logger(session: "cut")
+        logger.info(.app, "one")
+        logger.info(.app, "two")
+        let sink = MemorySink()
+        let cut = logger.add(sink)
+        logger.info(.app, "three")
+        XCTAssertEqual(cut, 2)
+        XCTAssertEqual(sink.events.map(\.seq), [3])
+    }
+
     func testNonFiniteDoublesEncodeAsStrings() throws {
         let event = LogEvent(t: 0, seq: 1, session: "s", level: .info, cat: .engine, msg: "m",
                              f: ["a": .double(.infinity), "b": .double(-.infinity), "c": .double(.nan), "d": .double(2.5)])

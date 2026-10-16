@@ -14,8 +14,9 @@ public final class NetworkSink: LogSink, @unchecked Sendable {
 
     private let poster: Poster
     private let intervalMs: Double
-    private let maxBuffered: Int
+    public let maxBuffered: Int
     private let batchLimit: Int
+    private let maxBackoffMs: Double
     private let buffer = Locked<[LogEvent]>([])
     private let stateBox = Locked<State>(.idle)
     private let loop = Locked<Task<Void, Never>?>(nil)
@@ -23,11 +24,13 @@ public final class NetworkSink: LogSink, @unchecked Sendable {
     var encodeOverride: ((LogEvent) throws -> Data)?
     public var onAcknowledged: (@Sendable (_ session: String, _ seq: Int64) -> Void)?
 
-    public init(poster: @escaping Poster, intervalMs: Double = 500, maxBuffered: Int = 10_000, batchLimit: Int = 2_000) {
+    public init(poster: @escaping Poster, intervalMs: Double = 500, maxBuffered: Int = 10_000, batchLimit: Int = 2_000,
+                maxBackoffMs: Double = 30_000) {
         self.poster = poster
         self.intervalMs = intervalMs
         self.maxBuffered = maxBuffered
         self.batchLimit = batchLimit
+        self.maxBackoffMs = maxBackoffMs
     }
 
     public var state: State { stateBox.current }
@@ -44,17 +47,34 @@ public final class NetworkSink: LogSink, @unchecked Sendable {
         }
     }
 
+    /// Puts replayed events ahead of everything buffered, so the cap still drops the oldest first.
+    public func prepend(_ events: [LogEvent]) {
+        buffer.withLock { value in
+            value.insert(contentsOf: events, at: 0)
+            if value.count > maxBuffered { value.removeFirst(value.count - maxBuffered) }
+        }
+    }
+
+    var bufferedForTesting: [LogEvent] { buffer.current }
+
     public func start() {
         loop.withLock { task in
             guard task == nil else { return }
             task = Task { [weak self] in
+                var delay = self?.intervalMs ?? 0
                 while !Task.isCancelled {
                     guard let self else { return }
-                    await self.flushOnce()
-                    try? await sleepMs(self.intervalMs)
+                    let sent = await self.flushOnce()
+                    delay = Self.nextDelay(after: sent, current: delay, interval: self.intervalMs, cap: self.maxBackoffMs)
+                    try? await sleepMs(delay)
                 }
             }
         }
+    }
+
+    /// While the PC is unreachable, each failed post waits twice as long as the last, up to `cap`.
+    static func nextDelay(after sent: Bool, current: Double, interval: Double, cap: Double) -> Double {
+        sent ? interval : min(max(current, interval) * 2, cap)
     }
 
     public func stop() {

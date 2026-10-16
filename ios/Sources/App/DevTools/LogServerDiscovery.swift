@@ -26,6 +26,7 @@ final class LogServerDiscovery {
     func stop() {
         browser?.cancel()
         browser = nil
+        services = []
     }
 }
 #endif

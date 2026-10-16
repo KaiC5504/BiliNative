@@ -66,6 +66,25 @@ final class NetworkSinkTests: XCTestCase {
         XCTAssertEqual(acked.current["s"], 1)
     }
 
+    func testPrependGoesAheadOfLiveEventsAndTheCapDropsOldest() {
+        let sink = NetworkSink(poster: { _ in }, maxBuffered: 4)
+        sink.enqueue([event(10), event(11)])
+        sink.prepend([event(1), event(2), event(3)])
+        XCTAssertEqual(sink.pending, 4)
+        XCTAssertEqual(sink.bufferedForTesting.map(\.seq), [2, 3, 10, 11])
+    }
+
+    func testRetryDelayDoublesToTheCapAndResetsOnSuccess() {
+        var delay = 500.0
+        var seen: [Double] = []
+        for _ in 0..<8 {
+            delay = NetworkSink.nextDelay(after: false, current: delay, interval: 500, cap: 30_000)
+            seen.append(delay)
+        }
+        XCTAssertEqual(seen, [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000])
+        XCTAssertEqual(NetworkSink.nextDelay(after: true, current: delay, interval: 500, cap: 30_000), 500)
+    }
+
     func testBufferCapDropsOldest() async {
         let bodies = Locked<[Data]>([])
         let sink = NetworkSink(poster: { data in bodies.withLock { $0.append(data) } }, maxBuffered: 3)

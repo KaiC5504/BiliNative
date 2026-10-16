@@ -3,7 +3,7 @@ import Foundation
 import Network
 import BiliShared
 
-enum LogTarget: Equatable {
+enum LogTarget: Equatable, Sendable {
     case service(name: String)
     case manual(host: String, port: UInt16)
 
@@ -13,7 +13,7 @@ enum LogTarget: Equatable {
             self = .service(name: settings.logServerService)
             return
         }
-        let parts = settings.logServerManual.split(separator: ":")
+        let parts = settings.logServerManual.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":")
         guard parts.count == 2, let port = UInt16(parts[1]), !parts[0].isEmpty else { return nil }
         self = .manual(host: String(parts[0]), port: port)
     }
@@ -30,22 +30,48 @@ enum LogTarget: Equatable {
 
 /// One short HTTP/1.1 POST per batch over Network.framework, which also reaches Bonjour services
 /// without resolving them to an address first.
-final class LogPoster: @unchecked Sendable {
+final class LogPoster: Sendable {
     enum Failure: Error {
         case connect(String)
         case status(String)
+        case timeout
     }
 
     let target: LogTarget
+    /// Seconds for the whole exchange; a PC that accepts the connection but never answers must not stall the sink.
+    let deadline: TimeInterval
     private let queue = DispatchQueue(label: "bilinative.log-poster")
 
-    init(target: LogTarget) {
+    init(target: LogTarget, deadline: TimeInterval = 10) {
         self.target = target
+        self.deadline = deadline
     }
 
     func post(_ body: Data) async throws {
         let connection = NWConnection(to: target.endpoint, using: .tcp)
-        defer { connection.cancel() }
+        let timedOut = Locked(false)
+        let timer = DispatchWorkItem {
+            timedOut.withLock { $0 = true }
+            connection.cancel()
+        }
+        queue.asyncAfter(deadline: .now() + deadline, execute: timer)
+        defer {
+            timer.cancel()
+            connection.cancel()
+        }
+        do {
+            try await withTaskCancellationHandler {
+                try await exchange(connection, body)
+            } onCancel: {
+                connection.cancel()
+            }
+        } catch {
+            if timedOut.current { throw Failure.timeout }
+            throw error
+        }
+    }
+
+    private func exchange(_ connection: NWConnection, _ body: Data) async throws {
         try await ready(connection)
         let head = "POST /logs HTTP/1.1\r\nHost: bilinative-log\r\nContent-Type: application/x-ndjson\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         try await send(connection, Data(head.utf8) + body)

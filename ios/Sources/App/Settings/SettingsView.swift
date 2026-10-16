@@ -121,9 +121,11 @@ struct SettingsView: View {
                 DevLogSetup.apply(settings)
             }
             .onChange(of: settings.logServerService) { DevLogSetup.apply(settings) }
+            // Typing an address means using it: a selected service would otherwise win over it silently.
+            .onChange(of: settings.logServerManual) { settings.logServerService = "" }
             .task {
                 while !Task.isCancelled {
-                    networkState = DevLogSetup.networkState()
+                    networkState = DevLogSetup.networkState(settings)
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                 }
             }
