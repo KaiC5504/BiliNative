@@ -34,6 +34,8 @@ final class PanelPresentationTests: XCTestCase {
 
     override func tearDown() async throws {
         UserDefaults.standard.removeObject(forKey: "DemoData")
+        // Tears the page down: a page left alive would keep the orientation owner and react to later tests.
+        window?.rootViewController = nil
         window?.isHidden = true
         window = nil
         let orientation = OrientationController.shared

@@ -266,6 +266,8 @@ final class VideoPageModelTests: XCTestCase {
 
         XCTAssertTrue(keeper.restore(page.model))
         XCTAssertTrue(keeper.restoring === page.model)
+        XCTAssertTrue(keeper.takeRestore() === page.model)
+        XCTAssertNil(keeper.takeRestore(), "a second navigation stack would push the page twice")
         XCTAssertTrue(keeper.pageShown(page.model, opened: true))
         XCTAssertNil(keeper.kept)
         XCTAssertNil(keeper.restoring)

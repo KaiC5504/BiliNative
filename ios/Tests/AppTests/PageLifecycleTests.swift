@@ -32,6 +32,9 @@ final class PageLifecycleTests: XCTestCase {
         PiPKeeper.shared.release()
         navigator.path = []
         try? await Task.sleep(for: .milliseconds(600))
+        // Without dropping the root, the SwiftUI hierarchy can outlive the window, and its stack and restore
+        // destination would go on reacting to the next test's pages.
+        window?.rootViewController = nil
         window?.isHidden = true
         window = nil
         let orientation = OrientationController.shared

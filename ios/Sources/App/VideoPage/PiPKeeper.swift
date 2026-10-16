@@ -14,6 +14,7 @@ final class PiPKeeper {
     private(set) var restoring: VideoPageModel?
     /// The page whose video is in the small window, kept or still on its page.
     @ObservationIgnored private(set) weak var inPiP: VideoPageModel?
+    @ObservationIgnored private var restoreTaken = false
 
     /// A page left its navigation stack: kept while picture in picture plays it, closed otherwise.
     func pageRemoved(_ model: VideoPageModel) {
@@ -56,8 +57,16 @@ final class PiPKeeper {
     /// The restore button of the kept page's window; false when nothing will show the page again.
     func restore(_ model: VideoPageModel) -> Bool {
         guard kept === model else { return false }
+        restoreTaken = false
         restoring = model
         return true
+    }
+
+    /// The restore request, once: only one navigation stack may push the page again.
+    func takeRestore() -> VideoPageModel? {
+        guard let restoring, !restoreTaken else { return nil }
+        restoreTaken = true
+        return restoring
     }
 
     func pipStarted(_ model: VideoPageModel) {

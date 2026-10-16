@@ -100,7 +100,7 @@ private struct AppPageDestinations<History: View, Recents: View>: ViewModifier {
                 }
             }
             .onChange(of: keeper.restoring.map { ObjectIdentifier($0) }) { _, requested in
-                guard requested != nil, let model = keeper.restoring else { return }
+                guard requested != nil, let model = keeper.takeRestore() else { return }
                 navigator.show(model)
             }
     }
