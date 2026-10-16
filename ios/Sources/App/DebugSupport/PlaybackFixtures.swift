@@ -2,6 +2,7 @@
 import Foundation
 import BiliShared
 import BiliAPI
+import Ripper
 
 extension DebugSupport {
     /// A Dash with one video stream per entry and one AAC audio stream; byte ranges are placeholders.
@@ -13,6 +14,19 @@ extension DebugSupport {
         }
         return Dash(duration: 10, video: streams.map { stream($0.id, $0.codecid, $0.codecs) },
                     audio: [stream(30280, 0, "mp4a.40.2")])
+    }
+
+    /// Requests to `hangingHosts` never answer until cancelled; the rest go to `inner`.
+    struct HangingTransport: RangeTransport {
+        let inner: RangeTransport
+        let hangingHosts: Set<String>
+
+        func fetch(_ url: URL, range: ByteRange) async throws -> TransportResponse {
+            if hangingHosts.contains(url.host ?? "") {
+                try await Task.sleep(nanoseconds: 3_600_000_000_000)
+            }
+            return try await inner.fetch(url, range: range)
+        }
     }
 }
 #endif

@@ -36,6 +36,13 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertEqual(choice?.video.codecid, 7)
     }
 
+    func testDirectModeSkipsHEV1ButKeepsHVC1() {
+        let direct = PlaybackController.choose(everyCodec, quality: 80, codecOrder: [.hevc, .av1, .avc], excluded: [], skipHEV1: true)
+        XCTAssertEqual(direct?.video.codecid, 13)
+        let hvc1 = DebugSupport.codecDash([(80, 12, "hvc1.1.6.L120.90"), (80, 7, "avc1.640032")])
+        XCTAssertEqual(PlaybackController.choose(hvc1, quality: 80, codecOrder: [.hevc, .avc], excluded: [], skipHEV1: true)?.video.codecid, 12)
+    }
+
     func testDecoderErrorsAreFormatFailures() {
         let decode = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.decodeFailed.rawValue)
         XCTAssertEqual(PlaybackController.classify(decode, log: []), .format)

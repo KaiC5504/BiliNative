@@ -54,8 +54,12 @@ enum PlaybackBuilder {
     }
 
     /// Direct mode: each track plays from whichever of its addresses answered the header request.
-    static func prepareDirect(choice: TrackChoice, transport: RangeTransport) async throws -> PreparedPlayback {
-        try await assemble(choice) { _, stream in try await directHeaders(stream, transport: transport) }
+    /// Both tracks' headers are fetched at once; each address gets `candidateSeconds` before the next is tried.
+    static func prepareDirect(choice: TrackChoice, transport: RangeTransport, candidateSeconds: Double = 6) async throws -> PreparedPlayback {
+        async let video = directHeaders(choice.video, transport: transport, candidateSeconds: candidateSeconds)
+        async let audio = directHeaders(choice.audio, transport: transport, candidateSeconds: candidateSeconds)
+        let fetched = try await (video: video, audio: audio)
+        return try await assemble(choice) { kind, _ in kind == .video ? fetched.video : fetched.audio }
     }
 
     private static func assemble(_ choice: TrackChoice,
@@ -130,21 +134,15 @@ enum PlaybackBuilder {
     /// One plain request per address, Bilibili's own first, then its backups; the first that answers
     /// with the whole range wins. Some accounts get a primary that refuses everything (403) next to
     /// working backups on the same host.
-    private static func directHeaders(_ stream: DashStream, transport: RangeTransport) async throws -> (bytes: [UInt8], total: Int64, url: String) {
+    private static func directHeaders(_ stream: DashStream, transport: RangeTransport,
+                                      candidateSeconds: Double) async throws -> (bytes: [UInt8], total: Int64, url: String) {
         guard let range = ByteRange(start: 0, end: stream.indexRange.end) else { throw PlaybackError.noSidx }
         let candidates = [stream.baseURL] + stream.backupURLs
         var refused = 0
         for address in candidates {
             do {
                 guard let url = URL(string: address) else { throw RipperError.invalidURL }
-                let response = try await transport.fetch(url, range: range)
-                guard response.status == 206, let contentRange = ContentRange.parse(response.headers["content-range"]),
-                      contentRange.range == range, let total = contentRange.total else {
-                    throw RipperError.badResponse(status: response.status)
-                }
-                var bytes: [UInt8] = []
-                for try await chunk in response.body { bytes += chunk }
-                guard Int64(bytes.count) == range.length else { throw RipperError.lengthMismatch(got: Int64(bytes.count), expected: range.length) }
+                let (bytes, total) = try await within(candidateSeconds) { try await wholeRange(url, range, transport: transport) }
                 Logger.shared.info(.player, "direct source", ["url": .init(address), "refused": .init(refused),
                                                               "candidates": .init(candidates.count)])
                 return (bytes, total, address)
@@ -157,5 +155,33 @@ enum PlaybackBuilder {
         }
         Logger.shared.error(.player, "no direct source", ["refused": .init(refused), "candidates": .init(candidates.count)])
         throw PlaybackError.noSource
+    }
+
+    private static func wholeRange(_ url: URL, _ range: ByteRange, transport: RangeTransport) async throws -> (bytes: [UInt8], total: Int64) {
+        let response = try await transport.fetch(url, range: range)
+        guard response.status == 206, let contentRange = ContentRange.parse(response.headers["content-range"]),
+              contentRange.range == range, let total = contentRange.total else {
+            throw RipperError.badResponse(status: response.status)
+        }
+        var bytes: [UInt8] = []
+        for try await chunk in response.body { bytes += chunk }
+        guard Int64(bytes.count) == range.length else { throw RipperError.lengthMismatch(got: Int64(bytes.count), expected: range.length) }
+        return (bytes, total)
+    }
+
+    struct CandidateTimeout: Error {}
+
+    /// Runs `body` with a deadline; on timeout `body` is cancelled and CandidateTimeout thrown.
+    static func within<T: Sendable>(_ seconds: Double, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T?.self) { group in
+            group.addTask { try await body() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return nil
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next(), let value = first else { throw CandidateTimeout() }
+            return value
+        }
     }
 }

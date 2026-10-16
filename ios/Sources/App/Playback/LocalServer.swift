@@ -111,6 +111,8 @@ final class LocalServer: @unchecked Sendable {
     }
 
     func stop() {
+        // The cancel below ends a start in progress; a later start() must begin a new listener, not join that one.
+        startTask.withLock { $0 = nil }
         listenerBox.withLock { listener in
             listener?.cancel()
             listener = nil

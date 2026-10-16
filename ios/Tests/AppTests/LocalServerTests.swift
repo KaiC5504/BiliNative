@@ -113,6 +113,32 @@ final class LocalServerTests: XCTestCase {
         }
     }
 
+    func testDirectModeMovesOnFromAnAddressThatHangs() async throws {
+        let fixture = DebugSupport.headerFixture(withMoov: true)
+        let transport = DebugSupport.HangingTransport(inner: DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total, answers: [:]),
+                                                      hangingHosts: ["primary.invalid"])
+        let started = Date()
+        let prepared = try await PlaybackBuilder.prepareDirect(choice: fixture.choice, transport: transport, candidateSeconds: 0.3)
+        XCTAssertEqual(prepared.video.mediaURL, fixture.choice.video.backupURLs[0])
+        XCTAssertEqual(prepared.audio.mediaURL, fixture.choice.audio.backupURLs[0])
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3, "both tracks wait out the hanging address at the same time")
+    }
+
+    func testStartAfterStopDuringStartBeginsANewListener() async throws {
+        let server = LocalServer(router: DebugSupport.makeRouter())
+        defer { server.stop() }
+        let first = Task { try await server.start() }
+        let deadline = Date().addingTimeInterval(5)
+        while server.state == .stopped, Date() < deadline { try await Task.sleep(nanoseconds: 1_000_000) }
+        server.stop()
+        try await server.start()
+        _ = try? await first.value
+        XCTAssertTrue(server.isRunning)
+        let token = DebugSupport.registerStaticAssets(on: server, size: 1_000)
+        let (_, response) = try await URLSession.shared.data(from: try XCTUnwrap(server.url(token: token, name: "master.m3u8")))
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
     func testClientDisconnectEndsTheEngineReadPromptly() async throws {
         let server = LocalServer(router: DebugSupport.makeRouter())
         try await server.start()
