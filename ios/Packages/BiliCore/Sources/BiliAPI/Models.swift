@@ -26,12 +26,12 @@ extension KeyedDecodingContainer where K == AnyKey {
     }
 }
 
-private func missing(_ field: String, _ decoder: Decoder) -> DecodingError {
+func missing(_ field: String, _ decoder: Decoder) -> DecodingError {
     DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "missing \(field)"))
 }
 
 /// One undecodable element becomes nil instead of failing the whole array.
-private struct Lossy<T: Decodable>: Decodable {
+struct Lossy<T: Decodable>: Decodable {
     let value: T?
 
     init(from decoder: Decoder) {
@@ -224,13 +224,18 @@ public struct PlayURLInfo: Decodable, Sendable {
     public let acceptDescription: [String]
     public let dash: Dash?
     public let hasDurl: Bool
+    public let lastPlayTimeMs: Int64
+    public let lastPlayCid: Int64
 
-    public init(quality: Int, acceptQuality: [Int], acceptDescription: [String], dash: Dash?, hasDurl: Bool) {
+    public init(quality: Int, acceptQuality: [Int], acceptDescription: [String], dash: Dash?, hasDurl: Bool,
+                lastPlayTimeMs: Int64 = 0, lastPlayCid: Int64 = 0) {
         self.quality = quality
         self.acceptQuality = acceptQuality
         self.acceptDescription = acceptDescription
         self.dash = dash
         self.hasDurl = hasDurl
+        self.lastPlayTimeMs = lastPlayTimeMs
+        self.lastPlayCid = lastPlayCid
     }
 
     public init(from decoder: Decoder) throws {
@@ -241,6 +246,8 @@ public struct PlayURLInfo: Decodable, Sendable {
         dash = try container.first(Dash.self, "dash")
         let durl = (try? container.first([Ignored].self, "durl")) ?? nil
         hasDurl = !(durl ?? []).isEmpty
+        lastPlayTimeMs = try container.first(Int64.self, "last_play_time") ?? 0
+        lastPlayCid = try container.first(Int64.self, "last_play_cid") ?? 0
     }
 
     public var qualityOptions: [QualityOption] {
