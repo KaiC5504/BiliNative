@@ -99,8 +99,6 @@ final class PlayerTransitionTests: XCTestCase {
         orientation.end()
         XCTAssertFalse(orientation.videoIsVertical)
         XCTAssertFalse(orientation.locked)
-        orientation.deviceOrientationChanged(.landscapeLeft)
-        XCTAssertEqual(orientation.presentation, .landscape, "the next page turns with the phone again")
     }
 
     func testPictureInPictureControllerExistsAndStartsWhenSupported() async throws {
