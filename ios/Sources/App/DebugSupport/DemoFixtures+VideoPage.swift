@@ -26,8 +26,6 @@ enum VideoPageFixtures {
             return DemoFixtures.ok(view(bvid: query["bvid"] ?? bvidA))
         case "/x/player/wbi/v2", "/x/player/v2":
             return DemoFixtures.ok(playerV2)
-        case "/x/web-interface/archive/related":
-            return DemoFixtures.ok(related)
         case "/x/player/online/total":
             return DemoFixtures.ok(#"{"total":"53","count":"41","show_switch":{"total":true,"count":true}}"#)
         case "/x/click-interface/web/heartbeat":
@@ -53,7 +51,7 @@ enum VideoPageFixtures {
 
     private static var season: String {
         """
-        {"id":5001,"title":"演示合集","cover":"\(cover)","mid":42,"intro":"演示用的合集，两个小节。","sign_state":0,"attribute":140,
+        {"id":5001,"title":"演示合集","cover":"\(cover)","mid":42,"intro":"演示用的合集，两个小节。求订阅！谢谢大家一直以来的支持，今后也会继续更新这个系列。","sign_state":0,"attribute":140,
          "sections":[
           {"season_id":5001,"id":6001,"title":"第一季","type":1,"episodes":[
             \(episode(aid: aidA, bvid: bvidA, cid: cidA1, title: "第一集：出发", views: 37000, pubdate: 1_791_700_000)),
@@ -85,7 +83,7 @@ enum VideoPageFixtures {
         return """
         {"bvid":"\(bvid)","aid":\(aid),"videos":\(pages.count),"tid":24,"tname":"动画","copyright":1,"pic":"\(cover)",
          "title":"\(title)","pubdate":1791700000,"ctime":1791700000,"desc":"演示视频的简介。","duration":200,
-         "desc_v2":[{"raw_text":"演示视频的简介，","type":1,"biz_id":0},{"raw_text":"演示UP主","type":2,"biz_id":42}],
+         "desc_v2":[{"raw_text":"演示视频的简介，03:15 是这一集的重点，记得看到最后。BGM 和素材都来自演示，感谢 ","type":1,"biz_id":0},{"raw_text":"演示UP主","type":2,"biz_id":42}],
          "rights":{"bp":0,"elec":0,"download":1,"movie":0,"pay":0,"hd5":1,"no_reprint":1,"autoplay":1,"ugc_pay":0},
          "owner":{"mid":42,"name":"演示UP主","face":"\(face)"},
          "stat":{"aid":\(aid),"view":37000,"danmaku":337,"reply":213,"favorite":3907,"coin":1210,"share":148,"now_rank":0,
@@ -104,23 +102,6 @@ enum VideoPageFixtures {
                     {"type":2,"from":60,"to":140,"content":"正片","imgUrl":""},
                     {"type":2,"from":140,"to":200,"content":"彩蛋","imgUrl":""}]}
     """
-
-    private static func card(aid: Int64, bvid: String, cid: Int64, title: String, owner: String, views: Int, extra: String = "") -> String {
-        """
-        {"aid":\(aid),"bvid":"\(bvid)","cid":\(cid),"title":"\(title)","pic":"\(cover)","duration":155,"pubdate":1791600000,
-         "owner":{"mid":77,"name":"\(owner)","face":"\(face)"},
-         "stat":{"aid":\(aid),"view":\(views),"danmaku":1700,"reply":88,"favorite":900,"coin":300,"share":20,"like":41000}\(extra)}
-        """
-    }
-
-    private static var related: String {
-        "[" + [
-            card(aid: 900_000_011, bvid: "BV1Dm4y1R1aa", cid: 700_001_101, title: "【演示】推荐视频一：有被治愈到！", owner: "演示推荐", views: 4_815_000),
-            card(aid: 900_000_012, bvid: "BV1Dm4y1R2bb", cid: 700_001_201, title: "【演示】推荐视频二：少年，你也喜欢怀念过去吗？", owner: "演示学姐", views: 690_300),
-            card(aid: 900_000_013, bvid: "BV1Dm4y1R3cc", cid: 700_001_301, title: "【演示】跳转到番剧的条目", owner: "演示番剧", views: 12_000,
-                 extra: #","redirect_url":"https://example.invalid/bangumi/play/ep1""#),
-        ].joined(separator: ",") + "]"
-    }
 
     private static func playURL(cid: Int64) -> String {
         func stream(_ id: Int, _ codecs: String, _ codecid: Int, _ width: Int, _ height: Int) -> String {

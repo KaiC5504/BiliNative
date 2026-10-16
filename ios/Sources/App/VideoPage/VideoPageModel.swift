@@ -18,6 +18,12 @@ final class VideoPageModel {
     private(set) var related: [VideoCard] = []
     private(set) var chapters: [Chapter] = []
     private(set) var online: String?
+    private(set) var uploader: UploaderCard?
+    private(set) var tags: [VideoTag] = []
+    /// Liked, coined, favourited and following; only asked for when logged in.
+    private(set) var relation: VideoRelation?
+    /// A related video, or a BV id in the description, asks for a page of its own; the view pushes it.
+    var pushedRoute: VideoRoute?
     private(set) var ended = false
     /// Kept across parts and autoplay switches.
     var rate: Float = 1 { didSet { controller?.rate = rate } }
@@ -56,6 +62,7 @@ final class VideoPageModel {
     @ObservationIgnored private var heartbeats: Task<Void, Never>?
     @ObservationIgnored private var onlineTask: Task<Void, Never>?
     @ObservationIgnored private var relatedTask: Task<Void, Never>?
+    @ObservationIgnored private var introTasks: [Task<Void, Never>] = []
     @ObservationIgnored private var chaptersTask: Task<Void, Never>?
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
 
@@ -159,8 +166,12 @@ final class VideoPageModel {
                 related = []
                 online = nil
                 chapters = []
+                uploader = nil
+                tags = []
+                relation = nil
                 self.detail = detail
                 fetchRelated(bvid: bvid)
+                fetchIntro(detail)
             }
             // Bangumi and other PGC pages answer view with a redirect; their playurl is another API.
             guard detail.redirectURL == nil else { throw PageError.unsupported }
@@ -363,6 +374,25 @@ final class VideoPageModel {
         host?.startPiP()
     }
 
+    // MARK: the page under the player
+
+    func openRelated(_ card: VideoCard) {
+        pushedRoute = VideoRoute(bvid: card.bvid)
+    }
+
+    /// A tap on a run of the description. Links leave the app, so the view opens those itself.
+    func activate(_ run: RichRun) async {
+        switch run {
+        case .timestamp(_, let seconds):
+            await seek(to: Double(seconds))
+            play()
+        case .video(let id) where id.hasPrefix("BV") && id != detail?.bvid:
+            pushedRoute = VideoRoute(bvid: id)
+        default:
+            break
+        }
+    }
+
     // MARK: heartbeats
 
     private func positionChanged(_ seconds: Double) {
@@ -420,6 +450,41 @@ final class VideoPageModel {
                 return
             } catch {
                 Logger.shared.warn(.api, "related failed", ["error": .init(String(describing: error))])
+            }
+        }
+    }
+
+    /// Each piece shows as soon as it arrives; none of them holds up playback.
+    private func fetchIntro(_ detail: VideoDetail) {
+        let client = self.client
+        let bvid = detail.bvid
+        introTasks.forEach { $0.cancel() }
+        introTasks = [
+            sideLoad("uploader card", bvid: bvid, { try await client.card(mid: detail.owner.mid) }) { $0.uploader = $1 },
+            sideLoad("tags", bvid: bvid, { try await client.tags(bvid: bvid, cid: detail.pages.first?.cid ?? 0) }) { $0.tags = $1 },
+        ]
+        switch account() {
+        // Still checking the account: the server's answer decides.
+        case .loggedIn, .unknown:
+            introTasks.append(sideLoad("relation", bvid: bvid, { try await client.relation(aid: detail.aid, bvid: bvid) }) { $0.relation = $1 })
+        case .loggedOut, .expired:
+            break
+        }
+    }
+
+    private func sideLoad<Value: Sendable>(_ what: String, bvid: String, _ load: @escaping @Sendable () async throws -> Value,
+                                           apply: @escaping @MainActor (VideoPageModel, Value) -> Void) -> Task<Void, Never> {
+        Task { [weak self] in
+            do {
+                let value = try await load()
+                guard let self, self.detail?.bvid == bvid else { return }
+                apply(self, value)
+            } catch is CancellationError {
+                return
+            } catch let error as BiliError where error.needsLogin {
+                return
+            } catch {
+                Logger.shared.warn(.api, "\(what) failed", ["error": .init(String(describing: error))])
             }
         }
     }
