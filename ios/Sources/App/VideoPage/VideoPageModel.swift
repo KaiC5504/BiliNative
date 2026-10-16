@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 import BiliAPI
 import AppLogic
 import DevLog
@@ -29,6 +30,7 @@ final class VideoPageModel {
     @ObservationIgnored private let makeController: @MainActor (PlayItem) -> PlaybackControlling
     @ObservationIgnored private let sleep: (Double) async -> Void
     @ObservationIgnored private let onlineInterval: Double
+    @ObservationIgnored private let isAppActive: @MainActor () -> Bool
 
     @ObservationIgnored private var started = false
     @ObservationIgnored private var appeared = false
@@ -53,7 +55,8 @@ final class VideoPageModel {
     init(route: VideoRoute, client: BiliClient, settings: AppSettings, account: @escaping @MainActor () -> Account,
          makeController: @escaping @MainActor (PlayItem) -> PlaybackControlling,
          sleep: @escaping (Double) async -> Void = { seconds in _ = try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000)) },
-         onlineInterval: Double = 30) {
+         onlineInterval: Double = 30,
+         isAppActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }) {
         self.route = route
         self.client = client
         self.settings = settings
@@ -61,6 +64,7 @@ final class VideoPageModel {
         self.makeController = makeController
         self.sleep = sleep
         self.onlineInterval = onlineInterval
+        self.isAppActive = isAppActive
     }
 
     var pageItems: [PlayItem] {
@@ -205,6 +209,13 @@ final class VideoPageModel {
         case .replay:
             await replay(controller)
         case .play(let item):
+            // Another part means another AVPlayer, which drops picture in picture and could go on playing
+            // audio in the background, so away from the app the video ends here.
+            guard isAppActive() else {
+                Logger.shared.info(.ui, "autoplay skipped in the background", ["cid": .init(item.cid)])
+                ended = true
+                return
+            }
             Logger.shared.info(.ui, "autoplay", ["bvid": .init(item.bvid), "cid": .init(item.cid)])
             await switchTo(item)
         case .stop:

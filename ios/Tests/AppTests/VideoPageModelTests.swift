@@ -75,6 +75,15 @@ final class VideoPageModelTests: XCTestCase {
         XCTAssertEqual(page.fakes.all.first?.starts.count, 1)
     }
 
+    func testEndAwayFromTheAppShowsTheEndScreenInsteadOfSwitchingParts() async {
+        let page = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0), active: false)
+        await page.model.load()
+        await page.model.handleEnd()
+        XCTAssertTrue(page.model.ended)
+        XCTAssertEqual(page.fakes.all.count, 1, "a new player would drop picture in picture")
+        XCTAssertEqual(page.model.current, PlayItem(bvid: F.bvidA, cid: F.cidA1))
+    }
+
     func testHeartbeatsOnlyWhenLoggedIn() async throws {
         let page = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         await page.model.load()
@@ -163,7 +172,7 @@ final class VideoPageModelTests: XCTestCase {
 
     private func makePage(_ route: VideoRoute, resume: (Int64, Int64)? = nil, loggedIn: Bool = false,
                           sleep: @escaping (Double) async -> Void = { _ in _ = try? await Task.sleep(nanoseconds: 3_600_000_000_000) },
-                          transport: FixtureHTTP = FixtureHTTP()) -> Page {
+                          transport: FixtureHTTP = FixtureHTTP(), active: Bool = true) -> Page {
         let fakes = Fakes()
         let account = AccountBox(loggedIn ? .loggedIn(name: "测试", vip: false) : .loggedOut)
         let client = BiliClient(transport: transport, cookies: CookieJar(["SESSDATA": "s", "bili_jct": "T", "buvid3": "b3", "buvid4": "b4"]))
@@ -177,7 +186,7 @@ final class VideoPageModelTests: XCTestCase {
                                        fakes.all.append(fake)
                                        return fake
                                    },
-                                   sleep: sleep)
+                                   sleep: sleep, isAppActive: { active })
         return Page(model: model, fakes: fakes, http: transport, account: account)
     }
 
