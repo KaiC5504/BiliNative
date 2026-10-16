@@ -497,7 +497,7 @@ private struct PlayerArea: View {
                                                onMore: { panel = .more })
                         }
                     }
-                if inline {
+                if inline, !LeakProbe.omits("tabrow") {
                     PageTabRow(state: tabs, replyCount: model.detail?.stat.reply, danmakuEnabled: danmakuEnabled,
                                danmakuClosed: model.danmaku.closed, onToggleDanmaku: onToggleDanmaku,
                                onSendDanmaku: onSendDanmaku)
@@ -578,6 +578,7 @@ private struct PlayerBox: View {
         ZStack {
             Color.black
             // The page's one player and host view, so picture in picture stays on one layer across parts.
+            if !LeakProbe.omits("surface") {
             PlayerSurface(player: model.player, fit: env.settings.fit, mirrored: model.mirrored,
                           allowsLevelGestures: !inline,
                           // Weak: the model holds the host view, which holds this closure.
@@ -585,11 +586,12 @@ private struct PlayerBox: View {
                               if let model { chrome.handle(event, page: model, size: size) }
                           },
                           // The end screens (26, 27) show no danmaku over the last frame.
-                          danmaku: model.ended || shrunk ? nil : danmaku,
+                          danmaku: model.ended || shrunk || LeakProbe.omits("danmaku") ? nil : danmaku,
                           host: model.host,
                           onHost: { [weak model] in model?.host = $0 })
                 .frame(height: surfaceHeight)
                 .frame(maxHeight: .infinity, alignment: .top)
+            }
             if let controller = model.controller {
                 if env.settings.showOverlay {
                     StatsOverlay(stats: controller.overlay, mode: controller.mode, quality: qualityLine(controller))
@@ -598,10 +600,12 @@ private struct PlayerBox: View {
                         .transition(.opacity)
                 }
             }
+            if !LeakProbe.omits("chromelayer") {
             ChromeLayer(model: model, chrome: chrome, panel: $panel, insets: insets, danmakuEnabled: danmakuEnabled,
                         onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onComments: onComments)
                 .opacity(shrunk ? 0 : 1)
                 .allowsHitTesting(!shrunk)
+            }
             status
         }
         .clipped()

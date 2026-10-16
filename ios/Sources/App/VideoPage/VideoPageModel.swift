@@ -429,6 +429,7 @@ final class VideoPageModel {
         stopPiP()
         if let controller { keptPosition = controller.position }
         stopController()
+        if host?.window == nil, !LeakProbe.omits("keephost") { host = nil }
     }
 
     /// The page closed while picture in picture plays its video: playback goes on without a page.
