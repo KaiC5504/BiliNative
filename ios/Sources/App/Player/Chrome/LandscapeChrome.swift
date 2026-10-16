@@ -301,6 +301,7 @@ struct CoinGlyph: View {
 }
 
 /// The quality button's short label: 4K, 1080P+, HDR …
+@MainActor
 enum QualityLabel {
     static func short(_ controller: PlaybackControlling?) -> String {
         guard let controller else { return "清晰度" }
