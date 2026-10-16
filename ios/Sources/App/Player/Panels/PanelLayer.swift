@@ -29,7 +29,6 @@ struct PanelLayer: View {
                 content(panel)
             }
         }
-        .animation(.smooth(duration: 0.25), value: panel)
         .toast($toastMessage)
         .sheet(isPresented: $loginPresented) { LoginView() }
     }
