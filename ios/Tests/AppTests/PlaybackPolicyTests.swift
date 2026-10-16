@@ -162,7 +162,8 @@ final class PlaybackPolicyTests: XCTestCase {
         filter.jumped(at: start)
         XCTAssertTrue(filter.isSeekWait(stalledAt: start.addingTimeInterval(0.7)), "the wait after a drag")
         XCTAssertTrue(filter.isSeekWait(stalledAt: start.addingTimeInterval(-0.1)), "reported just before its jump")
-        XCTAssertFalse(filter.isSeekWait(stalledAt: start.addingTimeInterval(-0.4)), "a drag 0.4 s into a stall is the user reacting")
+        XCTAssertTrue(filter.isSeekWait(stalledAt: start.addingTimeInterval(-0.6)), "AVKit reports the jump 0.35-0.65 s late")
+        XCTAssertFalse(filter.isSeekWait(stalledAt: start.addingTimeInterval(-0.9)), "a drag 0.9 s into a stall is the user reacting")
         XCTAssertFalse(filter.isSeekWait(stalledAt: start.addingTimeInterval(17)), "a stall well after the drag")
     }
 }
