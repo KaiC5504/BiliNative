@@ -58,10 +58,47 @@ final class PlayerTransitionTests: XCTestCase {
         XCTAssertEqual(orientation.presentation, .landscape, "the rotation lock holds landscape")
 
         orientation.locked = false
+        orientation.deviceOrientationChanged(.landscapeLeft)
         orientation.deviceOrientationChanged(.portrait)
         XCTAssertEqual(orientation.presentation, .inline)
         orientation.deviceOrientationChanged(.landscapeRight)
         XCTAssertEqual(orientation.presentation, .landscape)
+    }
+
+    func testLandscapeByTheButtonWaitsForARealTurnBeforePortraitExits() throws {
+        try XCTSkipIf(UIDevice.current.orientation.isLandscape, "the simulator reports a landscape device")
+        let orientation = OrientationController.shared
+        orientation.enterLandscape()
+        orientation.deviceOrientationChanged(.faceUp)
+        orientation.deviceOrientationChanged(.portrait)
+        XCTAssertEqual(orientation.presentation, .landscape, "lifting the phone off the table leaves full screen")
+
+        orientation.deviceOrientationChanged(.landscapeLeft)
+        orientation.deviceOrientationChanged(.portrait)
+        XCTAssertEqual(orientation.presentation, .inline, "turning back to portrait after a real turn stays in full screen")
+    }
+
+    func testRefusedRotationGoesBackInline() async throws {
+        _ = try XCTUnwrap(Self.scene)
+        let orientation = OrientationController.shared
+        let original = orientation.requestGeometry
+        defer { orientation.requestGeometry = original }
+        orientation.requestGeometry = { _, _, refused in refused(CocoaError(.featureUnsupported)) }
+
+        orientation.enterLandscape()
+        XCTAssertEqual(orientation.presentation, .landscape)
+        let reverted = await waitUntil(2) { orientation.presentation == .inline }
+        XCTAssertTrue(reverted, "a refused rotation left the page in landscape")
+        XCTAssertEqual(orientation.mask, .portrait)
+    }
+
+    func testEndForgetsTheVerticalVideo() {
+        let orientation = OrientationController.shared
+        orientation.videoIsVertical = true
+        orientation.locked = true
+        orientation.end()
+        XCTAssertFalse(orientation.videoIsVertical)
+        XCTAssertFalse(orientation.locked)
     }
 
     func testPictureInPictureControllerExistsAndStartsWhenSupported() async throws {

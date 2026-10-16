@@ -6,8 +6,22 @@ import DevLog
 @MainActor
 enum DeviceControls {
     static var brightness: Double {
-        get { Double(keyWindow?.windowScene?.screen.brightness ?? 0.5) }
-        set { keyWindow?.windowScene?.screen.brightness = CGFloat(min(max(newValue, 0), 1)) }
+        get { Double(screen?.brightness ?? 0.5) }
+        set { screen?.brightness = CGFloat(min(max(newValue, 0), 1)) }
+    }
+
+    /// The brightness from before full screen, put back when the player returns inline, as the official app does.
+    private static var savedBrightness: CGFloat?
+
+    static func saveBrightness() {
+        guard savedBrightness == nil, let screen else { return }
+        savedBrightness = screen.brightness
+    }
+
+    static func restoreBrightness() {
+        guard let saved = savedBrightness else { return }
+        savedBrightness = nil
+        screen?.brightness = saved
     }
 
     static func volume() -> Double {
@@ -15,7 +29,17 @@ enum DeviceControls {
     }
 
     /// A hidden MPVolumeView's slider is the only public way to set the system volume. While that view sits in
-    /// the window, iOS also leaves out its own volume HUD, so the player's indicator is the only one shown.
+    /// the window iOS also leaves out its own volume HUD, so it is there only in full screen, where the player's
+    /// indicator takes the HUD's place; inline the buttons show the system HUD as usual.
+    static func attachVolumeView() {
+        _ = attachedSlider()
+    }
+
+    static func detachVolumeView() {
+        volumeView?.removeFromSuperview()
+        volumeView = nil
+    }
+
     static func setVolume(_ value: Double) {
         let level = Float(min(max(value, 0), 1))
         let (slider, fresh) = attachedSlider()
@@ -46,7 +70,8 @@ enum DeviceControls {
         }
         guard let window = keyWindow else { return (nil, false) }
         volumeView?.removeFromSuperview()
-        let view = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 120, height: 40))
+        // Inside the window's bounds: a view placed off screen may no longer keep the system HUD away.
+        let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         view.alpha = 0.01
         view.isUserInteractionEnabled = false
         window.addSubview(view)
@@ -60,6 +85,10 @@ enum DeviceControls {
             if let slider = slider(in: subview) { return slider }
         }
         return nil
+    }
+
+    private static var screen: UIScreen? {
+        keyWindow?.windowScene?.screen
     }
 
     private static var keyWindow: UIWindow? {
