@@ -55,6 +55,11 @@ struct SidePanel<Content: View>: View {
     let dismiss: () -> Void
     let content: () -> Content
 
+    /// The slide and fade are driven by this flag instead of insertion transitions: a transition fades the dismiss
+    /// layer's UIKit host to alpha 0, and a re-opened panel then kept that host invisible to touches.
+    @State private var shown = false
+    @State private var closer: Task<Void, Never>?
+
     init(identifier: String, style: Style = .side(width: 0.4), portraitHeight: CGFloat = 0.62,
          dismiss: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
         self.identifier = identifier
@@ -64,13 +69,14 @@ struct SidePanel<Content: View>: View {
         self.content = content
     }
 
+    private static var motion: Animation { .smooth(duration: 0.25) }
+
     var body: some View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
             let insets = PanelInsets.window
             ZStack(alignment: landscape ? .trailing : .bottom) {
-                TapCatcher(onTap: dismiss)
-                    .transition(.identity)
+                TapCatcher(onTap: requestDismiss)
                 if landscape {
                     switch style {
                     case .side(let fraction):
@@ -84,6 +90,23 @@ struct SidePanel<Content: View>: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .environment(\.panelLandscape, landscape)
+        }
+        .onAppear {
+            withAnimation(Self.motion) { shown = true }
+        }
+        .onDisappear {
+            closer?.cancel()
+        }
+    }
+
+    /// Slides out, then lets go of the binding.
+    private func requestDismiss() {
+        guard closer == nil else { return }
+        withAnimation(Self.motion) { shown = false }
+        closer = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            dismiss()
         }
     }
 
@@ -102,30 +125,28 @@ struct SidePanel<Content: View>: View {
         .onTapGesture {}
         .background(PanelProbe(identifier: identifier))
         .accessibilityIdentifier(identifier)
-        .transition(.move(edge: .trailing))
+        .offset(x: shown ? 0 : width)
     }
 
     private func column(in size: CGSize) -> some View {
         ZStack {
-            Color.black.opacity(0.4)
+            Color.black.opacity(shown ? 0.4 : 0)
                 .allowsHitTesting(false)
-                .transition(.opacity)
             content()
                 .frame(width: 96)
                 .contentShape(Rectangle())
                 .onTapGesture {}
+                .opacity(shown ? 1 : 0)
                 .background(PanelProbe(identifier: identifier))
                 .accessibilityIdentifier(identifier)
                 .position(x: size.width * 0.826, y: size.height / 2)
-                .transition(.opacity)
         }
     }
 
     private func sheet(height: CGFloat, insets: UIEdgeInsets) -> some View {
         ZStack(alignment: .bottom) {
-            Color.black.opacity(0.4)
+            Color.black.opacity(shown ? 0.4 : 0)
                 .allowsHitTesting(false)
-                .transition(.opacity)
             VStack(spacing: 0) {
                 Capsule()
                     .fill(Color.white.opacity(0.3))
@@ -134,7 +155,7 @@ struct SidePanel<Content: View>: View {
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
                     .gesture(DragGesture().onEnded { drag in
-                        if drag.translation.height > 40 { dismiss() }
+                        if drag.translation.height > 40 { requestDismiss() }
                     })
                 ScrollView(showsIndicators: false) {
                     content()
@@ -150,7 +171,7 @@ struct SidePanel<Content: View>: View {
             .onTapGesture {}
             .background(PanelProbe(identifier: identifier))
             .accessibilityIdentifier(identifier)
-            .transition(.move(edge: .bottom))
+            .offset(y: shown ? 0 : height + insets.bottom)
         }
     }
 }

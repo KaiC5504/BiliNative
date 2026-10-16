@@ -63,7 +63,7 @@ final class PanelPresentationTests: XCTestCase {
             driver.panel = panel
             let opened = await waitUntil(3) { Self.find(panel.identifier, in: window) != nil }
             XCTAssertTrue(opened, "\(panel) did not open")
-            try await Task.sleep(for: .milliseconds(300))
+            try await Task.sleep(for: .milliseconds(600))
 
             let probe = try XCTUnwrap(Self.find(panel.identifier, in: window), "\(panel) is not on screen")
             let catchers = Self.findAll(TapCatcherView.identifier, in: window)
