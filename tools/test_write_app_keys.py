@@ -63,6 +63,8 @@ class WriteAppKeysTests(unittest.TestCase):
     def test_surrounding_whitespace_is_ignored(self):
         self.run_main({"BILI_APP_KEYS": " k1:s1 \n"})
         self.assertIn('("k1", "s1")', self.out.read_text(encoding="utf-8"))
+        self.run_main({"BILI_APP_KEYS": "k1 : s1"})
+        self.assertIn('("k1", "s1")', self.out.read_text(encoding="utf-8"))
 
     def test_a_later_run_without_the_secret_overwrites_the_keys(self):
         self.run_main({"BILI_APP_KEYS": "k1:s1"})

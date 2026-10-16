@@ -28,7 +28,8 @@ def swift_literal(text):
 
 def parse(value):
     """Returns (key, secret), or None when the value is not a usable pair."""
-    key, colon, secret = value.strip().partition(":")
+    key, colon, secret = value.partition(":")
+    key, secret = key.strip(), secret.strip()
     if not colon or not key or not secret:
         return None
     # A control character would break the ::add-mask:: command and could inject others.
@@ -51,7 +52,7 @@ def main(out_path, env=os.environ):
     if pair is None:
         write(out_path, NIL_SOURCE)
         reason = "malformed (expected appkey:appsec)" if value.strip() else "not set"
-        print(f"::notice::BILI_APP_KEYS is {reason}; building without app keys, so the dislike button stays hidden.")
+        print(f"::notice::BILI_APP_KEYS is {reason}; building without app keys, so the dislike button stays greyed out.")
         return 0
     key, secret = pair
     for half in (key, secret):

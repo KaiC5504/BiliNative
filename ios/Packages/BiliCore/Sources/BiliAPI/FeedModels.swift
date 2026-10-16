@@ -53,7 +53,7 @@ extension FeedCard: Decodable {
                   ownerName: try owner?.first(String.self, "name") ?? "",
                   ownerMid: try owner?.first(Int64.self, "mid") ?? 0,
                   reason: (reason ?? "").isEmpty ? nil : reason,
-                  isVertical: try Self.isVertical(container.nested("dimension")))
+                  isVertical: (try? Self.isVertical(container.nested("dimension"))) ?? false)
     }
 
     /// A file stored rotated (`rotate == 1`) is shown with width and height swapped, as in `VideoDetail`.

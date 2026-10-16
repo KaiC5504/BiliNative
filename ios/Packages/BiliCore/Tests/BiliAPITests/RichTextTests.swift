@@ -60,6 +60,7 @@ final class RichTextTests: XCTestCase {
         XCTAssertEqual(runs("BV1GJ411"), [.text("BV1GJ411")])
         XCTAssertEqual(runs("av 123 和 avatar"), [.text("av 123 和 avatar")])
         XCTAssertEqual(runs("BV1GJ411x7h!"), [.text("BV1GJ411x7h!")])
+        XCTAssertEqual(runs("lav12"), [.text("lav12")])
     }
 
     func testTimestamps() {
@@ -75,6 +76,7 @@ final class RichTextTests: XCTestCase {
         XCTAssertEqual(runs("2024:15"), [.text("2024:15")])
         XCTAssertEqual(runs("03:156"), [.text("03:156")])
         XCTAssertEqual(runs("10:30:456"), [.timestamp(label: "10:30", seconds: 630), .text(":456")])
+        XCTAssertEqual(runs("1:99"), [.text("1:99")])
     }
 
     func testSplittingNeverCutsACharacter() {

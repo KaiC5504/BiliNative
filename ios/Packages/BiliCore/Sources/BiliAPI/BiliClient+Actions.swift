@@ -64,9 +64,9 @@ extension BiliClient {
 
     /// The account's own folders; `contains` tells which of them already hold the video `aid`.
     public func favouriteFolders(mid: Int64, aid: Int64) async throws -> [FavFolder] {
-        let list: FolderList = try await get("/x/v3/fav/folder/created/list-all",
-                                             query: ["up_mid": String(mid), "rid": String(aid), "type": "2"], signed: false)
-        return list.folders
+        let list: FolderList? = try await getIfPresent("/x/v3/fav/folder/created/list-all",
+                                                       query: ["up_mid": String(mid), "rid": String(aid), "type": "2"], signed: false)
+        return list?.folders ?? []
     }
 
     /// `rid`/`type` is the single-video form and `resources` the batch form; sending both keeps either reading working.
