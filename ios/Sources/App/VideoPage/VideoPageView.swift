@@ -17,6 +17,8 @@ struct VideoPageView: View {
     @State private var sender: DanmakuSendModel?
     @State private var sendBarOpen = false
     @State private var tabs = PageTabsState()
+    /// Made once the video's aid is known, and again for each video the page switches to.
+    @State private var comments: CommentsModel?
     @State private var showLogin = false
     #if DEBUG
     @State private var sendDemo: DanmakuSendBar.Demo?
@@ -39,12 +41,17 @@ struct VideoPageView: View {
     var body: some View {
         ZStack {
             if let model {
-                PageLayout(model: model, chrome: chrome, panel: panel, tabs: tabs, danmaku: danmakuView(for: model),
+                PageLayout(model: model, chrome: chrome, panel: panel, tabs: tabs, comments: comments, danmaku: danmakuView(for: model),
                            danmakuEnabled: env.settings.danmaku.enabled, ignoresKeyboard: sendBarOpen,
                            onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar,
-                           onNeedLogin: presentLogin)
+                           onNeedLogin: presentLogin, onCompose: compose, onComments: showComments)
                 PanelLayer(panel: panel, model: model, onNeedLogin: presentLogin)
                     .ignoresSafeArea()
+                if let viewing = comments?.viewing {
+                    PictureViewer(viewing: viewing) { comments?.viewing = nil }
+                        .transition(.opacity)
+                        .zIndex(1)
+                }
             } else {
                 Color.black.ignoresSafeArea()
             }
@@ -52,6 +59,8 @@ struct VideoPageView: View {
                 sendBar(sender)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: comments?.viewing)
+        .toast(Binding(get: { comments?.toast }, set: { comments?.toast = $0 }))
         .background { PageProbe(lifecycle: lifecycle) }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showLogin) { LoginView() }
@@ -66,6 +75,8 @@ struct VideoPageView: View {
                 sendDemo = demo
                 sendBarOpen = true
             }
+            // Reads the state each time: the comments model only exists once the video has loaded.
+            CommentsDemo.stage(page: page, tabs: tabs) { comments }
             #endif
         }
         .onDisappear {
@@ -80,6 +91,10 @@ struct VideoPageView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { model?.backgrounded() }
+        }
+        .onChange(of: model?.detail?.aid, initial: true) { _, aid in
+            guard let aid, let detail = model?.detail, comments?.aid != aid else { return }
+            comments = makeComments(aid: aid, upMid: detail.owner.mid)
         }
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             guard let model else { return }
@@ -113,6 +128,33 @@ struct VideoPageView: View {
         danmakuSlot.view(for: model, settings: env.settings)
     }
 
+    private func makeComments(aid: Int64, upMid: Int64) -> CommentsModel {
+        let env = self.env
+        return CommentsModel(client: env.client, aid: aid, upMid: upMid, isLoggedIn: { Self.loggedIn(env.account) },
+                             requestLogin: presentLogin, ownMid: { env.mid })
+    }
+
+    /// Still checking the account: the server's answer decides.
+    private static func loggedIn(_ account: AppEnvironment.Account) -> Bool {
+        switch account {
+        case .loggedIn, .unknown: return true
+        case .loggedOut, .expired: return false
+        }
+    }
+
+    /// The bottom bar and 回复. Task 25's composer opens from here.
+    private func compose(_ target: ReplyTarget, emotes: Bool) {
+        guard Self.loggedIn(env.account) else { return presentLogin() }
+        comments?.toast = "发评论即将上线"
+    }
+
+    /// The 评论 icon in full screen: back to the page, on the 评论 tab.
+    private func showComments() {
+        OrientationController.shared.exitToInline()
+        tabs.sheet = nil
+        tabs.selection = .comments
+    }
+
     private func makeSender(for page: VideoPageModel) -> DanmakuSendModel {
         let env = self.env
         return DanmakuSendModel(client: env.client, page: page, danmaku: page.danmaku,
@@ -120,13 +162,7 @@ struct VideoPageView: View {
                                     if case .loggedIn(_, let vip) = env.account { return vip }
                                     return false
                                 },
-                                isLoggedIn: {
-                                    switch env.account {
-                                    // Still checking the account: the server's answer decides.
-                                    case .loggedIn, .unknown: return true
-                                    case .loggedOut, .expired: return false
-                                    }
-                                })
+                                isLoggedIn: { Self.loggedIn(env.account) })
     }
 
     @ViewBuilder
@@ -166,6 +202,7 @@ private struct PageLayout: View {
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
     let tabs: PageTabsState
+    let comments: CommentsModel?
     let danmaku: UIView?
     let danmakuEnabled: Bool
     /// While the danmaku bar is open the keyboard must not squeeze the page under it.
@@ -173,6 +210,8 @@ private struct PageLayout: View {
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
     let onNeedLogin: () -> Void
+    let onCompose: (ReplyTarget, _ emotes: Bool) -> Void
+    let onComments: () -> Void
 
     var body: some View {
         let presentation = OrientationController.shared.presentation
@@ -185,15 +224,20 @@ private struct PageLayout: View {
                     PageTabs(state: tabs, reserve: collapsing.reserve) {
                         IntroTab(model: model, state: tabs, onNeedLogin: onNeedLogin) { EmptyView() }
                     } comments: {
-                        CommentsSlot(state: tabs)
+                        if let comments {
+                            CommentsTab(model: comments, tabs: tabs, onCompose: onCompose)
+                        } else {
+                            CommentsSlot(state: tabs)
+                        }
                     }
                     .padding(.top, CollapsingPlayer.barHeight + Theme.Page.tabRowHeight)
                     .ignoresSafeArea(.container, edges: .bottom)
                 }
-                PlayerArea(model: model, chrome: chrome, panel: $panel, tabs: tabs, danmaku: danmaku, width: geometry.size.width,
-                           collapsing: collapsing, presentation: presentation,
+                PlayerArea(model: model, chrome: chrome, panel: $panel, tabs: tabs, comments: comments, danmaku: danmaku,
+                           width: geometry.size.width, collapsing: collapsing, presentation: presentation,
                            insets: ScreenInsets.current(merging: geometry.safeAreaInsets), danmakuEnabled: danmakuEnabled,
-                           onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
+                           onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onCompose: onCompose,
+                           onComments: onComments)
             }
         }
         .ignoresSafeArea(inline ? .keyboard : .all, edges: inline && !ignoresKeyboard ? [] : .all)
@@ -202,6 +246,10 @@ private struct PageLayout: View {
         .statusBarHidden(presentation == .landscape)
         .preferredColorScheme(presentation == .vertical ? .dark : nil)
         .persistentSystemOverlays(inline ? .automatic : .hidden)
+        // Timestamps seek and video ids open a page, from the description and from every comment.
+        .environment(\.richTextActions, RichTextActions(
+            seek: { seconds in Task { await model.activate(.timestamp(label: "", seconds: seconds)) } },
+            openVideo: { id in Task { await model.activate(.video(id: id)) } }))
         #if DEBUG
         .task { IntroDemo.stage(page: model, tabs: tabs) }
         #endif
@@ -215,6 +263,7 @@ private struct PlayerArea: View {
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
     let tabs: PageTabsState
+    let comments: CommentsModel?
     let danmaku: UIView?
     let width: CGFloat
     let collapsing: CollapsingPlayer
@@ -223,6 +272,8 @@ private struct PlayerArea: View {
     let danmakuEnabled: Bool
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
+    let onCompose: (ReplyTarget, _ emotes: Bool) -> Void
+    let onComments: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     private var inline: Bool { presentation == .inline }
@@ -242,7 +293,7 @@ private struct PlayerArea: View {
                 // Full screen ignores the safe area, so the chrome keeps clear of it itself.
                 PlayerBox(model: model, chrome: chrome, panel: $panel, danmaku: danmaku, size: box, presentation: presentation,
                           insets: insets, shrunk: progress > 0, danmakuEnabled: danmakuEnabled,
-                          onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
+                          onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onComments: onComments)
                     .frame(width: box.width, height: box.height)
                     .background(Color.black.ignoresSafeArea(edges: .top))
                     .overlay {
@@ -257,11 +308,18 @@ private struct PlayerArea: View {
                                onSendDanmaku: onSendDanmaku)
                 }
             }
+            // 评论详情 covers the tab row as well as the list (13).
+            if inline, let comments, let thread = comments.thread {
+                ThreadView(model: comments, thread: thread, onCompose: onCompose)
+                    .padding(.top, height)
+                    .transition(.move(edge: .bottom))
+            }
             if inline, let sheet = tabs.sheet, let detail = model.detail {
                 sheetView(sheet, detail: detail)
                     .padding(.top, height)
             }
         }
+        .animation(.smooth(duration: 0.3), value: comments?.thread?.root.rpid)
         .animation(.smooth(duration: 0.3), value: paused)
         .animation(.smooth(duration: 0.3), value: tabs.selection)
     }
@@ -303,6 +361,7 @@ private struct PlayerBox: View {
     let danmakuEnabled: Bool
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
+    let onComments: () -> Void
     @Environment(AppEnvironment.self) private var env
 
     private var inline: Bool { presentation == .inline }
@@ -338,7 +397,7 @@ private struct PlayerBox: View {
                 }
             }
             ChromeLayer(model: model, chrome: chrome, panel: $panel, insets: insets, danmakuEnabled: danmakuEnabled,
-                        onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
+                        onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onComments: onComments)
                 .opacity(shrunk ? 0 : 1)
                 .allowsHitTesting(!shrunk)
             status
@@ -388,15 +447,13 @@ private struct PlayerBox: View {
     }
 }
 
-/// The 评论 tab's place until the comments arrive (Task 24).
+/// The 评论 tab before the video, and so its aid, has loaded.
 private struct CommentsSlot: View {
     let state: PageTabsState
 
     var body: some View {
         ScrollView {
-            Text("评论即将上线")
-                .font(Theme.Page.metaFont)
-                .foregroundStyle(Theme.secondaryText)
+            ProgressView()
                 .frame(maxWidth: .infinity)
                 .padding(.top, 48)
         }

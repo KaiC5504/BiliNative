@@ -13,6 +13,8 @@ struct VerticalChrome: View {
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
     let onBack: () -> Void
+    /// The 评论 icon: back to the page with the 评论 tab showing.
+    var onComments: () -> Void = {}
 
     var body: some View {
         let controller = model.controller
@@ -109,7 +111,10 @@ struct VerticalChrome: View {
     private func actionColumn(_ stat: VideoStat) -> some View {
         VStack(spacing: 15) {
             columnItem(Image(systemName: "hand.thumbsup.fill"), stat.like)
-            columnItem(Image(systemName: "ellipsis.bubble.fill"), stat.reply)
+            Button(action: onComments) {
+                columnItem(Image(systemName: "ellipsis.bubble.fill"), stat.reply)
+            }
+            .accessibilityLabel("评论")
             VStack(spacing: 6) {
                 CoinGlyph(filled: true)
                     .frame(width: 30, height: 30)
