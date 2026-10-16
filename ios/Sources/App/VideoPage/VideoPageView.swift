@@ -11,30 +11,52 @@ struct VideoPageView: View {
     @State private var chrome = ChromeState()
     @State private var panel: PlayerPanel?
     @State private var danmakuSlot = DanmakuSlot()
+    @State private var sender: DanmakuSendModel?
+    @State private var sendBarOpen = false
+    @State private var showLogin = false
+    #if DEBUG
+    @State private var sendDemo: DanmakuSendBar.Demo?
+    #endif
 
     var body: some View {
         ZStack {
             if let model {
                 PageLayout(model: model, chrome: chrome, panel: $panel, danmaku: danmakuView(for: model),
                            danmakuEnabled: env.settings.danmaku.enabled,
-                           onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: {})
+                           onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar)
             } else {
                 Color.black.ignoresSafeArea()
             }
+            if sendBarOpen, let sender {
+                sendBar(sender)
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showLogin) { LoginView() }
         .onAppear {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
+            if sender == nil { sender = makeSender(for: page) }
             OrientationController.shared.begin()
             page.appear()
             #if DEBUG
             ChromeDemo.stage(page: page, chrome: chrome)
+            DanmakuSendDemo.stage(page: page, chrome: chrome) { demo in
+                sendDemo = demo
+                sendBarOpen = true
+            }
             #endif
         }
         .onDisappear {
+            sendBarOpen = false
             model?.disappear()
             OrientationController.shared.end()
+        }
+        .onChange(of: sender?.needsLogin) { _, needsLogin in
+            if needsLogin == true { presentLogin() }
+        }
+        .onChange(of: sendBarOpen) { _, open in
+            chrome.panelOpen = open || panel != nil
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { model?.backgrounded() }
@@ -49,6 +71,53 @@ struct VideoPageView: View {
 
     private func danmakuView(for model: VideoPageModel) -> UIView? {
         danmakuSlot.view(for: model, settings: env.settings)
+    }
+
+    private func makeSender(for page: VideoPageModel) -> DanmakuSendModel {
+        let env = self.env
+        return DanmakuSendModel(client: env.client, page: page, danmaku: page.danmaku,
+                                isVip: {
+                                    if case .loggedIn(_, let vip) = env.account { return vip }
+                                    return false
+                                },
+                                isLoggedIn: {
+                                    switch env.account {
+                                    // Still checking the account: the server's answer decides.
+                                    case .loggedIn, .unknown: return true
+                                    case .loggedOut, .expired: return false
+                                    }
+                                })
+    }
+
+    @ViewBuilder
+    private func sendBar(_ sender: DanmakuSendModel) -> some View {
+        #if DEBUG
+        DanmakuSendBar(model: sender, onClose: { sendBarOpen = false }, demo: sendDemo)
+        #else
+        DanmakuSendBar(model: sender, onClose: { sendBarOpen = false })
+        #endif
+    }
+
+    private func openSendBar() {
+        guard let sender else { return }
+        guard sender.loggedIn else {
+            sender.needsLogin = true
+            return
+        }
+        sendBarOpen = true
+    }
+
+    /// Full screen is the same page rotated, so it goes back to inline before the sheet comes up.
+    private func presentLogin() {
+        sender?.needsLogin = false
+        sendBarOpen = false
+        let orientation = OrientationController.shared
+        let rotates = orientation.presentation != .inline
+        if rotates { orientation.exitToInline() }
+        Task {
+            if rotates { try? await Task.sleep(for: .milliseconds(450)) }
+            showLogin = true
+        }
     }
 }
 

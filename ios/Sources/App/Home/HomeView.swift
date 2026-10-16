@@ -97,6 +97,8 @@ struct HomeView: View {
                 switch UserDefaults.standard.string(forKey: "DemoScreen") {
                 case "settings": showSettings = true
                 case "page": route = VideoRoute(bvid: VideoPageFixtures.bvidA)
+                case "danmaku-send", "danmaku-style":
+                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
                 case "danmaku-portrait":
                     route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
                 case "danmaku-landscape":
