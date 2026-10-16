@@ -13,12 +13,14 @@ final class BlockRuleStore {
         case empty
         case invalidUser
         case duplicate
+        case invalidRegex
 
         var message: String {
             switch self {
             case .empty: return "请输入内容"
             case .invalidUser: return "请输入正确的用户 UID"
             case .duplicate: return "已经在屏蔽列表里了"
+            case .invalidRegex: return "正则表达式有误"
             }
         }
     }
@@ -89,6 +91,15 @@ final class BlockRuleStore {
                 throw RuleError.invalidUser
             }
         } else {
+            if kind == .regex {
+                var pattern = text
+                if pattern.count >= 2, pattern.hasPrefix("/"), pattern.hasSuffix("/") {
+                    pattern = String(pattern.dropFirst().dropLast())
+                }
+                guard !pattern.isEmpty, (try? NSRegularExpression(pattern: pattern)) != nil else {
+                    throw RuleError.invalidRegex
+                }
+            }
             stored = text
         }
         guard !rules.contains(where: { $0.kind == kind && $0.filter == stored }) else { throw RuleError.duplicate }

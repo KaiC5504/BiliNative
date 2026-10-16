@@ -71,7 +71,7 @@ struct ProgressBar: View {
         .frame(height: Theme.Chrome.barTouchHeight)
         .accessibilityElement()
         .accessibilityLabel("进度")
-        .accessibilityValue(Text(verbatim: "\(Int(position))/\(Int(duration))"))
+        .accessibilityValue(Text(verbatim: "\(whole(position))/\(whole(duration))"))
     }
 
     @ViewBuilder
@@ -118,6 +118,11 @@ struct ProgressBar: View {
     private func fraction(_ seconds: Double) -> CGFloat {
         guard duration > 0, seconds.isFinite else { return 0 }
         return CGFloat(min(max(seconds / duration, 0), 1))
+    }
+
+    /// Int() traps on NaN and infinity, which a live or still-loading item can report.
+    private func whole(_ seconds: Double) -> Int {
+        seconds.isFinite ? Int(seconds) : 0
     }
 
     private func seconds(at x: CGFloat, travel: CGFloat) -> Double {

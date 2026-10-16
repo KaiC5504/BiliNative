@@ -65,7 +65,7 @@ final class VideoPageModel {
          sleep: @escaping (Double) async -> Void = { seconds in _ = try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000)) },
          onlineInterval: Double = 30,
          ownHash: @escaping @MainActor () -> String? = { nil },
-         isAppActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }) {
+         isAppActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState != .background }) {
         self.route = route
         self.client = client
         self.settings = settings

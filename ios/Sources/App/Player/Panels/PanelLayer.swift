@@ -15,12 +15,14 @@ struct PanelLayer: View {
     @Binding var panel: PlayerPanel?
     let model: VideoPageModel
     @Environment(AppEnvironment.self) private var env
+    /// The page presents login: full screen has to go back to inline before a sheet can come up.
+    let onNeedLogin: () -> Void
     @State private var toastMessage: String?
-    @State private var loginPresented = false
 
-    init(panel: Binding<PlayerPanel?>, model: VideoPageModel) {
+    init(panel: Binding<PlayerPanel?>, model: VideoPageModel, onNeedLogin: @escaping () -> Void = {}) {
         _panel = panel
         self.model = model
+        self.onNeedLogin = onNeedLogin
     }
 
     var body: some View {
@@ -29,8 +31,9 @@ struct PanelLayer: View {
                 content(panel)
             }
         }
+        // An empty ZStack is 0x0, which would put the toast mid-screen; an empty frame takes no touches.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toast($toastMessage)
-        .sheet(isPresented: $loginPresented) { LoginView() }
     }
 
     @ViewBuilder
@@ -50,7 +53,7 @@ struct PanelLayer: View {
             }
         case .more:
             SidePanel(identifier: panel.identifier, portraitHeight: 0.8, dismiss: close) {
-                MorePanel(model: model, toast: show, requestLogin: { loginPresented = true }, close: close)
+                MorePanel(model: model, toast: show, requestLogin: needLogin, close: close)
             }
         case .episodes:
             SidePanel(identifier: panel.identifier, dismiss: close) {
@@ -58,7 +61,7 @@ struct PanelLayer: View {
             }
         case .danmakuSettings:
             SidePanel(identifier: panel.identifier, dismiss: close) {
-                DanmakuSettingsPanel(onNeedLogin: { loginPresented = true })
+                DanmakuSettingsPanel(onNeedLogin: needLogin)
             }
         }
     }
@@ -70,6 +73,11 @@ struct PanelLayer: View {
 
     private func close() {
         panel = nil
+    }
+
+    private func needLogin() {
+        close()
+        onNeedLogin()
     }
 
     private func show(_ message: String) {

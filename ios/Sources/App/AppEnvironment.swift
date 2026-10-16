@@ -147,7 +147,10 @@ final class AppEnvironment {
         accountCheckFailed = false
         for attempt in 0..<3 {
             if attempt > 0 { try? await Task.sleep(for: .seconds(Double(attempt))) }
-            if await refreshAccount() { return }
+            if await refreshAccount() {
+                if case .loggedIn = account { Task { await blockRules.refresh(force: true) } }
+                return
+            }
         }
     }
 
