@@ -119,6 +119,31 @@ final class ActionPresentationTests: XCTestCase {
         try assertStillLandscape(in: window)
     }
 
+    /// A login asked for in full screen: the page turns upright first, and the sheet goes up only once it has.
+    func testLoginSheetFromLandscapeComesUpOverTheInlinePage() async throws {
+        let window = try await showPage()
+        _ = try await pageActions()
+        let ready = await waitUntil(8) { prompts.comments != nil }
+        XCTAssertTrue(ready, "the page never made its comments")
+        try await turnToLandscape()
+        let scene = try XCTUnwrap(Self.scene)
+
+        prompts.comments?.fail(BiliError.api(code: -101, message: "账号未登录"))
+        let shown = await waitUntil(8) { Self.topPresented(in: window) != nil }
+        XCTAssertTrue(shown, "the login sheet never came up")
+        XCTAssertEqual(OrientationController.shared.presentation, .inline)
+        XCTAssertEqual(scene.effectiveGeometry.interfaceOrientation, .portrait, "the sheet went up over a rotated page")
+        XCTAssertLessThan(window.bounds.width, window.bounds.height)
+        let host = try XCTUnwrap(Self.hostView(in: window), "the player left the page")
+        XCTAssertTrue(host.window === window)
+
+        window.rootViewController?.dismiss(animated: false)
+        let gone = await waitUntil(5) { window.rootViewController?.presentedViewController == nil }
+        XCTAssertTrue(gone, "the login sheet did not go away")
+        XCTAssertTrue(host.window === window, "the player left its window behind the login sheet")
+        XCTAssertEqual(OrientationController.shared.presentation, .inline)
+    }
+
     // MARK: helpers
 
     private func openAndCloseCoinDialog(_ actions: ActionsModel, in window: UIWindow, landscape: Bool) async throws {

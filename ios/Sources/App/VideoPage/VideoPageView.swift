@@ -92,7 +92,7 @@ struct VideoPageView: View {
             }
         }
         .tvLoginGate($tvLoginRequested, makeModel: { TVLoginModel(client: env.client, signer: .tv) },
-                     onDone: { if let actions { Task { await actions.toggleDislike() } } })
+                     onDone: { if let actions { Task { await actions.toggleDislike(freshToken: true) } } })
         .onAppear {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page

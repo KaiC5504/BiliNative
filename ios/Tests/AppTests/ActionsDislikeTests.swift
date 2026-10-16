@@ -84,6 +84,19 @@ final class ActionsDislikeTests: XCTestCase {
         }
     }
 
+    /// The tap the sheet just fetched a token for: a refusal of that token says so instead of opening the sheet again.
+    func testAFreshTokenThatIsRefusedToastsInsteadOfLooping() async {
+        for code in [-101, -2] {
+            let rig = makeRig(token: "fresh", reply: #"{"code":\#(code),"message":"Access Key错误"}"#)
+            await rig.model.toggleDislike(freshToken: true)
+            XCTAssertFalse(rig.model.disliked, "\(code)")
+            XCTAssertNil(rig.state.token, "\(code)")
+            XCTAssertFalse(rig.model.needsAppToken, "\(code): the sheet would open again")
+            XCTAssertEqual(rig.state.logins, 0, "\(code)")
+            XCTAssertEqual(rig.state.toasts, ["Access Key错误"], "\(code)")
+        }
+    }
+
     func testOtherRefusalsKeepTheTokenAndToastTheServerMessage() async {
         let rig = makeRig(token: "tok-1", reply: #"{"code":65006,"message":"操作失败"}"#)
         await rig.model.toggleDislike()

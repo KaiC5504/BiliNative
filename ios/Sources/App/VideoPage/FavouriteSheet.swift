@@ -9,6 +9,7 @@ extension Theme {
         static let rowHeight: CGFloat = 58
         static let check: CGFloat = 21
         static let doneHeight: CGFloat = 40
+        static let doneText = Color.white
         static let fieldHeight: CGFloat = 38
         /// Of the screen height, in portrait.
         static let sheetHeight: CGFloat = 0.62
@@ -179,7 +180,7 @@ private struct FavouriteList: View {
             Button(action: onDone) {
                 Text("完成")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Theme.Favourites.doneText)
                     .frame(maxWidth: .infinity)
                     .frame(height: Theme.Favourites.doneHeight)
                     .background(Theme.pink, in: Capsule())

@@ -120,8 +120,9 @@ final class ActionsModel {
     var dislikeAvailable: Bool { signer != nil }
 
     /// Goes through the app API with the token the TV-login sheet fetched (spec 4.14). No token, or one the server
-    /// no longer accepts, sends the user to the sheet instead of failing.
-    func toggleDislike() async {
+    /// no longer accepts, sends the user to the sheet instead of failing. `freshToken` is the tap the sheet just
+    /// fetched a token for: if the server refuses even that one, the sheet would only loop, so its words show instead.
+    func toggleDislike(freshToken: Bool = false) async {
         guard let signer else { return toast("此版本不支持不喜欢") }
         guard isLoggedIn() else { return requestLogin() }
         guard let token = loadAppToken() else {
@@ -134,9 +135,14 @@ final class ActionsModel {
         }, call: { client, detail in
             try await client.dislike(aid: detail.aid, on: on, accessToken: token, signer: signer)
         }, intercept: { [weak self] error in
-            guard case .api(let code, _) = error as? BiliError, code == -101 || code == -2 else { return false }
-            self?.clearAppToken()
-            self?.needsAppToken = true
+            guard let self, case .api(let code, let message) = error as? BiliError, code == -101 || code == -2 else { return false }
+            self.clearAppToken()
+            if freshToken {
+                Logger.shared.warn(.api, "new app token refused", ["code": .init(code)])
+                self.toast(message.isEmpty ? "授权未被接受（\(code)）" : message)
+            } else {
+                self.needsAppToken = true
+            }
             return true
         })
     }

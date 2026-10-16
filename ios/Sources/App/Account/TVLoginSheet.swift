@@ -11,10 +11,12 @@ extension Theme {
         static let statusSpacing: CGFloat = 14
         static let buttonHeight: CGFloat = 44
         static let buttonWidth: CGFloat = 160
+        static let buttonText = Color.white
     }
 }
 
 /// Explains the one-time confirmation and shows Bilibili's confirm page, which already has the login cookies.
+/// The gate closes it as soon as the token is stored.
 struct TVLoginSheet: View {
     let model: TVLoginModel
     /// Called once the token is stored, so the tap that asked for it can go through.
@@ -92,7 +94,7 @@ struct TVLoginSheet: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.TVLogin.buttonText)
                 .frame(width: Theme.TVLogin.buttonWidth, height: Theme.TVLogin.buttonHeight)
                 .background(Theme.pink, in: Capsule())
         }
@@ -102,15 +104,47 @@ struct TVLoginSheet: View {
 private struct TVConfirmWebView: UIViewRepresentable {
     let url: URL
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.load(URLRequest(url: url))
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
+
+    /// The page carries the account's cookies, so it stays on Bilibili; any other link opens in Safari.
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+        static func staysInside(_ url: URL?) -> Bool {
+            guard let url else { return false }
+            if url.scheme == "about" { return true }
+            guard url.scheme == "https" || url.scheme == "http", let host = url.host?.lowercased() else { return false }
+            return host == "bilibili.com" || host.hasSuffix(".bilibili.com")
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+            let url = navigationAction.request.url
+            // Frames inside the page load what it embeds; only the page itself is kept on Bilibili.
+            if navigationAction.targetFrame?.isMainFrame == false || Self.staysInside(url) { return .allow }
+            if let url { await UIApplication.shared.open(url) }
+            return .cancel
+        }
+
+        /// `target=_blank` links: Bilibili's in this view, the rest in Safari.
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if let url = navigationAction.request.url {
+                if Self.staysInside(url) { webView.load(URLRequest(url: url)) } else { UIApplication.shared.open(url) }
+            }
+            return nil
+        }
+    }
 }
 
 /// Presents the sheet when `requested` turns true, then resets it. A fresh model per presentation, so 重试 after
@@ -121,11 +155,25 @@ struct TVLoginGate: ViewModifier {
     let onDone: () -> Void
     @State private var model: TVLoginModel?
     @State private var showing = false
+    @State private var finished = false
 
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: $showing, onDismiss: { model?.cancel() }) {
-                if let model { TVLoginSheet(model: model, onDone: onDone) }
+            // The sheet closes before the tap that asked for it goes through: if that tap needs the sheet again or
+            // shows a toast, nothing is in the way.
+            .sheet(isPresented: $showing, onDismiss: {
+                model?.cancel()
+                if finished {
+                    finished = false
+                    onDone()
+                }
+            }) {
+                if let model {
+                    TVLoginSheet(model: model, onDone: {
+                        finished = true
+                        showing = false
+                    })
+                }
             }
             .onChange(of: requested) { _, asked in
                 guard asked else { return }

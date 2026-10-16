@@ -161,6 +161,7 @@ final class TVLoginModelTests: XCTestCase {
 @MainActor
 final class TVGateDriver {
     var requested = false
+    @ObservationIgnored var onDone: () -> Void = {}
 }
 
 private struct TVGateHarness: View {
@@ -168,7 +169,7 @@ private struct TVGateHarness: View {
     let makeModel: () -> TVLoginModel
 
     var body: some View {
-        Color.white.ignoresSafeArea().tvLoginGate($driver.requested, makeModel: makeModel, onDone: {})
+        Color.white.ignoresSafeArea().tvLoginGate($driver.requested, makeModel: makeModel, onDone: { driver.onDone() })
     }
 }
 
@@ -218,6 +219,26 @@ final class TVLoginSheetPresentationTests: XCTestCase {
         let again = await waitUntil(5) { window.rootViewController?.presentedViewController != nil }
         XCTAssertTrue(again, "the sheet did not come up a second time")
         XCTAssertFalse(created === model, "a second presentation should start a fresh login")
+    }
+
+    /// The confirmed token closes the sheet, and only then does the dislike go out: a refusal can then show.
+    func testConfirmedLoginClosesTheSheetBeforeTheTapGoesThrough() async throws {
+        let http = ScriptedHTTP([TVLoginFixtures.authCodePath: [TVLoginFixtures.authCode],
+                                 TVLoginFixtures.pollPath: [TVLoginFixtures.confirmed]])
+        let window = try await show(http) { _ in }
+        var sheetUpAtDone: Bool?
+        driver.onDone = {
+            let presented = window.rootViewController?.presentedViewController
+            sheetUpAtDone = presented.map { !$0.isBeingDismissed } ?? false
+        }
+
+        driver.requested = true
+        let done = await waitUntil(8) { sheetUpAtDone != nil }
+        XCTAssertTrue(done, "the gate never reported the token")
+        XCTAssertEqual(sheetUpAtDone, false, "the tap went through with the sheet still up")
+        XCTAssertNotNil(AppTokenStore.load())
+        let gone = await waitUntil(5) { window.rootViewController?.presentedViewController == nil }
+        XCTAssertTrue(gone, "the sheet stayed up")
     }
 
     func testTVLoginSheetFromFullScreenGoesBackToInlineFirst() async throws {
