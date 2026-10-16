@@ -17,6 +17,7 @@ extension AppEnvironment {
         VideoPageModel(route: route, client: client, settings: settings, blockRules: blockRules,
                        account: { self.account },
                        makeController: { self.makeController(for: $0, player: $1) },
-                       ownHash: { self.mid.map { MidHash.of(uid: $0) } })
+                       ownHash: { self.mid.map { MidHash.of(uid: $0) } },
+                       openPage: { self.navigator.open($0) })
     }
 }

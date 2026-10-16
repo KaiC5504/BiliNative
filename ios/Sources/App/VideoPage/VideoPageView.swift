@@ -24,11 +24,9 @@ struct VideoPageView: View {
     @State private var sendDemo: DanmakuSendBar.Demo?
     #endif
 
-    /// Tests may hand in the model, to drive the page from outside.
-    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil, model: VideoPageModel? = nil) {
+    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil) {
         self.route = route
         panelOverride = panel
-        _model = State(initialValue: model)
     }
 
     /// A page for a model that already exists: the one picture in picture kept after its page closed.
@@ -200,7 +198,7 @@ struct VideoPageView: View {
 }
 
 private struct PageLayout: View {
-    @Bindable var model: VideoPageModel
+    let model: VideoPageModel
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
     let tabs: PageTabsState
@@ -248,7 +246,6 @@ private struct PageLayout: View {
         .statusBarHidden(presentation == .landscape)
         .preferredColorScheme(presentation == .vertical ? .dark : nil)
         .persistentSystemOverlays(inline ? .automatic : .hidden)
-        .navigationDestination(item: $model.pushedRoute) { VideoPageView(route: $0).id($0.id) }
         // Timestamps seek and video ids open a page, from the description and from every comment.
         .environment(\.richTextActions, RichTextActions(
             seek: { seconds in Task { await model.activate(.timestamp(label: "", seconds: seconds)) } },

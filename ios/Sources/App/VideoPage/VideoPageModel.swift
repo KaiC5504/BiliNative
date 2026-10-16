@@ -23,8 +23,6 @@ final class VideoPageModel {
     private(set) var tags: [VideoTag] = []
     /// Liked, coined, favourited and following; only asked for when logged in.
     private(set) var relation: VideoRelation?
-    /// A related video, or a BV id in the description, asks for a page of its own; the view pushes it.
-    var pushedRoute: VideoRoute?
     private(set) var ended = false
     /// Kept across parts and autoplay switches.
     var rate: Float = 1 { didSet { controller?.rate = rate } }
@@ -46,6 +44,8 @@ final class VideoPageModel {
     @ObservationIgnored private let sleep: (Double) async -> Void
     @ObservationIgnored private let onlineInterval: Double
     @ObservationIgnored private let isAppActive: @MainActor () -> Bool
+    /// Pushes a page of its own for a related video or a BV id in the description (`AppNavigator.open`).
+    @ObservationIgnored private let openPage: @MainActor (VideoRoute) -> Void
 
     /// The player surface's host view, handed over by the page so 小窗播放 can start picture in picture on it.
     /// Held for the model's life: picture in picture belongs to its layer, and a page brought back from the
@@ -100,7 +100,8 @@ final class VideoPageModel {
          onlineInterval: Double = 30,
          ownHash: @escaping @MainActor () -> String? = { nil },
          isAppActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState != .background },
-         keeper: PiPKeeper? = nil) {
+         keeper: PiPKeeper? = nil,
+         openPage: @escaping @MainActor (VideoRoute) -> Void = { _ in }) {
         self.route = route
         self.client = client
         self.settings = settings
@@ -112,6 +113,7 @@ final class VideoPageModel {
         self.sleep = sleep
         self.onlineInterval = onlineInterval
         self.isAppActive = isAppActive
+        self.openPage = openPage
     }
 
     var pageItems: [PlayItem] {
@@ -479,7 +481,7 @@ final class VideoPageModel {
     // MARK: the page under the player
 
     func openRelated(_ card: VideoCard) {
-        pushedRoute = VideoRoute(bvid: card.bvid)
+        openPage(VideoRoute(bvid: card.bvid))
     }
 
     /// A tap on a run of the description. Links leave the app, so the view opens those itself.
@@ -489,7 +491,7 @@ final class VideoPageModel {
             await seek(to: Double(seconds))
             play()
         case .video(let id) where id.hasPrefix("BV") && id != detail?.bvid:
-            pushedRoute = VideoRoute(bvid: id)
+            openPage(VideoRoute(bvid: id))
         default:
             break
         }
