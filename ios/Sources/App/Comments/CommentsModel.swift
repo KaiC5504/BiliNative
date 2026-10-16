@@ -46,7 +46,7 @@ final class CommentsModel {
     private(set) var loading = false
     private(set) var error: String?
     private(set) var thread: ThreadState?
-    /// Set by a failed reaction or delete; the tab shows it as a toast and clears it.
+    /// Set by a failed reaction or delete; the page shows it as a toast and clears it.
     var toast: String?
     var viewing: PictureViewing?
 

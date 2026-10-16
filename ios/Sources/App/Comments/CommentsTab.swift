@@ -4,7 +4,8 @@ import BiliAPI
 /// The 评论 tab (10): 热门评论 or 最新评论 with the sort switch, the pinned comment, the list with endless scroll,
 /// and the fixed bar that opens the composer. A closed section shows the server's message instead of the list.
 struct CommentsTab: View {
-    @Bindable var model: CommentsModel
+    let model: CommentsModel
+    let tabs: PageTabsState
     /// Task 25's composer: what to reply to, and whether to open on the emote panel.
     let onCompose: (ReplyTarget, Bool) -> Void
 
@@ -30,14 +31,15 @@ struct CommentsTab: View {
             }
         }
         .scrollIndicators(.hidden)
+        .collapsingPlayerScroll(tabs, tab: .comments)
+        // The tabs reach under the home indicator, so the bar keeps clear of it itself.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            CommentBar { emotes in onCompose(.video, emotes) }
+            CommentBar(bottomInset: ScreenInsets.current(merging: EdgeInsets()).bottom) { emotes in onCompose(.video, emotes) }
         }
         .background(Theme.Comments.background)
         .task {
             if !model.hasLoaded { await model.loadMore() }
         }
-        .toast($model.toast)
     }
 
     private func row(_ comment: Comment) -> some View {
@@ -138,6 +140,8 @@ private struct ClosedNotice: View {
 
 /// The fixed bar under the list and the thread: "哎呦，不错哦，发条评论吧" and the emote button (10).
 struct CommentBar: View {
+    /// Room for the home indicator when the bar's container ignores the safe area.
+    var bottomInset: CGFloat = 0
     /// True when the emote button was tapped.
     let onWrite: (Bool) -> Void
 
@@ -171,7 +175,8 @@ struct CommentBar: View {
         }
         .buttonStyle(.plain)
         .padding(.leading, Theme.Metrics.gutter)
-        .padding(.vertical, T.barTop)
+        .padding(.top, T.barTop)
+        .padding(.bottom, T.barTop + bottomInset)
         .background(T.background.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) {
             Rectangle()

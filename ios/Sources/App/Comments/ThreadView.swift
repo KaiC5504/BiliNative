@@ -4,7 +4,7 @@ import BiliAPI
 /// 评论详情 (13): over the tabs under the player, the root comment in full, a grey band, "相关回复共N条" with its sort,
 /// then the replies. ✕ goes back to the list.
 struct ThreadView: View {
-    @Bindable var model: CommentsModel
+    let model: CommentsModel
     let thread: CommentsModel.ThreadState
     /// Task 25's composer: what to reply to, and whether to open on the emote panel.
     let onCompose: (ReplyTarget, Bool) -> Void
@@ -38,7 +38,6 @@ struct ThreadView: View {
             }
         }
         .background(T.background)
-        .toast($model.toast)
     }
 
     private var header: some View {

@@ -23,8 +23,6 @@ extension EnvironmentValues {
 /// are blue, and timestamps and video ids are links under the app's own scheme that the `OpenURLAction` turns back
 /// into a seek or a pushed page.
 struct RichTextView: View {
-    static let scheme = "bilinative"
-
     let runs: [RichRun]
     var font = Theme.Comments.textFont
     var fontSize = Theme.Comments.textSize
@@ -113,33 +111,19 @@ struct RichTextView: View {
         case .timestamp(let label, _):
             piece = AttributedString(label)
         }
-        if let url = url(for: run) {
+        if let url = RichLink.url(for: run) {
             piece.link = url
             piece.foregroundColor = Theme.link
         }
         return piece
     }
 
-    static func url(for run: RichRun) -> URL? {
-        switch run {
-        case .timestamp(_, let seconds):
-            return URL(string: "\(scheme)://seek/\(seconds)")
-        case .video(let id) where id.hasPrefix("BV"):
-            return URL(string: "\(scheme)://video/\(id)")
-        case .link(_, let url):
-            return URL(string: url)
-        default:
-            return nil
-        }
-    }
-
     /// False for a web link that is not a video, which Safari opens.
     private func open(_ url: URL) -> Bool {
-        if url.scheme == Self.scheme {
-            let value = url.lastPathComponent
-            switch url.host {
-            case "seek": Int(value).map(actions.seek)
-            case "video": actions.openVideo(value)
+        if url.scheme == RichLink.scheme {
+            switch RichLink.run(for: url) {
+            case .timestamp(_, let seconds)?: actions.seek(seconds)
+            case .video(let id)?: actions.openVideo(id)
             default: break
             }
             return true
