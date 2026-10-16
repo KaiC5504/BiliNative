@@ -8,13 +8,13 @@ struct HomeView: View {
     @State private var opening = false
     @State private var errorText: String?
     @State private var partChoice: VideoView?
-    @State private var route: VideoRoute?
     @State private var showLogin = false
     @State private var showSettings = false
     @State private var confirmClear = false
 
     var body: some View {
-        NavigationStack {
+        @Bindable var navigator = env.navigator
+        NavigationStack(path: $navigator.path) {
             List {
                 Section("账号") { AccountRow(showLogin: $showLogin) }
                 Section {
@@ -48,7 +48,7 @@ struct HomeView: View {
                 if !env.recents.items.isEmpty {
                     Section {
                         ForEach(env.recents.items) { item in
-                            Button { route = item.videoRoute } label: { RecentRow(item: item) }
+                            Button { env.navigator.open(item.videoRoute) } label: { RecentRow(item: item) }
                         }
                     } header: {
                         HStack {
@@ -71,7 +71,7 @@ struct HomeView: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                 }
             }
-            .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
+            .videoPageDestinations()
             .sheet(isPresented: $showLogin) { LoginView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),
@@ -96,19 +96,19 @@ struct HomeView: View {
                 #if DEBUG
                 switch UserDefaults.standard.string(forKey: "DemoScreen") {
                 case "settings": showSettings = true
-                case "page": route = VideoRoute(bvid: VideoPageFixtures.bvidA)
+                case "page": env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA))
                 case "danmaku-send", "danmaku-style":
-                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+                    env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
                 case "danmaku-portrait":
-                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+                    env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
                 case "danmaku-landscape":
-                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+                    env.navigator.open(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
                     Task {
                         try? await Task.sleep(for: .seconds(2))
                         OrientationController.shared.enterLandscape()
                     }
                 case let name:
-                    if let demo = ChromeDemo.route(for: name) { route = demo }
+                    if let demo = ChromeDemo.route(for: name) { env.navigator.open(demo) }
                 }
                 #endif
                 if env.account == .unknown { await env.refreshAccount() }
@@ -152,7 +152,7 @@ struct HomeView: View {
         partChoice = nil
         let next = PlayerRoute(bvid: view.bvid, cid: page.cid, title: view.title, part: page.part, page: page.page, pageCount: view.pages.count)
         env.recents.add(next)
-        route = next.videoRoute
+        env.navigator.open(next.videoRoute)
     }
 
     private static func userMessage(_ error: Error) -> String {

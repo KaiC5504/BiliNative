@@ -15,6 +15,8 @@ final class OrientationController {
     /// The rotation lock: turning the phone does nothing until it is lifted, and it lasts until the page closes.
     var locked = false
     var videoIsVertical = false
+    /// The page that began last. Pages stack, and the covered page's end arrives after the new page's begin.
+    @ObservationIgnored private(set) weak var owner: AnyObject?
     @ObservationIgnored private var observer: NSObjectProtocol?
     /// Landscape was entered by the button with the phone flat or upright. Lifting it off the table reports
     /// portrait before anyone has turned it, so portrait only exits once the phone has really been landscape.
@@ -44,7 +46,17 @@ final class OrientationController {
         }
     }
 
-    func begin() {
+    /// The most recent begin wins. A page shown again calls it too, so its own vertical flag comes back.
+    func begin(owner: AnyObject, videoIsVertical: Bool) {
+        if self.owner !== owner {
+            if self.owner != nil {
+                // The previous page is covered or being popped: its lock and full screen are not this page's.
+                locked = false
+                if presentation != .inline { exitToInline() }
+            }
+            self.owner = owner
+        }
+        self.videoIsVertical = videoIsVertical
         guard observer == nil else { return }
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
         observer = NotificationCenter.default.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil,
@@ -55,7 +67,15 @@ final class OrientationController {
         }
     }
 
-    func end() {
+    func setVideoIsVertical(_ vertical: Bool, owner: AnyObject) {
+        guard self.owner === owner else { return }
+        videoIsVertical = vertical
+    }
+
+    /// Does nothing unless `owner` began last.
+    func end(owner: AnyObject) {
+        guard self.owner === owner else { return }
+        self.owner = nil
         if let observer {
             NotificationCenter.default.removeObserver(observer)
             UIDevice.current.endGeneratingDeviceOrientationNotifications()

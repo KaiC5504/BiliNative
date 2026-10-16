@@ -9,7 +9,7 @@ import BiliAPI
 @MainActor
 @Observable
 final class DemoPlayback: PlaybackControlling {
-    let player = AVPlayer()
+    let player: AVPlayer
     private(set) var phase: PlaybackController.Phase = .idle
     let mode: PlaybackController.Mode = .ripper
     let overlay = OverlayStats()
@@ -45,8 +45,9 @@ final class DemoPlayback: PlaybackControlling {
     @ObservationIgnored private var pauseAt: Double? = UserDefaults.standard.object(forKey: "DemoPauseAt") != nil
         ? UserDefaults.standard.double(forKey: "DemoPauseAt") : nil
 
-    init(media: URL? = DemoPlayback.testMedia) {
+    init(media: URL? = DemoPlayback.testMedia, player: AVPlayer = AVPlayer()) {
         self.media = media
+        self.player = player
     }
 
     nonisolated static var testMedia: URL? {
@@ -74,9 +75,15 @@ final class DemoPlayback: PlaybackControlling {
     }
 
     func stop() {
+        handOver()
+        player.replaceCurrentItem(with: nil)
+    }
+
+    func dropPrefetch() {}
+
+    func handOver() {
         detach()
         player.pause()
-        player.replaceCurrentItem(with: nil)
         isPlaying = false
         phase = .idle
     }

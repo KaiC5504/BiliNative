@@ -217,7 +217,7 @@ final class PanelActionTests: XCTestCase {
         let settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
         return VideoPageModel(route: route, client: client, settings: settings,
                               account: { loggedIn ? .loggedIn(name: "测试", vip: false) : .loggedOut },
-                              makeController: { FakePlayback(item: $0) })
+                              makeController: { FakePlayback(item: $0, player: $1) })
     }
 }
 
