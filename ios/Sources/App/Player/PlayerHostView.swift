@@ -32,6 +32,13 @@ final class PlayerHostView: UIView, AVPictureInPictureControllerDelegate {
     let gestureView = PlayerGestureView()
     private(set) var pip: AVPictureInPictureController?
     private(set) var pipError: Error?
+    /// Picture in picture is about to start (true) or has stopped (false).
+    var onPiPActive: ((Bool) -> Void)?
+    /// The small window's restore button was tapped while this view is off screen. True means a page that
+    /// shows this view is on its way; the restore then completes once the view is back in a window.
+    var onRestore: (() -> Bool)?
+    private var pendingRestore: ((Bool) -> Void)?
+    private var restores = 0
     private var itemObservation: NSKeyValueObservation?
 
     var playerLayer: AVPlayerLayer { videoView.playerLayer }
@@ -113,6 +120,45 @@ final class PlayerHostView: UIView, AVPictureInPictureControllerDelegate {
         pip.startPictureInPicture()
     }
 
+    func stopPiP() {
+        guard let pip, pip.isPictureInPictureActive else { return }
+        pip.stopPictureInPicture()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { finishRestore(true) }
+    }
+
+    /// The small window's restore button. AVKit waits on the handler before it animates the window back, so it
+    /// is always called, within 3 s. Tests call this directly: the simulator has no picture in picture.
+    func restoreForPiPStop(_ completion: @escaping (Bool) -> Void) {
+        finishRestore(false)
+        if window != nil {
+            completion(true)
+            return
+        }
+        guard onRestore?() == true else {
+            completion(false)
+            return
+        }
+        pendingRestore = completion
+        restores += 1
+        let restore = restores
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, self.restores == restore else { return }
+            self.finishRestore(false)
+        }
+    }
+
+    private func finishRestore(_ restored: Bool) {
+        guard let pending = pendingRestore else { return }
+        pendingRestore = nil
+        Logger.shared.info(.player, "picture in picture restore", ["restored": .init(restored)])
+        pending(restored)
+    }
+
     static func gravity(for fit: FitMode) -> AVLayerVideoGravity {
         switch fit {
         case .fit: .resizeAspect
@@ -143,17 +189,36 @@ final class PlayerHostView: UIView, AVPictureInPictureControllerDelegate {
         pip = controller
     }
 
+    nonisolated func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        Task { @MainActor in self.onPiPActive?(true) }
+    }
+
     nonisolated func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         Logger.shared.info(.player, "picture in picture started")
     }
 
     nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
         Logger.shared.info(.player, "picture in picture stopped")
+        Task { @MainActor in self.onPiPActive?(false) }
     }
 
     nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController,
                                                 failedToStartPictureInPictureWithError error: Error) {
         Logger.shared.warn(.player, "picture in picture failed to start", ["error": .init(String(describing: error))])
-        Task { @MainActor in self.pipError = error }
+        Task { @MainActor in
+            self.pipError = error
+            self.onPiPActive?(false)
+        }
     }
+
+    nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController,
+                                                restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        let completion = RestoreCompletion(call: completionHandler)
+        Task { @MainActor in self.restoreForPiPStop(completion.call) }
+    }
+}
+
+/// Carries AVKit's handler, a plain block, to the main actor where it is called.
+private struct RestoreCompletion: @unchecked Sendable {
+    let call: (Bool) -> Void
 }

@@ -39,6 +39,7 @@ struct HomeView: View {
             .overlay(alignment: .topLeading) { menu }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
+            .restoresKeptVideoPage()
             .navigationDestination(isPresented: $showHistory) { HistoryView() }
             .navigationDestination(isPresented: $showRecents) { RecentsView() }
             .sheet(isPresented: $showLogin) { LoginView() }
