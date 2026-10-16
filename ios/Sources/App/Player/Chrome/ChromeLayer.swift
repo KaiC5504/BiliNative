@@ -16,6 +16,7 @@ struct ChromeLayer: View {
     var onSendDanmaku: () -> Void = {}
     /// The action icons and 关注 need build B's actions (Task 21).
     var showsActions = false
+    var onComments: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -31,11 +32,11 @@ struct ChromeLayer: View {
                 case .landscape:
                     LandscapeChrome(model: model, chrome: chrome, panel: $panel, insets: insets, showsActions: showsActions,
                                     danmakuEnabled: danmakuEnabled, onToggleDanmaku: onToggleDanmaku,
-                                    onSendDanmaku: onSendDanmaku, onBack: back)
+                                    onSendDanmaku: onSendDanmaku, onBack: back, onComments: onComments)
                 case .vertical:
                     VerticalChrome(model: model, chrome: chrome, panel: $panel, insets: insets, showsActions: showsActions,
                                    danmakuEnabled: danmakuEnabled, onToggleDanmaku: onToggleDanmaku,
-                                   onSendDanmaku: onSendDanmaku, onBack: back)
+                                   onSendDanmaku: onSendDanmaku, onBack: back, onComments: onComments)
                 }
                 PlayerHUD(hud: chrome.hud)
             }

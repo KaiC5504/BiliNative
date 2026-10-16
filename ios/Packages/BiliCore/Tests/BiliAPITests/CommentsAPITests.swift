@@ -119,7 +119,7 @@ final class CommentsAPITests: XCTestCase {
         XCTAssertEqual(root.member, CommentMember(
             mid: 1001, name: "测试用户甲", face: "https://i0.hdslb.com/bfs/face/face-a.jpg", level: 6, isVip: true,
             pendant: "https://i0.hdslb.com/bfs/garb/item/pendant-a.png",
-            fanCardImage: "https://i0.hdslb.com/bfs/garb/item/card-a.png", fanCardNumber: "000095"))
+            fanCardImage: "https://i0.hdslb.com/bfs/garb/item/card-a.png", fanCardNumber: "000095", fanCardColor: "#f35543"))
         XCTAssertEqual(root.pictures, [CommentPicture(url: "https://i0.hdslb.com/bfs/new_dyn/pic-1.jpg", width: 1080, height: 1920.5)])
         XCTAssertEqual(root.runs, [
             .text("看"), .emote(token: "[doge]", url: "https://i0.hdslb.com/bfs/emote/doge.png", size: 1), .text("\n"),
@@ -132,6 +132,7 @@ final class CommentsAPITests: XCTestCase {
         XCTAssertEqual(plain.member.pendant, nil)
         XCTAssertEqual(plain.member.fanCardImage, nil)
         XCTAssertEqual(plain.member.fanCardNumber, nil)
+        XCTAssertEqual(plain.member.fanCardColor, nil)
         XCTAssertFalse(plain.member.isVip)
         XCTAssertEqual(plain.member.level, 3)
         XCTAssertNil(plain.location)

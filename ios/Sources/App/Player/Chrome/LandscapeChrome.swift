@@ -14,6 +14,8 @@ struct LandscapeChrome: View {
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
     let onBack: () -> Void
+    /// The 评论 icon: back to the page with the 评论 tab showing.
+    var onComments: () -> Void = {}
 
     @State private var toast: String?
 
@@ -110,7 +112,10 @@ struct LandscapeChrome: View {
             HStack(spacing: 8) {
                 if showsActions, let stat = model.detail?.stat {
                     ActionIcon(systemName: "hand.thumbsup", count: stat.like)
-                    ActionIcon(systemName: "text.bubble", count: nil)
+                    Button(action: onComments) {
+                        ActionIcon(systemName: "text.bubble", count: nil)
+                    }
+                    .accessibilityLabel("评论")
                     ActionIcon(systemName: "star", count: stat.favorite)
                     ActionIcon(coin: true, count: nil)
                     ActionIcon(systemName: "arrowshape.turn.up.right", count: nil)
