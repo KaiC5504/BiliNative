@@ -125,6 +125,8 @@ jobs:
           shoot 03-page 10 -DemoData YES -DemoScreen page
           shoot 22-danmaku-send 12 -DemoData YES -DemoScreen danmaku-send
           shoot 23-danmaku-style 12 -DemoData YES -DemoScreen danmaku-style
+          shoot danmaku-portrait 14 -DemoData YES -DemoScreen danmaku-portrait -DemoPauseAt 26
+          shoot danmaku-landscape 14 -DemoData YES -DemoScreen danmaku-landscape -DemoPauseAt 26
 
       - name: Release build (no tests)
         run: |
