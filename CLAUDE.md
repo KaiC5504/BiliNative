@@ -37,8 +37,14 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   "Deviations from BTR"). From the same log: in a hurry later copies go to the node expected to finish first, an
   unmeasured node that trickles is held to the best known one, and connections lost at one moment are one strike
   (Akamai had been banned by two -1005s 2 ms apart). Not yet on the phone.
-- Next: phone retest of hurry mode, then milestone 2 (official-style player chrome and gestures, danmaku,
-  like/coin/fav, Now Playing, PiP polish).
+- 2026-10-17: milestone 2 spec and plan (`docs/superpowers/specs/2026-10-17-m2-video-page-design.md`,
+  `docs/superpowers/plans/2026-10-17-m2-video-page.md`, 27 tasks in two builds). Build A (Tasks 1-15: the
+  official-style player, gestures, full screen, PiP, panels, danmaku with settings, block words and sending) built
+  in about 3 hours by parallel subagents, each task green in CI, batch-reviewed, then a whole-branch review.
+  Shipped to TestFlight; phone test pending (`docs/m2-phone-checklist.md`, Build A). Deferred to build B: PiP
+  that survives leaving the page, one AVPlayer per page (autoplay inside PiP), an owner token for
+  `OrientationController` before stacked video pages.
+- Next: KaiC's build A phone test, then build B (Tasks 16-27; KaiC adds the `BILI_APP_KEYS` secret first).
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.
@@ -76,8 +82,10 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   (Task 20). If Bilibili refuses API calls from the PC, save a playurl response from the browser to
   `local/playurl.json` (gitignored) and pass `--playurl local/playurl.json`.
 - App code: only in CI ("iOS compile check" workflow: core tests, simulator build, unit and integration
-  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac.
-- On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (Task 29).
+  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac. Debug builds take
+  `-DemoData YES` (invented fixtures, no network or account) and `-DemoScreen <name>` to open any screen for
+  screenshots; the `shoot` list in `.github/workflows/ios-compile.yml` names them all.
+- On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (M1) and `docs/m2-phone-checklist.md` (M2).
 
 ## Debugging from evidence
 
