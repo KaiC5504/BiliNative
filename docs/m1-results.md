@@ -67,3 +67,19 @@ under 3 s) is far larger than the bitrate difference explains.
 - Lock screen controls.
 - PiP.
 - The background fix itself: no build 2 background lasted long enough for iOS to take the socket.
+
+## Hurry mode
+
+Built 2026-10-16 (plan `docs/superpowers/plans/2026-10-16-hurry-mode.md`). Phone retest pending.
+
+PC bench, overseas, the saved playurl of one video (`ripper-bench --seeks 8`, seed 17, 8 jumps of 4 MiB each).
+Whichever run reads an offset first meets a cold CDN edge and is slow, so runs on fresh offsets are compared with
+each other, and runs on already-read offsets with each other. The cold rows are different streams of the same
+video, not a perfect A/B.
+
+| Run | First MiB (median) | Whole 4 MiB (median) |
+|---|---|---|
+| Cold, hurry on: 4K / 8K / 1080P | 1.68 / 1.59 / 1.59 s | 2.18 / 2.17 / 2.46 s |
+| Cold, hurry off: 1080P60 | 4.39 s | 6.99 s |
+| Warm 4K, hurry on | 0.35 s | 0.41 s |
+| Warm 4K, hurry off | 0.17 s | 1.46 s |
