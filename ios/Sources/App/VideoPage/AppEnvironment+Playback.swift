@@ -12,7 +12,7 @@ extension AppEnvironment {
 
     /// The environment lives as long as the app, so the page's closures may hold it.
     func makeVideoPageModel(route: VideoRoute) -> VideoPageModel {
-        VideoPageModel(route: route, client: client, settings: settings,
+        VideoPageModel(route: route, client: client, settings: settings, blockRules: blockRules,
                        account: { self.account },
                        makeController: { self.makeController(for: $0) })
     }

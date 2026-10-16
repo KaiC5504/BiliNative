@@ -25,6 +25,7 @@ final class VideoPageModel {
 
     @ObservationIgnored let client: BiliClient
     @ObservationIgnored let settings: AppSettings
+    @ObservationIgnored let blockRules: BlockRuleStore?
     @ObservationIgnored private let account: @MainActor () -> Account
     @ObservationIgnored private let makeController: @MainActor (PlayItem) -> PlaybackControlling
     @ObservationIgnored private let sleep: (Double) async -> Void
@@ -50,13 +51,15 @@ final class VideoPageModel {
     @ObservationIgnored private var chaptersTask: Task<Void, Never>?
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
 
-    init(route: VideoRoute, client: BiliClient, settings: AppSettings, account: @escaping @MainActor () -> Account,
+    init(route: VideoRoute, client: BiliClient, settings: AppSettings, blockRules: BlockRuleStore? = nil,
+         account: @escaping @MainActor () -> Account,
          makeController: @escaping @MainActor (PlayItem) -> PlaybackControlling,
          sleep: @escaping (Double) async -> Void = { seconds in _ = try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000)) },
          onlineInterval: Double = 30) {
         self.route = route
         self.client = client
         self.settings = settings
+        self.blockRules = blockRules
         self.account = account
         self.makeController = makeController
         self.sleep = sleep
@@ -81,6 +84,8 @@ final class VideoPageModel {
 
     func load() async {
         started = true
+        // Not awaited: the rules only matter once danmaku arrives, and a slow answer must not delay the video.
+        Task { await blockRules?.refresh() }
         await open(bvid: route.bvid, cid: route.cid, start: route.startSeconds)
     }
 

@@ -29,6 +29,8 @@ final class AppEnvironment {
     @ObservationIgnored let transport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
     @ObservationIgnored let directTransport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
     @ObservationIgnored let codecMemory = CodecMemory()
+    /// Shared by every video page; `logout()` empties it.
+    let blockRules: BlockRuleStore
     private(set) var account: Account = .unknown
     /// The last nav call failed (network, not a verdict), so `account` is still `.unknown`.
     private(set) var accountCheckFailed = false
@@ -63,7 +65,9 @@ final class AppEnvironment {
         #else
         let http: HTTPTransport = URLSessionHTTPTransport()
         #endif
-        client = BiliClient(transport: http, cookies: jar)
+        let client = BiliClient(transport: http, cookies: jar)
+        self.client = client
+        blockRules = BlockRuleStore(client: client)
         let router = PlaybackRouter()
         let server = LocalServer(router: router)
         // Set before the listener starts: onStop is read on the server's queue. A controller acts on the
@@ -136,6 +140,7 @@ final class AppEnvironment {
     func logout() async {
         persistBlocked.withLock { $0 = false }
         cookies.removeAll()
+        blockRules.clear()
         persistQueue.async { KeychainStore.deleteCookies() }
         await WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         accountCheckFailed = false
