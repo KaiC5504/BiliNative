@@ -25,6 +25,21 @@ final class HurryPlacementTests: XCTestCase {
         XCTAssertEqual(primaries, urls + urls)
     }
 
+    func testLaterCopiesGoByExpectedFinish() {
+        let stats = NodeStats()
+        let slowStart = url("cosov.example"), quick = url("akamai.example"), unknown = url("new.example"), full = url("full.example")
+        measure(stats, slowStart, ttfbMs: 660, bytesPerSecond: 8_000_000)
+        measure(stats, quick, ttfbMs: 20, bytesPerSecond: 4_000_000)
+        measure(stats, full, ttfbMs: 50, bytesPerSecond: 4_000_000)
+        stats.begin(full); stats.firstByte(full, ms: 50); stats.silent(full, waitedMs: 5_500)
+        // quick: about 36 ms; unknown: twice that; slowStart: about 668 ms; full last.
+        XCTAssertEqual(HurryPlacement.byExpectedFinish([slowStart, full, unknown, quick], pieceBytes: piece, nodes: stats, delivered: { _ in true }),
+                       [quick, unknown, slowStart, full])
+        let twin = url("akamai.example", "os=akam")
+        XCTAssertEqual(HurryPlacement.byExpectedFinish([quick, twin], pieceBytes: piece, nodes: stats, delivered: { $0 == twin }), [twin, quick],
+                       "an address that has not delivered loses the tie")
+    }
+
     func testUnknownNodesTakeAShareAtTwiceTheBestCost() {
         let stats = NodeStats()
         let known = url("known.example")

@@ -15,7 +15,12 @@ public final class BanList: @unchecked Sendable {
         var goodAddresses = Set<String>()
         var reported = Set<String>()
         var banned = Set<String>()
+        var lossMomentAt = -Double.infinity
     }
+
+    /// Losses within this long of the first one of a moment are that moment. BTR's retry rounds pause at least
+    /// 500 ms, so a node that drops every request is still struck again by the next round.
+    static let lossMomentMs = 250.0
 
     private let state = Locked(State())
     private let limit: Int
@@ -30,14 +35,22 @@ public final class BanList: @unchecked Sendable {
         self.limit = max(1, limit)
     }
 
+    /// `lostAt` (monotonic ms) is when a request lost its connection before any byte. Requests that lose it at
+    /// one moment are one strike, whatever their nodes: a network blip or a pool of connections torn down at once,
+    /// not a node failing twice. Two Akamai requests lost theirs 2 ms apart and banned the fastest node for the
+    /// rest of the video (phone, 2026-10-17).
     @discardableResult
-    public func record(url: String, receivedBytes: Int64, status: Int?) -> Bool {
+    public func record(url: String, receivedBytes: Int64, status: Int?, lostAt: Double? = nil) -> Bool {
         guard receivedBytes == 0 else { return false }
         let node = NodeCatalog.nodeKey(of: url)
         guard !node.isEmpty else { return false }
         let refused = status.map { (400..<500).contains($0) } ?? false
         let key = "\(node)\n\(NodeCatalog.address(of: url))\n\(refused ? "refused" : "")"
         let added = state.withLock { value -> [(String, Int)] in
+            if let lostAt {
+                if lostAt - value.lossMomentAt < Self.lossMomentMs { return [] }
+                value.lossMomentAt = lostAt
+            }
             value.emptyReplies[key, default: 0] += 1
             return judge(&value)
         }

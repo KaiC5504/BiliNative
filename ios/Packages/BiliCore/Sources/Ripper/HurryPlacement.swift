@@ -23,17 +23,9 @@ enum HurryPlacement {
             var chosenCost = Double.infinity
             for index in urls.indices {
                 let url = urls[index]
-                var cost: Double
-                if let value = expected[index] {
-                    cost = value
-                } else if let best {
-                    cost = best * 2 * Double(inflight[index] + 1)
-                } else {
-                    cost = Double(inflight[index])
-                }
-                if hosts.count > 2 && inflight[index] >= 2 && inflight[index] * 2 > carried { cost += 1e5 }
-                if !delivered(url) { cost += 1 }
-                if nodes.isFull(url, extraInflight: placed[keys[index], default: 0]) { cost += 1e6 }
+                let cost = Self.cost(expected: expected[index], best: best, inflight: inflight[index],
+                                     crowded: hosts.count > 2 && inflight[index] >= 2 && inflight[index] * 2 > carried,
+                                     delivered: delivered(url), full: nodes.isFull(url, extraInflight: placed[keys[index], default: 0]))
                 // Equal costs go to the node carrying less, so equally slow nodes share the overflow.
                 if cost < chosenCost || (cost == chosenCost && inflight[index] < inflight[chosen]) {
                     chosen = index
@@ -44,5 +36,27 @@ enum HurryPlacement {
             primaries.append(urls[chosen])
         }
         return primaries
+    }
+
+    /// The candidates for a later copy of a piece in a hurry, the one expected to deliver first first, at the costs
+    /// `assign` gives unknown, full and not yet delivering nodes. A copy is one request, not a share of a segment, so
+    /// a node carrying more than half may take it.
+    static func byExpectedFinish(_ urls: [String], pieceBytes: Int64, nodes: NodeStats, delivered: (String) -> Bool) -> [String] {
+        let expected = urls.map { nodes.expectedMs($0, pieceBytes: pieceBytes) }
+        let best = expected.compactMap { $0 }.min()
+        let costs = urls.indices.map { index in
+            Self.cost(expected: expected[index], best: best, inflight: nodes.inflight(urls[index]), crowded: false,
+                      delivered: delivered(urls[index]), full: nodes.isFull(urls[index]))
+        }
+        return urls.indices.sorted { (costs[$0], $0) < (costs[$1], $1) }.map { urls[$0] }
+    }
+
+    /// A node not measured yet costs twice the best known one, times its pieces in flight plus one.
+    private static func cost(expected: Double?, best: Double?, inflight: Int, crowded: Bool, delivered: Bool, full: Bool) -> Double {
+        var cost = expected ?? best.map { $0 * 2 * Double(inflight + 1) } ?? Double(inflight)
+        if crowded { cost += 1e5 }
+        if !delivered { cost += 1 }
+        if full { cost += 1e6 }
+        return cost
     }
 }

@@ -595,6 +595,73 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertFalse(slow(received: 800_000, at: 610), "most of the piece is in")
     }
 
+    func testRequestsLosingTheirConnectionTogetherDoNotBanTheNode() async throws {
+        // cosov drops every request of the first moment, as a Wi-Fi blip or a pool of connections torn down at once does.
+        // Building the content takes part of the 600 ms. No backup copies, so every loss falls in one moment.
+        let cdn = SimCDN(size: 1_100_000, behaviors: [TestEngine.cosov: .init(failForMs: 600)])
+        var config = TestEngine.config
+        config.hedgeDelayMs = 5_000
+        let bans = BanList()
+        let banned = Locked<[String]>([])
+        bans.onBan = { node, _, _ in banned.withLock { $0.append(node) } }
+        let resolver = Resolver(primary: url(on: TestEngine.cosov), backups: [],
+                                mode: .custom([NodeAddress(host: TestEngine.cosov), NodeAddress(host: TestEngine.aliov)]), bans: bans)
+        let ctx = context(cdn, config: config)
+        var bytes: [UInt8] = []
+        for try await chunk in RangeDownloader(ctx: ctx).stream(mebibyte, resolver: resolver, startup: false, priority: 50, deadline: nil) {
+            bytes += chunk
+        }
+        XCTAssertEqual(bytes, Array(cdn.content[0...1_048_575]))
+        let cosovFailures = ctx.stats.snapshot().nodes.first { $0.node == TestEngine.cosov }?.failures ?? 0
+        XCTAssertGreaterThanOrEqual(cosovFailures, 2, "the test needs requests that fail together")
+        XCTAssertEqual(banned.current, [])
+    }
+
+    func testHurryHedgeHoldsAnUnmeasuredNodeToTheBestKnownOne() {
+        let clock = ManualClock()
+        var config = TestEngine.config
+        config.hedgeDelayMs = 900
+        let pieces = PieceDownloader(ctx: EngineContext(transport: SimCDN(size: 1), pool: ConnectionPool(limit: 1), config: config,
+                                                        meter: Meter(), stats: EngineStats(), auto: nil, clock: clock.clock,
+                                                        logger: Logger(session: "test")))
+        let length: Int64 = 1_000_000
+        let unknown = url(on: TestEngine.aliov)
+        let known = url(on: "cn-hk-eq-01-02.bilivideo.com")
+        let nodes = pieces.ctx.nodes
+        // 100 ms first byte and 5 MB/s make 300 ms for the piece.
+        nodes.begin(known); nodes.firstByte(known, ms: 100); nodes.body(known, bytes: 1_000_000, ms: 200); nodes.end(known, receiving: true)
+        func due(at ms: Double, candidates: [String]) -> Bool {
+            let progress = AttemptProgress()
+            progress.begin(at: 0, length: length, base: Prefix())
+            progress.headers(at: 0)
+            progress.append([UInt8](repeating: 0, count: 100_000), at: ms - 100)
+            clock.set(ms)
+            return pieces.hurryHedgeDue(previous: progress, url: unknown, pieceLength: length, candidates: candidates)
+        }
+        XCTAssertFalse(due(at: 550, candidates: [unknown, known]))
+        XCTAssertTrue(due(at: 610, candidates: [unknown, known]), "twice the 300 ms the known node needs")
+        XCTAssertFalse(due(at: 1_790, candidates: [unknown]), "no node known: twice the 900 ms hedge delay, as before")
+        XCTAssertTrue(due(at: 1_810, candidates: [unknown]))
+    }
+
+    func testInAHurryAnUnmeasuredNodeThatTricklesGetsACopySoon() async throws {
+        let cdn = SimCDN(size: 600_000, behaviors: [TestEngine.aliov: .init(bytesPerSecond: 50_000)])
+        var config = TestEngine.slowConfig
+        config.hedgeDelayMs = 900
+        let ctx = context(RecordingTransport(cdn), config: config)
+        let resolver = Resolver(primary: url(on: TestEngine.cosov), backups: [],
+                                mode: .custom([NodeAddress(host: TestEngine.aliov), NodeAddress(host: TestEngine.cosov)]), bans: BanList())
+        let cosovURL = url(on: TestEngine.cosov)
+        ctx.nodes.begin(cosovURL); ctx.nodes.firstByte(cosovURL, ms: 20); ctx.nodes.body(cosovURL, bytes: 4_000_000, ms: 1_000)
+        ctx.nodes.end(cosovURL, receiving: true)
+        let started = Date()
+        let output = try await PieceDownloader(ctx: ctx).download(piece: ByteRange(start: 0, end: 262_143)!, index: 0, resolver: resolver,
+                                                                  preferred: [url(on: TestEngine.aliov)], mode: .normal, priority: 50,
+                                                                  deadline: nil, hurry: { true })
+        XCTAssertEqual(output.url, cosovURL)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.2, "the 1.8 s of twice the hedge delay")
+    }
+
     /// Two fast nodes both slow over a part of the file they have not served lately, a third one normal.
     let akamai = "upos-hz-mirrorakam.akamaized.net"
     let coldSpan = Int64(2_000_000)...Int64(4_000_000)
@@ -773,6 +840,53 @@ final class RangeDownloaderTests: XCTestCase {
                                                                   preferred: [url(on: TestEngine.cosov)], mode: .normal, priority: 50, deadline: nil)
         XCTAssertEqual(output.url, url(on: TestEngine.aliov))
         XCTAssertFalse(transport.requests.current.contains { $0.node == akamai }, "\(transport.requests.current.map(\.node))")
+    }
+
+    /// The phone's start on 2026-10-17: cosov had the higher speed per connection, so backups went there and waited
+    /// 661-673 ms for a first byte while Akamai answered in 15-24 ms.
+    func testInAHurryABackupCopyGoesToTheNodeExpectedToFinishFirst() async throws {
+        let cdn = SimCDN(size: 600_000, behaviors: [
+            TestEngine.aliov: .init(firstByteMs: 1_500),
+            TestEngine.cosov: .init(firstByteMs: 400),
+            akamai: .init(firstByteMs: 15),
+        ])
+        let transport = RecordingTransport(cdn)
+        var config = TestEngine.slowConfig
+        config.firstByteTimeoutMs = 5_500
+        let ctx = context(transport, config: config)
+        let resolver = Resolver(primary: url(on: TestEngine.cosov), backups: [],
+                                mode: .custom([NodeAddress(host: TestEngine.aliov), NodeAddress(host: TestEngine.cosov), NodeAddress(host: akamai)]),
+                                bans: BanList())
+        func measure(_ node: String, ttfbMs: Double, bps: Double) {
+            let url = url(on: node)
+            resolver.success(url, bps: bps)
+            ctx.nodes.begin(url); ctx.nodes.firstByte(url, ms: ttfbMs); ctx.nodes.body(url, bytes: Int64(bps), ms: 1_000)
+            ctx.nodes.end(url, receiving: true)
+        }
+        measure(TestEngine.cosov, ttfbMs: 660, bps: 8_000_000)
+        measure(akamai, ttfbMs: 20, bps: 4_000_000)
+        let output = try await PieceDownloader(ctx: ctx).download(piece: ByteRange(start: 0, end: 65_535)!, index: 0, resolver: resolver,
+                                                                  preferred: [url(on: TestEngine.aliov)], mode: .normal, priority: 50,
+                                                                  deadline: nil, hurry: { true })
+        XCTAssertEqual(output.url, url(on: akamai))
+        XCTAssertFalse(transport.requests.current.contains { $0.node == TestEngine.cosov }, "\(transport.requests.current.map(\.node))")
+    }
+
+    func testOutsideAHurryBackupCopiesKeepTheSpeedOrder() async throws {
+        let cdn = SimCDN(size: 600_000, behaviors: [TestEngine.aliov: .init(firstByteMs: 1_500)])
+        let transport = RecordingTransport(cdn)
+        let ctx = context(transport, config: TestEngine.slowConfig)
+        let resolver = Resolver(primary: url(on: TestEngine.cosov), backups: [],
+                                mode: .custom([NodeAddress(host: TestEngine.aliov), NodeAddress(host: TestEngine.cosov), NodeAddress(host: akamai)]),
+                                bans: BanList())
+        resolver.success(url(on: TestEngine.cosov), bps: 8_000_000)
+        resolver.success(url(on: akamai), bps: 4_000_000)
+        let akamaiURL = url(on: akamai)
+        ctx.nodes.begin(akamaiURL); ctx.nodes.firstByte(akamaiURL, ms: 20); ctx.nodes.body(akamaiURL, bytes: 4_000_000, ms: 1_000)
+        ctx.nodes.end(akamaiURL, receiving: true)
+        let output = try await PieceDownloader(ctx: ctx).download(piece: ByteRange(start: 0, end: 65_535)!, index: 0, resolver: resolver,
+                                                                  preferred: [url(on: TestEngine.aliov)], mode: .normal, priority: 50, deadline: nil)
+        XCTAssertEqual(output.url, url(on: TestEngine.cosov))
     }
 
     func testABackupCopyStillGoesToAFullNodeWhenEveryNodeIsFull() async throws {

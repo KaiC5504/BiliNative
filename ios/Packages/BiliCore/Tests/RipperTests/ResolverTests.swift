@@ -113,6 +113,7 @@ final class ResolverTests: XCTestCase {
         }
         XCTAssertTrue(resolver.allows(a))
         resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 2 << 20, end: 2 << 20 + 9_999)!)
+        manual.advance(1_000)
         resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 3 << 20, end: 3 << 20 + 9_999)!)
         XCTAssertFalse(resolver.allows(a))
     }
@@ -140,6 +141,7 @@ final class ResolverTests: XCTestCase {
     func testEmptyRepliesFromANodeThatNeverDeliveredAreStruckAsBefore() {
         let a = node(0)
         resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 300_000, end: 399_999)!)
+        manual.advance(1_000)
         resolver.failure(a, status: nil, receivedBytes: 0, range: ByteRange(start: 400_000, end: 499_999)!)
         XCTAssertFalse(resolver.allows(a))
         XCTAssertFalse(resolver.avoids(a, ByteRange(start: 300_000, end: 399_999)!))
@@ -156,6 +158,7 @@ final class ResolverTests: XCTestCase {
     func testStatusShowsBans() {
         let a = node(0)
         resolver.failure(a, status: nil, receivedBytes: 0)
+        manual.advance(1_000)
         resolver.failure(a, status: nil, receivedBytes: 0)
         XCTAssertEqual(resolver.status().first { $0.node == NodeCatalog.nodeKey(of: a) }?.state, "banned")
         XCTAssertFalse(resolver.urls().contains(a))

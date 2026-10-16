@@ -45,29 +45,36 @@ func firstSuccess<Output: Sendable>(_ group: inout ThrowingTaskGroup<Output, Err
 /// Where the copies of one race go. A copy takes its node once it holds a connection permit: the first candidate no
 /// other copy took that has room, or the first one left when every node is full. On the phone (2026-10-17) Akamai,
 /// fastest and HTTP/1.1, was given 48-61 requests for its 8 connections while the mirrors sat idle, and 38 of them
-/// ran out their first-byte timeout waiting inside URLSession.
+/// ran out their first-byte timeout waiting inside URLSession. `laterCopies` orders the candidates for every copy
+/// after the first.
 final class CopyTargets: @unchecked Sendable {
     let candidates: [String]
     private let nodes: NodeStats
+    private let laterCopies: @Sendable ([String]) -> [String]
     private let taken = Locked<[Int: String]>([:])
 
-    init(_ candidates: [String], nodes: NodeStats) {
+    init(_ candidates: [String], nodes: NodeStats, laterCopies: @escaping @Sendable ([String]) -> [String] = { $0 }) {
         self.candidates = candidates
         self.nodes = nodes
+        self.laterCopies = laterCopies
     }
 
     func url(_ copy: Int) -> String? { taken.current[copy] }
 
     /// Where the next copy would go now.
     func next() -> String {
-        let left = remaining(taken.current)
+        let left = laterCopies(remaining(taken.current))
         return left.first { !nodes.isFull($0) } ?? left.first ?? candidates[0]
     }
 
     func claim(_ copy: Int) -> String {
-        taken.withLock { taken in
-            let left = remaining(taken)
-            let url = nodes.begin(firstOpenOf: left.isEmpty ? candidates : left)
+        // Ordered outside the lock: the order reads the node records and the hurry check.
+        let left = remaining(taken.current)
+        let order = copy == 0 ? left : laterCopies(left)
+        return taken.withLock { taken in
+            let open = order.filter { !taken.values.contains($0) }
+            let rest = remaining(taken)
+            let url = nodes.begin(firstOpenOf: !open.isEmpty ? open : !rest.isEmpty ? rest : candidates)
             taken[copy] = url
             return url
         }
@@ -112,7 +119,14 @@ final class PieceDownloader: @unchecked Sendable {
                 let untried = candidates.filter { !tried.contains($0) }
                 let allowed = untried.filter(resolver.allows)
                 let whole = allowed.filter { !resolver.avoids($0, piece) }
-                let targets = CopyTargets(!whole.isEmpty ? whole : !allowed.isEmpty ? allowed : untried, nodes: ctx.nodes)
+                let nodes = ctx.nodes
+                // BTR PR 11 `pick`: by speed alone a backup went to cosov, 661-673 ms to its first byte, while Akamai
+                // answered in 15-24 ms (phone, 2026-10-17).
+                let targets = CopyTargets(!whole.isEmpty ? whole : !allowed.isEmpty ? allowed : untried, nodes: nodes, laterCopies: { left in
+                    guard hurry?() == true else { return left }
+                    return HurryPlacement.byExpectedFinish(left, pieceBytes: piece.length, nodes: nodes,
+                                                           delivered: { resolver.bans?.hasDelivered($0) ?? true })
+                })
                 if targets.candidates.isEmpty { break }
                 let copies = targets.candidates.prefix(width).map { _ in AttemptProgress() }
                 do {
@@ -144,7 +158,8 @@ final class PieceDownloader: @unchecked Sendable {
                     if position > 0 {
                         guard try await self.waitForCopy(position, previous: copies[position - 1],
                                                          previousURL: { targets.url(position - 1) ?? targets.candidates[0] },
-                                                         copyURL: targets.next, pieceLength: piece.length, resolver: resolver, mode: mode,
+                                                         copyURL: targets.next, candidates: targets.candidates, pieceLength: piece.length,
+                                                         resolver: resolver, mode: mode,
                                                          hasDeadline: hasDeadline, deadline: deadline, hurry: hurry) else { return nil }
                     }
                     do {
@@ -191,9 +206,9 @@ final class PieceDownloader: @unchecked Sendable {
     /// Whether copy `position` sends its request. In a hurry it goes once the copy before it is late or has
     /// failed. Otherwise the second copy follows `hedgeDue` or the delay, and a third waits for a hurry: when
     /// the second fails first, the round's walk moves on instead.
-    private func waitForCopy(_ position: Int, previous: AttemptProgress, previousURL: () -> String, copyURL: () -> String, pieceLength: Int64,
-                             resolver: Resolver, mode: PieceMode, hasDeadline: Bool, deadline: (@Sendable () -> Double)?,
-                             hurry: (@Sendable () -> Bool)?) async throws -> Bool {
+    private func waitForCopy(_ position: Int, previous: AttemptProgress, previousURL: () -> String, copyURL: () -> String,
+                             candidates: [String], pieceLength: Int64, resolver: Resolver, mode: PieceMode, hasDeadline: Bool,
+                             deadline: (@Sendable () -> Double)?, hurry: (@Sendable () -> Bool)?) async throws -> Bool {
         if mode == .probe { return true }
         let measured = ctx.meter.hedgeDelayMs(configured: ctx.config.hedgeDelayMs)
         let delay = mode == .startup ? min(hasDeadline ? 200 : 250, measured) : measured
@@ -202,7 +217,9 @@ final class PieceDownloader: @unchecked Sendable {
             let hurried = hurry?() == true
             if previous.failed { return hurried || position == 1 }
             if hurried {
-                if previous.isStarted && hurryHedgeDue(previous: previous, url: previousURL(), pieceLength: pieceLength) { return true }
+                if previous.isStarted && hurryHedgeDue(previous: previous, url: previousURL(), pieceLength: pieceLength, candidates: candidates) {
+                    return true
+                }
             } else if position == 1 {
                 if hasDeadline, let deadline {
                     if previous.isStarted && hedgeDue(first: previous, delayMs: delay, deadlineAt: deadline(), copyBps: resolver.speed(copyURL())) {
@@ -241,10 +258,14 @@ final class PieceDownloader: @unchecked Sendable {
     /// seconds over a part of the file it has not served lately. Due when the copy before is late to its first
     /// byte (twice its node's usual, within 250-600 ms), has stopped for 1 s, or is past twice its node's
     /// expected time with under three quarters in.
-    func hurryHedgeDue(previous: AttemptProgress, url: String, pieceLength: Int64) -> Bool {
+    func hurryHedgeDue(previous: AttemptProgress, url: String, pieceLength: Int64, candidates: [String] = []) -> Bool {
         let now = ctx.clock.nowMs()
         let ttfb = ctx.nodes.ttfbMs(url)
-        let expected = ctx.nodes.expectedMs(url, pieceBytes: pieceLength) ?? ctx.config.hedgeDelayMs
+        // A node not measured yet is held to the best known candidate, or one that answers and then trickles
+        // keeps the piece for twice the hedge delay.
+        let expected = ctx.nodes.expectedMs(url, pieceBytes: pieceLength)
+            ?? candidates.compactMap { ctx.nodes.expectedMs($0, pieceBytes: pieceLength) }.min()
+            ?? ctx.config.hedgeDelayMs
         return previous.state.withLock { value in
             let elapsed = now - value.startedAt
             if !value.gotHeaders { return elapsed >= (ttfb > 0 ? min(600, max(250, ttfb * 2)) : 250) }

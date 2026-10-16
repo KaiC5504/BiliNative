@@ -34,7 +34,9 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - 2026-10-17: the build 3 phone log showed Akamai given 48-61 requests for URLSession's 8 connections while the
   mirrors sat idle (38 first-byte timeouts, two stalls). Full nodes are now skipped outside hurry mode too, Akamai
   is full at 8 from the start, and each copy picks its node once it holds a connection (`docs/background.md`,
-  "Deviations from BTR"). Not yet on the phone.
+  "Deviations from BTR"). From the same log: in a hurry later copies go to the node expected to finish first, an
+  unmeasured node that trickles is held to the best known one, and connections lost at one moment are one strike
+  (Akamai had been banned by two -1005s 2 ms apart). Not yet on the phone.
 - Next: phone retest of hurry mode, then milestone 2 (official-style player chrome and gestures, danmaku,
   like/coin/fav, Now Playing, PiP polish).
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,

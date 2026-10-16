@@ -12,6 +12,28 @@ final class BanListTests: XCTestCase {
         XCTAssertEqual(bans.bannedNodes(), ["a.bilivideo.com"])
     }
 
+    /// Two Akamai requests lost their connection 2 ms apart and banned the fastest node for the rest of the video
+    /// (phone, 2026-10-17).
+    func testConnectionsLostAtTheSameMomentAreOneStrike() {
+        let bans = BanList()
+        let a = url("a", "f1"), b = url("b", "f1")
+        bans.record(url: a, receivedBytes: 0, status: nil, lostAt: 1_000)
+        bans.record(url: a, receivedBytes: 0, status: nil, lostAt: 1_002)
+        bans.record(url: b, receivedBytes: 0, status: nil, lostAt: 1_100)
+        XCTAssertTrue(bans.allows(a))
+        XCTAssertTrue(bans.allows(b), "lost at the same moment as a's")
+        bans.record(url: a, receivedBytes: 0, status: nil, lostAt: 1_600)
+        XCTAssertFalse(bans.allows(a), "the next round's loss is a second event")
+        XCTAssertTrue(bans.allows(b))
+    }
+
+    func testTheMomentDoesNotStretchWhileLossesKeepComing() {
+        let bans = BanList()
+        let a = url("a", "f1")
+        for lostAt in stride(from: 1_000.0, through: 1_300, by: 100) { bans.record(url: a, receivedBytes: 0, status: nil, lostAt: lostAt) }
+        XCTAssertFalse(bans.allows(a), "losses at 1000 and 1300 ms are two moments")
+    }
+
     func testPartialTransfersAreNotStrikes() {
         let bans = BanList()
         bans.record(url: url("a", "f1"), receivedBytes: 10, status: nil)

@@ -258,8 +258,8 @@ public final class Resolver: @unchecked Sendable {
             return true
         }
         if positional { return }
-        bans?.record(url: url, receivedBytes: receivedBytes, status: status)
         let now = clock.nowMs()
+        bans?.record(url: url, receivedBytes: receivedBytes, status: status, lostAt: status == nil && !timedOut ? now : nil)
         state.withLock { value in
             var health = value.health[url] ?? Health()
             health.failures += 1

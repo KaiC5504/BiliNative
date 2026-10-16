@@ -96,6 +96,16 @@ listed under "Deviations from BTR". `RipperConfig.hurry` switches all of it off,
 - Blip strikes heal: a successful transfer clears a node's empty-reply strikes and lifts a node ban they
   caused, so a local network blip doesn't ban the fastest nodes for the rest of the video (2026-10-16, after
   the Task 18 review).
+- Requests that lose their connection before any byte (no status, not a timeout) at one moment are one strike,
+  whatever their nodes: a later loss within 250 ms of the first one of the moment adds none (`BanList`,
+  `lossMomentAt`). The window does not stretch, and BTR's retry rounds pause at least 500 ms, so a node that
+  drops every request is still banned by its second moment. On the phone (2026-10-17, t+139.08 s) two Akamai
+  requests lost their connection (NSURLError -1005) 2 ms apart and banned the fastest node for the rest of the
+  video. Two earlier -1005s in mid-body (t+105.8, t+134.6) had been taken as damaged copies and used up
+  Akamai's two damaged blocks for that file, which is why these were strikes at all. Path updates arrived at
+  t+106.5 and t+141.5 with Wi-Fi still up and the same interfaces and gateways; `PlaybackController` passes a
+  path change to `RipperSession.networkChanged` only when that signature changes, so none of them reset the
+  bans.
 - A refusal (HTTP 4xx) of an address other nodes serve, by a node that has not delivered yet, drops only that
   node and address pair, however many such addresses it refuses (both tracks and every new signature are
   further addresses). BTR blames the node (`cdn-resolver.js` line 133 at 2026.10.8.1), and a banned node never
@@ -122,8 +132,15 @@ listed under "Deviations from BTR". `RipperConfig.hurry` switches all of it off,
     delivered yet loses ties.
   - Hedge budgets: with no first byte yet, a second copy starts after `clamp(first byte x 2, 250, 600)` ms
     (250 ms if the node's first byte is unknown). If bytes stop arriving, a copy starts after a 1 s gap. A slow
-    transfer gets a copy once `elapsed >= max(400, expected x 2)` ms while under 75% of the piece has arrived.
-    Outside a hurry the usual 900 ms hedge delay applies.
+    transfer gets a copy once `elapsed >= max(400, expected x 2)` ms while under 75% of the piece has arrived;
+    for a node not measured yet `expected` is the best known candidate's for that piece, so a node that answers
+    and then trickles is not left alone for twice the hedge delay (2026-10-17). With no node known it is the
+    hedge delay, as before. Outside a hurry the usual 900 ms hedge delay applies.
+  - Every copy after the first goes to the candidate expected to finish first, at the costs above (unknown,
+    full, not yet delivered) but without the half share, since a copy is one request (BTR PR 11 `pick`). The
+    first copy stays on its placed node. Outside a hurry later copies keep the speed order. Before this a copy
+    went by speed alone: on the phone's start (2026-10-17, t+99 s) copies went to cosov, 661-673 ms to the first
+    byte, while Akamai answered in 15-24 ms.
   - At most three copies of a piece, and copy k starts only when copy k-1 is late. A range that is not in a
     hurry never starts a third copy.
   - `NodeStats` blends new samples 0.7 old, 0.3 new. Bodies under 32 KiB say nothing about speed. A request
