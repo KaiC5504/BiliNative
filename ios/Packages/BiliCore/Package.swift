@@ -5,7 +5,7 @@ let package = Package(
     name: "BiliCore",
     platforms: [.iOS("26.0"), .macOS("15.0")],
     products: [
-        .library(name: "BiliCore", targets: ["BiliShared", "DevLog", "BiliAPI", "DashHLS", "Ripper"]),
+        .library(name: "BiliCore", targets: ["BiliShared", "DevLog", "BiliAPI", "DashHLS", "Ripper", "LocalHTTP"]),
     ],
     targets: [
         .target(name: "BiliShared"),
@@ -18,6 +18,8 @@ let package = Package(
         .testTarget(name: "DashHLSTests", dependencies: ["DashHLS", "BiliShared"]),
         .target(name: "Ripper", dependencies: ["BiliShared", "DevLog"], exclude: ["LICENSE-BTR.txt"]),
         .testTarget(name: "RipperTests", dependencies: ["Ripper", "BiliShared", "DevLog"]),
+        .target(name: "LocalHTTP", dependencies: ["BiliShared"]),
+        .testTarget(name: "LocalHTTPTests", dependencies: ["LocalHTTP", "BiliShared"]),
     ],
     swiftLanguageModes: [.v5]
 )
