@@ -22,11 +22,14 @@ final class SidxParserTests: XCTestCase {
         XCTAssertEqual(segment.range.start, Int64(bytes.count) + 10)
     }
 
-    func testHierarchicalReferencesAreSkippedButAdvanceOffsets() throws {
+    func testHierarchicalReferenceRejectsTheWholeIndex() {
         let bytes = MP4Builder.sidx(version: 0, timescale: 1000, earliest: 0, firstOffset: 0, refs: [(0x8000_0000 | 100, 10), (200, 10)])
-        let segments = try XCTUnwrap(SidxParser.parse(bytes, absoluteStart: 0))
-        XCTAssertEqual(segments.count, 1)
-        XCTAssertEqual(segments[0].range.start, Int64(bytes.count) + 100)
+        XCTAssertNil(SidxParser.parse(bytes, absoluteStart: 0))
+    }
+
+    func testUnknownVersionAndZeroSizeReferenceAreRejected() {
+        XCTAssertNil(SidxParser.parse(MP4Builder.sidx(version: 2, timescale: 1000, earliest: 0, firstOffset: 0, refs: [(10, 10)]), absoluteStart: 0))
+        XCTAssertNil(SidxParser.parse(MP4Builder.sidx(version: 0, timescale: 1000, earliest: 0, firstOffset: 0, refs: [(0, 10)]), absoluteStart: 0))
     }
 
     func testRejectsBrokenInput() {

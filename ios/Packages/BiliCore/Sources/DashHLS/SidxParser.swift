@@ -48,10 +48,9 @@ public enum SidxParser {
             cursor += 12
             let (next, overflow) = byteCursor.addingReportingOverflow(size)
             guard size > 0, !overflow, let range = ByteRange(start: byteCursor, end: next - 1) else { return nil }
-            // Type 1 points at another sidx; Bilibili's files only use media references.
-            if reference >> 31 == 0 {
-                segments.append(MediaSegment(index: segments.count, range: range, startTime: time / timescale, duration: duration / timescale))
-            }
+            // Type 1 points at another sidx; dropping it would leave byte and time gaps, so the caller falls back to direct mode.
+            guard reference >> 31 == 0 else { return nil }
+            segments.append(MediaSegment(index: segments.count, range: range, startTime: time / timescale, duration: duration / timescale))
             byteCursor = next
             time += duration
         }

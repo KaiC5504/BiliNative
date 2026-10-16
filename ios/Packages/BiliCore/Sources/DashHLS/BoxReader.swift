@@ -31,7 +31,7 @@ public enum BoxReader {
         var result: [BoxHeader] = []
         var offset = from
         let limit = min(to, bytes.count)
-        while offset >= 0, offset + 8 <= limit {
+        while offset >= 0, limit - offset >= 8 {
             var size = Int(uint32(bytes, offset))
             var header = 8
             if size == 1 {
