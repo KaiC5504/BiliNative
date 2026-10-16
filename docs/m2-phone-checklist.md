@@ -70,3 +70,13 @@ Build A replaces the M1 test player with the official-style player. The page und
 32. The stats box still shows BTR. First frame and 卡顿 feel the same as in M1.
 
 Tell Claude which steps failed and roughly when; the logs have the rest.
+
+## Before build B
+
+Build B's 不喜欢 button needs Bilibili's public TV-client key and secret. They stay out of the repo: GitHub holds them as a secret and each build writes them into the app. Do this once, on the PC, before build B ships. It takes about three minutes. Without it everything still builds, and 不喜欢 stays grey with an explanation.
+
+1. Open the bilibili-API-collect page `docs/misc/sign/APPKey.md` (GitHub: SocialSisterYi/bilibili-API-collect). Find the row whose platform is the TV client (云视听小电视, the appkey starts with `4409e2ce`) and copy its appkey and appsec.
+2. In a terminal in the repo run `gh secret set BILI_APP_KEYS -R KaiC5504/BiliNative`. When it asks, paste `appkey:appsec` on one line, with a colon between the two.
+3. Check with `gh secret list -R KaiC5504/BiliNative` that `BILI_APP_KEYS` is in the list.
+
+To see that it worked: in the next "iOS compile check" run, the "App keys" step says `app keys written` and shows no values. Without the secret it shows a notice that `BILI_APP_KEYS` is not set.

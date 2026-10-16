@@ -93,6 +93,13 @@ jobs:
           # Homebrew's Python refuses global installs (PEP 668), hence setup-python.
           python -m pip install --quiet --require-hashes -r scripts/testflight-requirements.txt
 
+      # Bilibili's public TV client pair. Both halves are masked before anything is written, and the
+      # secret reaches only this step; without it the file holds nil.
+      - name: App keys
+        env:
+          BILI_APP_KEYS: ${{ secrets.BILI_APP_KEYS }}
+        run: python3 tools/write_app_keys.py ios/Generated/AppKeys.swift
+
       - name: Generate the Xcode project
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
