@@ -116,7 +116,8 @@ private struct PlayerBox: View {
             PlayerSurface(player: model.controller?.player, fit: env.settings.fit, mirrored: model.mirrored,
                           allowsLevelGestures: !inline,
                           onGesture: { chrome.handle($0, page: model, size: size) },
-                          danmaku: danmaku)
+                          // The end screens (26, 27) show no danmaku over the last frame.
+                          danmaku: model.ended ? nil : danmaku)
                 .frame(height: surfaceHeight)
                 .frame(maxHeight: .infinity, alignment: .top)
             if let controller = model.controller {
