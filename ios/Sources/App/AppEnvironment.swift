@@ -58,7 +58,12 @@ final class AppEnvironment {
         persistQueue = queue
         persistBlocked = blocked
         cookies = jar
-        client = BiliClient(transport: URLSessionHTTPTransport(), cookies: jar)
+        #if DEBUG
+        let http: HTTPTransport = DemoFixtures.isEnabled ? DemoTransport() : URLSessionHTTPTransport()
+        #else
+        let http: HTTPTransport = URLSessionHTTPTransport()
+        #endif
+        client = BiliClient(transport: http, cookies: jar)
         let router = PlaybackRouter()
         let server = LocalServer(router: router)
         // Set before the listener starts: onStop is read on the server's queue. A controller acts on the

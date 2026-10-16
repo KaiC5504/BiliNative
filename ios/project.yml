@@ -29,6 +29,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources/App
+      # Resources/Borrowed (PiliPlus's coin art and custom_icon.ttf) ships through this entry; a second
+      # entry for it would copy the same files twice.
       - path: Resources
     dependencies:
       - package: BiliCore
@@ -59,6 +61,7 @@ targets:
           - audio
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        NSPhotoLibraryAddUsageDescription: 用于把视频截图保存到相册。
         NSLocalNetworkUsageDescription: 用于把调试日志发送到你电脑上的日志服务器。
         NSBonjourServices:
           - _bilinative-log._tcp
