@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import Network
 import BiliShared
 import BiliAPI
 import LocalHTTP
@@ -98,6 +99,227 @@ enum DebugSupport {
                 return TransportResponse(status: 206, headers: ["content-range": "bytes \(range.start)-\(range.end)/\(total)"],
                                          body: body(slice))
             }
+        }
+    }
+}
+
+/// Serves files from a directory with Range support, like a CDN node, on 127.0.0.1. Paths under
+/// /refused/ answer 403, like a primary address an account may not use on any node.
+final class FakeCDNServer: @unchecked Sendable {
+    struct Request: Sendable {
+        let path: String
+        let range: String
+        /// Sent by the engine's transport (FixturePlayback marks it); AVPlayer's own requests are not.
+        let engine: Bool
+        let status: Int
+    }
+
+    static let clientHeader = "X-Fixture-Client"
+    let directory: URL
+    private let listenerBox = Locked<NWListener?>(nil)
+    private let queue = DispatchQueue(label: "bilinative.fake-cdn")
+    private let log = Locked<[Request]>([])
+    private let files = Locked<[String: Data]>([:])
+    private let refusingEngineMedia = Locked(false)
+
+    init(directory: URL) {
+        self.directory = directory
+    }
+
+    var requests: [Request] { log.current }
+    var requestCount: Int { log.current.count }
+
+    /// The engine's media ranges answer 403 while its header requests (from byte 0) still work, so
+    /// BTR mode fails mid-playback and direct mode can still start.
+    func refuseEngineMedia(_ refuse: Bool) {
+        refusingEngineMedia.withLock { $0 = refuse }
+    }
+
+    func start() async throws -> UInt16 {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        let listener = try NWListener(using: parameters)
+        listenerBox.withLock { $0 = listener }
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return connection.cancel() }
+            connection.start(queue: self.queue)
+            self.receive(connection, buffer: [])
+        }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
+            let resumed = Locked(false)
+            @Sendable func resumeOnce(_ result: Result<UInt16, Error>) {
+                let first = resumed.withLock { value -> Bool in
+                    defer { value = true }
+                    return !value
+                }
+                if first { continuation.resume(with: result) }
+            }
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    resumeOnce(.success(listener.port?.rawValue ?? 0))
+                // A waiting listener may never become ready, which would leave start() hanging.
+                case .failed(let error), .waiting(let error):
+                    listener.stateUpdateHandler = nil
+                    listener.cancel()
+                    resumeOnce(.failure(error))
+                case .cancelled:
+                    listener.stateUpdateHandler = nil
+                    resumeOnce(.failure(CancellationError()))
+                default:
+                    break
+                }
+            }
+            listener.start(queue: queue)
+        }
+    }
+
+    func stop() {
+        listenerBox.withLock { listener in
+            listener?.cancel()
+            listener = nil
+        }
+    }
+
+    private func receive(_ connection: NWConnection, buffer: [UInt8]) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, isComplete, error in
+            guard let self else { return connection.cancel() }
+            let buffer = buffer + (data.map { [UInt8]($0) } ?? [])
+            switch HTTPRequestParser.parse(buffer) {
+            case .incomplete where !isComplete && error == nil:
+                self.receive(connection, buffer: buffer)
+            case .complete(let head, _):
+                self.respond(connection, head)
+            default:
+                connection.cancel()
+            }
+        }
+    }
+
+    private func content(_ name: String) -> Data? {
+        if let cached = files.current[name] { return cached }
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)) else { return nil }
+        files.withLock { $0[name] = data }
+        return data
+    }
+
+    private func respond(_ connection: NWConnection, _ head: HTTPRequestHead) {
+        let engine = head.headers[Self.clientHeader.lowercased()] == "engine"
+        var status: Int
+        var headers: [(String, String)] = []
+        var body = Data()
+        if let content = content(String(head.path.split(separator: "/").last ?? "")) {
+            let total = Int64(content.count)
+            switch RangeRequest.parse(head.headers["range"], totalSize: total) {
+            case .full:
+                status = 200
+                body = content
+            case .range(let range):
+                status = engine && range.start > 0 && refusingEngineMedia.current ? 403 : 206
+                body = content.subdata(in: Int(range.start)..<Int(range.end + 1))
+                headers.append(("Content-Range", "bytes \(range.start)-\(range.end)/\(total)"))
+            case .unsatisfiable:
+                status = 416
+            }
+            if head.path.hasPrefix("/refused/") { status = 403 }
+        } else {
+            status = 404
+        }
+        if status >= 400 {
+            headers = []
+            body = Data()
+        }
+        log.withLock { $0.append(Request(path: head.path, range: head.headers["range"] ?? "", engine: engine, status: status)) }
+        let headBytes = HTTPResponseWriter.head(status: status, headers: headers + [
+            ("Content-Type", "video/mp4"), ("Content-Length", "\(body.count)"), ("Connection", "close"),
+        ])
+        connection.send(content: Data(headBytes) + body, completion: .contentProcessed { _ in connection.cancel() })
+    }
+}
+
+struct FixtureMedia {
+    struct Track: Decodable {
+        let file: String
+        let codecs: String
+        let bandwidth: Int
+        let width: Int
+        let height: Int
+        let initialization: String
+        let indexRange: String
+        let size: Int
+    }
+
+    let video: Track
+    let audio: Track
+
+    static func load(directory: URL, variant: String) throws -> FixtureMedia {
+        let data = try Data(contentsOf: directory.appendingPathComponent("meta.json"))
+        let all = try JSONDecoder().decode([String: [String: AnyDecodableTrack]].self, from: data)
+        guard let entry = all[variant], let video = entry["video"]?.track, let audio = entry["audio"]?.track else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return FixtureMedia(video: video, audio: audio)
+    }
+
+    /// meta.json mixes track objects with a plain "duration" number.
+    struct AnyDecodableTrack: Decodable {
+        let track: Track?
+        init(from decoder: Decoder) throws {
+            track = try? Track(from: decoder)
+        }
+    }
+}
+
+final class FixtureProvider: PlayURLProvider, @unchecked Sendable {
+    let info: PlayURLInfo
+    private let count = Locked(0)
+
+    init(info: PlayURLInfo) {
+        self.info = info
+    }
+
+    var calls: Int { count.current }
+
+    func playURL(quality: Int) async throws -> PlayURLInfo {
+        count.withLock { $0 += 1 }
+        return info
+    }
+}
+
+enum FixturePlayback {
+    /// A PlaybackEnvironment whose "Bilibili" is the fixture media on the fake CDN nodes at `ports`.
+    /// With `refusedPrimary` the primary address is one every node refuses, and the backups (one per
+    /// node) are the only working addresses.
+    static func make(media: FixtureMedia, codecid: Int, ports: [UInt16], server: LocalServer, router: PlaybackRouter,
+                     loader: DirectPlaylistLoader, refusedPrimary: Bool = false) -> PlaybackEnvironment {
+        func address(_ port: UInt16, _ path: String) -> String {
+            "http://127.0.0.1:\(port)/\(path)?deadline=4102444800"
+        }
+        func stream(_ track: FixtureMedia.Track, id: Int, codecid: Int) -> DashStream {
+            let primary = address(ports[0], refusedPrimary ? "refused/\(track.file)" : track.file)
+            let backups = (refusedPrimary ? ports : Array(ports.dropFirst())).map { address($0, track.file) }
+            return DashStream(id: id, baseURL: primary, backupURLs: backups,
+                              bandwidth: track.bandwidth, mimeType: "video/mp4", codecs: track.codecs, codecid: codecid,
+                              width: track.width, height: track.height, frameRate: "30",
+                              initialization: ByteRange.parse(track.initialization)!, indexRange: ByteRange.parse(track.indexRange)!)
+        }
+        let dash = Dash(duration: 40, video: [stream(media.video, id: 64, codecid: codecid)], audio: [stream(media.audio, id: 30280, codecid: 0)])
+        let info = PlayURLInfo(quality: 64, acceptQuality: [64], acceptDescription: ["测试 720P"], dash: dash, hasDurl: false)
+        var config = RipperConfig()
+        config.fixedConcurrency = 8
+        return PlaybackEnvironment(provider: FixtureProvider(info: info), router: router, server: server, directLoader: loader,
+                                   transport: URLSessionRangeTransport(headers: [FakeCDNServer.clientHeader: "engine"]),
+                                   auto: AutoConcurrency(), nodeMode: .custom(ports.map { NodeAddress(host: "127.0.0.1", port: Int($0)) }),
+                                   policy: loopbackPolicy(ports: ports), ripperConfig: config,
+                                   codecMemory: CodecMemory(defaults: UserDefaults(suiteName: "fixture-\(UUID().uuidString)")!),
+                                   mediaHeaders: [:])
+    }
+
+    /// Stands in for the production policy, which only lets signed addresses go to Bilibili's https media hosts.
+    static func loopbackPolicy(ports: [UInt16]) -> MediaURLPolicy {
+        let allowed = Set(ports.map(Int.init))
+        return MediaURLPolicy { url in
+            url.scheme == "http" && url.host == "127.0.0.1" && url.port.map(allowed.contains) == true
         }
     }
 }
