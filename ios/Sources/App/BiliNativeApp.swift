@@ -4,6 +4,7 @@ import DevLog
 
 @main
 struct BiliNativeApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var env = AppEnvironment()
 
     init() {
