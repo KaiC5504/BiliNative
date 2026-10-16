@@ -74,7 +74,7 @@ these over any simulation.
   counted; a slow node keeping its "hot" speed because its pieces were always finished by faster copies
   first (survivor bias; fixed by sampling cancelled transfers, which this port does).
 
-## Hurry mode (deferred)
+## Hurry mode
 
 KaiC's own BTR scheduler work (BTR PR 11, not merged upstream) added rules that helped startup and seeks in
 the browser: pick the node by expected finish time; when little is buffered, spread pieces (unknown nodes
@@ -82,8 +82,14 @@ cost twice the best per piece, no node takes more than half when three or more a
 hedge budget; a node whose request lost a race before sending anything gets a higher first-byte estimate; a
 crawling node's speed is lowered; piece size `clamp(fastest bps x 0.15 s, 64 KiB, 512 KiB)`. The JS lives in
 `D:\Repos\Apps\Bilibili-thread-ripper` on branch `perf/piece-scheduler` (commit `a7e5f38`) and, rebased on
-BTR 0.9.1.5, on `local/0.9.1.5-with-scheduler` (`24631bc`). Port it only if the milestone 1 phone logs show
-startup or seeks are slow.
+BTR 0.9.1.5, on `local/0.9.1.5-with-scheduler` (`24631bc`).
+
+Built on 2026-10-16, after the milestone 1 phone logs showed a cold 4K start of 8.7 s and stalls right after
+a jump. It lives in `Sources/Ripper/NodeStats.swift` (per-node first byte, speed and load),
+`HurryPlacement.swift` (which node gets which piece), `PieceDownloader.swift` (the hedge budgets and the
+third copy) and `RangeDownloader.swift` (piece size and when a range counts as in a hurry). The rules are
+listed under "Deviations from BTR". `RipperConfig.hurry` switches all of it off, which is how `ripper-bench
+--seeks N --no-hurry` gets its baseline. Whether it helps on the phone is not yet measured.
 
 ## Deviations from BTR
 
@@ -103,6 +109,37 @@ startup or seeks are slow.
   no strike and no backoff for up to two damaged blocks per node and file; damage in a third block is struck as
   before and not recorded. A network change forgets all damage. In BTR the empty replies inside Akamai's gap
   struck the node and banned it after two (2026-10-16, q80 runs).
+- Hurry mode, the BTR PR 11 rules as ported (2026-10-16). A range is in a hurry when it is a startup or seek
+  range, or its segment starts less than `hurryAheadSeconds` (10) of playback ahead of the playhead. The check
+  is re-read each time it is asked, so a prefetch the playhead catches up with turns into a hurry. In a hurry:
+  - Pieces are small: the 64 KiB floor, not the adaptive size, so a range splits over every connection. The
+    64 KiB probe head runs only when no node is known yet.
+  - Each piece's first node is picked by expected finish time (`NodeStats.expectedMs`: first byte plus piece
+    size over the node's speed shared with what it already carries). A node not measured yet costs twice the
+    best known node, times its pieces in flight plus one. With three or more hosts a node that carries at least
+    two pieces and more than half of all in flight gets a large penalty, so no node takes more than half. A
+    single host (an Akamai-only account) takes every piece. A full node goes last, and an address that has not
+    delivered yet loses ties.
+  - Hedge budgets: with no first byte yet, a second copy starts after `clamp(first byte x 2, 250, 600)` ms
+    (250 ms if the node's first byte is unknown). If bytes stop arriving, a copy starts after a 1 s gap. A slow
+    transfer gets a copy once `elapsed >= max(400, expected x 2)` ms while under 75% of the piece has arrived.
+    Outside a hurry the usual 900 ms hedge delay applies.
+  - At most three copies of a piece, and copy k starts only when copy k-1 is late. A range that is not in a
+    hurry never starts a third copy.
+  - `NodeStats` blends new samples 0.7 old, 0.3 new. Bodies under 32 KiB say nothing about speed. A request
+    that was cancelled after losing a race before any byte raises the node's first-byte estimate. A cancelled
+    transfer counts as a crawl only after 300 ms and only if it was slower than the node's current speed. A
+    node is assumed to carry at least 4 connections at full speed. A network change clears it.
+- Busy-node rule: a request that gets no first byte in time from a node that is sending other pieces is no
+  strike and no `slow()` signal. It waited behind those transfers (URLSession's 8-per-host limit for Akamai's
+  HTTP/1.1, or the node's own queue). It still counts as a failed request, and the `attempt failed` log line
+  carries `busy: true`. The node's connection limit drops to what it was receiving, so new pieces stop piling
+  onto it and the range finishes from other nodes. Before this rule, one cold jump gave Akamai and cosov two
+  first-byte timeouts each while both were busy, and both were banned for the rest of the video (BV1bmpt6WEom
+  at 1:49:47, 2026-10-16).
+- A prefetch the player adopted survives the player's cancel. Before this, the player's request was the
+  prefetch's only owner, so when AVPlayer gave up after 5 s of silence and cancelled, the 7 finished pieces
+  were thrown away and fetched again (BV1jt421t7XH, 2026-10-16). `close()` and a seek (`dropPrefetch`) still cancel it.
 
 ## Known environment limits
 

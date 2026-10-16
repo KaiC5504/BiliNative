@@ -8,6 +8,8 @@ import Ripper
 /// Downloads the start of a real video twice, over one connection and through Ripper, and prints both.
 /// Usage: ripper-bench --bv BV1xxxxxxxxx [--cookies path] [--mb 16] [--mode overseas|mainland] [--quality 80] [--codec hevc|av1|avc]
 ///        ripper-bench --playurl saved-playurl.json [same options]
+/// With --seeks N it times N cold 4 MiB reads at seeded random offsets instead of the throughput comparison;
+/// --no-hurry turns hurry mode off for that run (and for the Ripper half of the comparison).
 @main
 struct Bench {
     struct Options {
@@ -18,10 +20,12 @@ struct Bench {
         var mode = NodeMode.overseas
         var quality = 80
         var codec = VideoCodec.hevc
+        var seeks = 0
+        var hurry = true
     }
 
     struct UsageError: Error, CustomStringConvertible {
-        var description: String { "usage: ripper-bench (--bv BV… | --playurl file.json) [--cookies file] [--mb 16] [--mode overseas|mainland] [--quality 80] [--codec hevc|av1|avc]" }
+        var description: String { "usage: ripper-bench (--bv BV… | --playurl file.json) [--cookies file] [--mb 16] [--mode overseas|mainland] [--quality 80] [--codec hevc|av1|avc] [--seeks N] [--no-hurry]" }
     }
 
     static func main() async {
@@ -38,6 +42,10 @@ struct Bench {
         var options = Options()
         var iterator = arguments.makeIterator()
         while let flag = iterator.next() {
+            if flag == "--no-hurry" {
+                options.hurry = false
+                continue
+            }
             guard let value = iterator.next() else { throw UsageError() }
             switch flag {
             case "--bv": options.bvid = value
@@ -47,6 +55,9 @@ struct Bench {
             case "--mode": options.mode = value == "mainland" ? .mainland : .overseas
             case "--quality": options.quality = Int(value) ?? 80
             case "--codec": options.codec = VideoCodec(rawValue: value) ?? .hevc
+            case "--seeks":
+                guard let count = Int(value), count > 0 else { throw UsageError() }
+                options.seeks = count
             default: throw UsageError()
             }
         }
@@ -95,6 +106,102 @@ struct Bench {
         return nil
     }
 
+    static func makeSession(_ options: Options, video: DashStream) -> RipperSession {
+        var config = RipperConfig()
+        config.hurry = options.hurry
+        return RipperSession(sources: [.video: (video.baseURL, video.backupURLs)], mode: options.mode, config: config,
+                             transport: URLSessionRangeTransport(headers: BiliClient.mediaHeaders), auto: AutoConcurrency())
+    }
+
+    struct SeededGenerator: RandomNumberGenerator {
+        var state: UInt64
+
+        mutating func next() -> UInt64 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+    }
+
+    static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        return sorted.count % 2 == 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+    }
+
+    /// Reads 4 MiB at seeded random offsets, each through a new session so every read starts cold, the way a
+    /// seek into unloaded video does. The offset snaps back to its segment start because the player asks for
+    /// segments; the playhead is put there too, so the read is due immediately.
+    static func coldSeeks(_ options: Options, video: DashStream) async throws {
+        let probe = makeSession(options, video: video)
+        let headers: TrackHeaders
+        do {
+            headers = try await probe.loadHeaders(.video, through: video.indexRange.end)
+        } catch {
+            probe.close()
+            throw error
+        }
+        probe.close()
+        guard let segments = SidxParser.parse(headers.bytes, absoluteStart: 0), !segments.isEmpty else { throw BiliError.decoding("no sidx") }
+        let total = headers.totalSize
+        let wanted: Int64 = 4 << 20
+        let low = total / 20
+        let high = total - (2 << 20)
+        guard high > low else { throw BiliError.decoding("video too small for cold seeks") }
+
+        func mib(_ bytes: Int64) -> String { String(format: "%.1f", Double(bytes) / 1_048_576) }
+        print("cold seeks: \(options.seeks) x \(mib(wanted)) MiB, seed 17, hurry \(options.hurry ? "on" : "off"), "
+              + "offsets \(mib(low))-\(mib(high)) MiB of \(mib(total))")
+
+        var generator = SeededGenerator(state: 17)
+        var firstMiB: [Double] = []
+        var whole: [Double] = []
+        for number in 1...options.seeks {
+            let offset = Int64.random(in: low...high, using: &generator)
+            let segment = segments.last { $0.range.start <= offset } ?? segments[0]
+            let start = segment.range.start
+            let range = ByteRange(start: start, end: min(start + wanted, total) - 1)!
+            let label = "seek \(number)/\(options.seeks) at \(mib(start)) MiB"
+            let session = makeSession(options, video: video)
+            do {
+                _ = try await session.loadHeaders(.video, through: video.indexRange.end)
+                session.setSegments(.video, segments)
+                session.updatePlayhead(seconds: segment.startTime, rate: 1)
+                let began = Date()
+                var bytes: Int64 = 0
+                var toFirstMiB: Double?
+                for try await chunk in session.read(.video, range) {
+                    bytes += Int64(chunk.count)
+                    if toFirstMiB == nil && bytes >= 1 << 20 { toFirstMiB = Date().timeIntervalSince(began) }
+                }
+                let elapsed = Date().timeIntervalSince(began)
+                let stats = session.stats()
+                session.close()
+                guard bytes == range.length, let toFirstMiB else {
+                    print("\(label): short read, \(bytes) of \(range.length) bytes after \(String(format: "%.2f", elapsed)) s")
+                    continue
+                }
+                firstMiB.append(toFirstMiB)
+                whole.append(elapsed)
+                print("\(label): first MiB \(String(format: "%.2f", toFirstMiB)) s, \(mib(bytes)) MiB \(String(format: "%.2f", elapsed)) s "
+                      + "(connections \(stats.concurrency), requests \(stats.requests), failures \(stats.failures), "
+                      + "duplicate \(String(format: "%.1f", stats.duplicateShare * 100))%)")
+            } catch {
+                session.close()
+                print("\(label): failed: \(Redactor.text(String(describing: error)))")
+            }
+        }
+        guard let firstMedian = median(firstMiB), let wholeMedian = median(whole) else {
+            print("no seek finished")
+            return
+        }
+        print("median first MiB: \(String(format: "%.2f", firstMedian)) s over \(firstMiB.count) of \(options.seeks) seeks")
+        print("median \(mib(wanted)) MiB: \(String(format: "%.2f", wholeMedian)) s over \(whole.count) of \(options.seeks) seeks")
+    }
+
     static func run(_ options: Options) async throws {
         let info = try await loadPlayURL(options)
         guard let dash = info.dash,
@@ -103,6 +210,10 @@ struct Bench {
         }
         let video = choice.video
         print("video \(video.id) \(video.codecs) \(video.width)x\(video.height) \(video.bandwidth / 1000) kbps on \(NodeCatalog.nodeKey(of: video.baseURL))")
+        if options.seeks > 0 {
+            try await coldSeeks(options, video: video)
+            return
+        }
         let target = Int64(options.megabytes) << 20
 
         let singleRange = ByteRange(start: video.indexRange.end + 1, end: video.indexRange.end + target)!
@@ -129,8 +240,7 @@ struct Bench {
             singleSeconds = Date().timeIntervalSince(singleStart)
         }
 
-        let session = RipperSession(sources: [.video: (video.baseURL, video.backupURLs)], mode: options.mode,
-                                    transport: URLSessionRangeTransport(headers: BiliClient.mediaHeaders), auto: AutoConcurrency())
+        let session = makeSession(options, video: video)
         let rippedStart = Date()
         let headers = try await session.loadHeaders(.video, through: video.indexRange.end)
         guard let segments = SidxParser.parse(headers.bytes, absoluteStart: 0) else { throw BiliError.decoding("no sidx") }
