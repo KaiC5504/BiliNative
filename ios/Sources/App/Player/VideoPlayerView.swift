@@ -29,7 +29,8 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         host.view.backgroundColor = .clear
         host.view.isUserInteractionEnabled = false
         host.view.translatesAutoresizingMaskIntoConstraints = false
-        controller.addChild(host)
+        // Not a child of the controller: AVKit moves the content overlay into its own full-screen controller,
+        // and UIKit throws when a child controller's view ends up under another controller.
         contentOverlay.addSubview(host.view)
         NSLayoutConstraint.activate([
             host.view.leadingAnchor.constraint(equalTo: contentOverlay.leadingAnchor),
@@ -37,7 +38,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             host.view.topAnchor.constraint(equalTo: contentOverlay.topAnchor),
             host.view.bottomAnchor.constraint(equalTo: contentOverlay.bottomAnchor),
         ])
-        host.didMove(toParent: controller)
         return (controller, host)
     }
 
