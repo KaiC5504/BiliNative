@@ -13,11 +13,10 @@ Working name; the display name and icon are picked in plan Task 2.
 
 ## Status
 
-- 2026-10-16: spec approved, plan written and committed. No code yet; the GitHub repo is created in Task 1.
+- 2026-10-16: spec approved, plan written and committed.
 - 2026-10-16: Task 1 done: `BiliShared` module in `ios/Packages/BiliCore`, "Core tests" CI workflow, public repo
   `KaiC5504/BiliNative`.
-- Next: KaiC picks the execution method (subagent-driven was recommended: the engine tasks depend tightly on
-  each other, so a review after every task is worth it), then start at Task 1.
+- Next: the plan is running subagent-driven (KaiC chose it on 2026-10-16), task by task from Task 2.
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.
@@ -66,3 +65,4 @@ AVPlayer made to the in-app server, and AVPlayer's own access and error logs.
   Always read it at the tag the port follows, not the working branch:
   `git -C D:\Repos\Apps\Bilibili-thread-ripper show 2026.10.8.1:src/idm-downloader.js`
   (or https://github.com/MrTangLuyao/Bilibili-thread-ripper/tree/2026.10.8.1/src).
+- `swift test` on Windows prints a `wchar_t ... broken by a context change` warning from the WinSDK module a few times per run. It comes from the toolchain, not this repo; ignore it.
