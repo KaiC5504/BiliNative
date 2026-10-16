@@ -29,9 +29,12 @@ struct HistoryView: View {
     }
 
     var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.card)
+        // A real view under the content: until the task makes the model, `content` is empty, and an empty view
+        // would never appear, so its task would never run.
+        ZStack {
+            Theme.card.ignoresSafeArea()
+            content
+        }
             .navigationTitle("历史记录")
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showLogin) { LoginView() }

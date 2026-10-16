@@ -61,15 +61,16 @@ struct FeedCardView: View {
             Image(systemName: "play.rectangle")
                 .font(.system(size: FeedMetrics.statIconSize))
             Text(CountFormat.short(card.views))
+                .fixedSize()
             Image(systemName: "list.bullet.rectangle")
                 .font(.system(size: FeedMetrics.statIconSize))
                 .padding(.leading, 10)
             Text(CountFormat.short(card.danmaku))
+                .fixedSize()
             Spacer(minLength: 4)
-            // On a narrow phone the counts give way; the duration is never cut.
+            // Short strings that all fit a 390 pt phone's card; truncating any of them reads worse than a tight row.
             Text(Self.duration(card.duration))
                 .fixedSize()
-                .layoutPriority(1)
         }
         .font(.system(size: FeedMetrics.statSize))
         .monospacedDigit()
