@@ -82,6 +82,20 @@ final class VideoAPITests: XCTestCase {
         XCTAssertEqual(detail.season?.sections.map(\.episodes.count), [2, 0])
     }
 
+    func testWrongTypeInDecorativeBlocksDoesNotFailTheDetail() throws {
+        let broken = Fixtures.viewDetail
+            .replacingOccurrences(of: #""staff":[]"#, with: #""staff":"none""#)
+            .replacingOccurrences(of: #""desc_v2":[{"raw_text":"视频简介 ","type":1,"biz_id":0},{"raw_text":"测试用户","type":2,"biz_id":42}]"#, with: #""desc_v2":"oops""#)
+            .replacingOccurrences(of: #""honor_reply":{"honor":[{"aid":80433022,"type":4,"desc":"活动","weekly_recommend_num":0}]}"#, with: #""honor_reply":{"honor":"none"}"#)
+        XCTAssertTrue(broken.contains(#""staff":"none""#) && broken.contains(#""desc_v2":"oops""#) && broken.contains(#""honor":"none""#))
+        let detail = try decode(VideoDetail.self, broken)
+        XCTAssertEqual(detail.staff, [])
+        XCTAssertEqual(detail.descParts, [DescPart(text: "视频简介 @测试用户")])
+        XCTAssertNil(detail.honor)
+        XCTAssertEqual(detail.title, "测试视频")
+        XCTAssertEqual(detail.pages.count, 2)
+    }
+
     func testDescriptionWithoutPartsFallsBackToThePlainText() throws {
         let plain = Fixtures.viewDetail.replacingOccurrences(of: #""desc_v2":[{"raw_text":"视频简介 ","type":1,"biz_id":0},{"raw_text":"测试用户","type":2,"biz_id":42}],"#, with: #""desc_v2":null,"#)
         let detail = try decode(VideoDetail.self, plain)
@@ -116,6 +130,23 @@ final class VideoAPITests: XCTestCase {
         fakeHTTP.routes[relatedPath] = (200, Fixtures.related.replacingOccurrences(of: #""bvid":"BV1EF411e9oF""#, with: #""bvid":"""#))
         let cards = try await client.related(bvid: "BV1GJ411x7h7")
         XCTAssertEqual(cards, [])
+    }
+
+    func testRelatedWithNullDataIsEmpty() async throws {
+        fakeHTTP.routes[relatedPath] = (200, #"{"code":0,"message":"0","data":null}"#)
+        let cards = try await client.related(bvid: "BV1GJ411x7h7")
+        XCTAssertEqual(cards, [])
+    }
+
+    func testRelatedStillThrowsOnAnApiError() async throws {
+        fakeHTTP.routes[relatedPath] = (200, #"{"code":-404,"message":"啥都木有","data":null}"#)
+        do {
+            _ = try await client.related(bvid: "BV1GJ411x7h7")
+            XCTFail("expected an api error")
+        } catch {
+            guard case .api(let code, _) = error as? BiliError else { return XCTFail("wrong error \(error)") }
+            XCTAssertEqual(code, -404)
+        }
     }
 
     func testOnlineCountIsTheDisplayString() async throws {
