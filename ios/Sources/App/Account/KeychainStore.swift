@@ -1,8 +1,17 @@
 import Foundation
 import Security
+import DevLog
 
 /// The bilibili.com cookies, as one JSON blob in a generic-password item.
 enum KeychainStore {
+    enum LoadResult {
+        case cookies([String: String])
+        case notFound
+        /// The Keychain refused, e.g. errSecInteractionNotAllowed before the first unlock. The stored
+        /// cookies may still be there, so callers must not overwrite them.
+        case failed(OSStatus)
+    }
+
     private static let service = "com.kaichuan.bilinative.cookies"
     private static let account = "bilibili"
 
@@ -12,15 +21,28 @@ enum KeychainStore {
          kSecAttrAccount as String: account]
     }
 
-    static func loadCookies() -> [String: String] {
+    static func load() -> LoadResult {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let cookies = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
-        return cookies
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return .notFound }
+        guard status == errSecSuccess else {
+            Logger.shared.warn(.app, "keychain load failed", ["status": .init(Int(status))])
+            return .failed(status)
+        }
+        guard let data = result as? Data,
+              let cookies = try? JSONDecoder().decode([String: String].self, from: data) else {
+            Logger.shared.warn(.app, "keychain item unreadable", ["status": .init(Int(errSecDecode))])
+            return .failed(errSecDecode)
+        }
+        return .cookies(cookies)
+    }
+
+    static func loadCookies() -> [String: String] {
+        if case .cookies(let cookies) = load() { return cookies }
+        return [:]
     }
 
     @discardableResult
@@ -31,11 +53,14 @@ enum KeychainStore {
         }
         guard let data = try? JSONEncoder().encode(cookies) else { return false }
         let attributes: [String: Any] = [kSecValueData as String: data,
-                                         kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock]
-        let status = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+                                         kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        var status = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
             let item = baseQuery.merging(attributes) { $1 }
-            return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
+        if status != errSecSuccess {
+            Logger.shared.warn(.app, "keychain save failed", ["status": .init(Int(status))])
         }
         return status == errSecSuccess
     }

@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import BiliAPI
 import DevLog
 
 /// Bilibili's own login page (password, SMS or QR; it handles its own captcha). The app never sees
@@ -40,13 +41,17 @@ struct LoginWebView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
-        configuration.websiteDataStore.httpCookieStore.add(context.coordinator)
-        context.coordinator.store = configuration.websiteDataStore.httpCookieStore
-        webView.load(URLRequest(url: URL(string: "https://passport.bilibili.com/login")!))
+        let store = configuration.websiteDataStore.httpCookieStore
+        context.coordinator.store = store
+        context.coordinator.start(webView, in: store)
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
+
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.websiteDataStore.httpCookieStore.remove(coordinator)
+    }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKHTTPCookieStoreObserver {
         let onLogin: ([String: String]) -> Void
@@ -55,6 +60,27 @@ struct LoginWebView: UIViewRepresentable {
 
         init(onLogin: @escaping ([String: String]) -> Void) {
             self.onLogin = onLogin
+        }
+
+        /// A SESSDATA left over from an expired login would otherwise count as a fresh login at once,
+        /// so the page only loads after the old bilibili.com cookies are gone.
+        func start(_ webView: WKWebView, in cookieStore: WKHTTPCookieStore) {
+            cookieStore.getAllCookies { [weak webView, weak cookieStore] cookies in
+                let stale = cookies.filter { BiliHosts.isBilibili($0.domain) }
+                var remaining = stale.count
+                let begin = {
+                    guard let webView, let cookieStore else { return }
+                    cookieStore.add(self)
+                    webView.load(URLRequest(url: URL(string: "https://passport.bilibili.com/login")!))
+                }
+                guard remaining > 0 else { return begin() }
+                for cookie in stale {
+                    cookieStore?.delete(cookie) {
+                        remaining -= 1
+                        if remaining == 0 { begin() }
+                    }
+                }
+            }
         }
 
         func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
@@ -69,17 +95,11 @@ struct LoginWebView: UIViewRepresentable {
         private func check(_ cookieStore: WKHTTPCookieStore) {
             cookieStore.getAllCookies { [weak self] cookies in
                 guard let self, !self.finished else { return }
-                let bilibili = cookies.filter { Self.isBilibili($0.domain) }
+                let bilibili = cookies.filter { BiliHosts.isBilibili($0.domain) }
                 guard bilibili.contains(where: { $0.name == "SESSDATA" && !$0.value.isEmpty }) else { return }
                 self.finished = true
                 self.onLogin(Dictionary(bilibili.map { ($0.name, $0.value) }, uniquingKeysWith: { first, _ in first }))
             }
-        }
-
-        /// A plain suffix test would also accept hosts like "evilbilibili.com".
-        private static func isBilibili(_ domain: String) -> Bool {
-            let host = domain.hasPrefix(".") ? String(domain.dropFirst()) : domain
-            return host == "bilibili.com" || host.hasSuffix(".bilibili.com")
         }
     }
 }

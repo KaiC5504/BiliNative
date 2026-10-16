@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppEnvironment.self) private var env
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showLogin = false
 
     var body: some View {
@@ -13,6 +14,11 @@ struct RootView: View {
             .navigationTitle(AppInfo.displayName)
             .sheet(isPresented: $showLogin) { LoginView() }
             .task { await env.refreshAccount() }
+            .onChange(of: scenePhase) {
+                if scenePhase == .active, env.account == .unknown {
+                    Task { await env.refreshAccount() }
+                }
+            }
         }
     }
 }
@@ -24,7 +30,12 @@ struct AccountRow: View {
     var body: some View {
         switch env.account {
         case .unknown:
-            ProgressView()
+            if env.accountCheckFailed {
+                Button("无法获取账号信息，点按重试") { Task { await env.refreshAccount() } }
+                    .foregroundStyle(.orange)
+            } else {
+                ProgressView()
+            }
         case .loggedOut:
             Button("登录哔哩哔哩") { showLogin = true }
         case .expired:

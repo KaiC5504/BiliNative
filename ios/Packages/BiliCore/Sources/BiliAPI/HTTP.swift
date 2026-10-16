@@ -48,8 +48,7 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
 
     /// The Cookie header is set by hand, so URLSession would forward it to whatever host a redirect points at.
     static func redirectedRequest(_ request: URLRequest) -> URLRequest {
-        let host = request.url?.host?.lowercased() ?? ""
-        guard host != "bilibili.com", !host.hasSuffix(".bilibili.com") else { return request }
+        guard !BiliHosts.isBilibili(request.url?.host ?? "") else { return request }
         var stripped = request
         stripped.setValue(nil, forHTTPHeaderField: "Cookie")
         return stripped
