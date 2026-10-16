@@ -37,8 +37,7 @@ final class PlayerHostView: UIView, AVPictureInPictureControllerDelegate {
     /// The small window's restore button was tapped while this view is off screen. True means a page that
     /// shows this view is on its way; the restore then completes once the view is back in a window.
     var onRestore: (() -> Bool)?
-    private var pendingRestore: ((Bool) -> Void)?
-    private var restores = 0
+    private var pendingRestore: RestoreWaiter?
     private var itemObservation: NSKeyValueObservation?
 
     var playerLayer: AVPlayerLayer { videoView.playerLayer }
@@ -142,21 +141,18 @@ final class PlayerHostView: UIView, AVPictureInPictureControllerDelegate {
             completion(false)
             return
         }
-        pendingRestore = completion
-        restores += 1
-        let restore = restores
-        Task { [weak self] in
+        let waiter = RestoreWaiter(completion)
+        pendingRestore = waiter
+        // Holds the waiter, not the view: the handler is called even if the page and this view are released.
+        Task {
             try? await Task.sleep(for: .seconds(3))
-            guard let self, self.restores == restore else { return }
-            self.finishRestore(false)
+            waiter.finish(false)
         }
     }
 
     private func finishRestore(_ restored: Bool) {
-        guard let pending = pendingRestore else { return }
+        pendingRestore?.finish(restored)
         pendingRestore = nil
-        Logger.shared.info(.player, "picture in picture restore", ["restored": .init(restored)])
-        pending(restored)
     }
 
     static func gravity(for fit: FitMode) -> AVLayerVideoGravity {
@@ -215,6 +211,23 @@ final class PlayerHostView: UIView, AVPictureInPictureControllerDelegate {
                                                 restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
         let completion = RestoreCompletion(call: completionHandler)
         Task { @MainActor in self.restoreForPiPStop(completion.call) }
+    }
+}
+
+/// Calls AVKit's restore handler exactly once, from whichever of the window or the timeout comes first.
+@MainActor
+private final class RestoreWaiter {
+    private var completion: ((Bool) -> Void)?
+
+    init(_ completion: @escaping (Bool) -> Void) {
+        self.completion = completion
+    }
+
+    func finish(_ restored: Bool) {
+        guard let completion else { return }
+        self.completion = nil
+        Logger.shared.info(.player, "picture in picture restore", ["restored": .init(restored)])
+        completion(restored)
     }
 }
 

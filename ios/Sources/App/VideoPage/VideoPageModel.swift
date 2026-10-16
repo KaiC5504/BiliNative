@@ -71,6 +71,8 @@ final class VideoPageModel {
     /// The page left the navigation stack and its playback was released.
     @ObservationIgnored private(set) var closed = false
     @ObservationIgnored private var resumeOnShow = false
+    /// A start meant to play is still loading.
+    @ObservationIgnored private var startingToPlay = false
     /// A part chosen while covered, started when the page shows again.
     @ObservationIgnored private var pendingStart: PendingStart?
     @ObservationIgnored private var keptPosition = 0.0
@@ -268,10 +270,13 @@ final class VideoPageModel {
         let seconds: Double?
     }
 
-    private func start(_ next: PlaybackControlling, item: PlayItem, at seconds: Double?) async {
-        keeper.willPlay(self)
+    /// Without `playing` the part loads paused (another page's video is in the small window).
+    private func start(_ next: PlaybackControlling, item: PlayItem, at seconds: Double?, playing: Bool = true) async {
+        if playing { keeper.willPlay(self) }
+        startingToPlay = playing
+        defer { if controller === next { startingToPlay = false } }
         if let seconds {
-            await next.start(at: seconds, autoplay: true)
+            await next.start(at: seconds, autoplay: playing)
         } else {
             await next.start(at: 0, autoplay: false)
             guard controller === next else { return }
@@ -281,7 +286,11 @@ final class VideoPageModel {
             } ?? 0
             if resumeAt > 0 { await next.seek(to: resumeAt) }
             guard controller === next else { return }
-            if covered { resumeOnShow = true } else { next.play() }
+            if covered {
+                resumeOnShow = playing
+            } else if playing {
+                next.play()
+            }
         }
         guard controller === next else { return }
         sendHeartbeat(item, schedule.mark(position: next.position))
@@ -375,7 +384,7 @@ final class VideoPageModel {
         guard let controller, let current else { return }
         if let pending = pendingStart {
             pendingStart = nil
-            Task { await start(controller, item: current, at: pending.seconds) }
+            Task { await start(controller, item: current, at: pending.seconds, playing: resuming) }
         } else if resumeOnShow {
             resumeOnShow = false
             if resuming { play() }
@@ -393,8 +402,11 @@ final class VideoPageModel {
         // One video at a time: the small window does not go on behind the new page.
         stopPiP()
         guard let controller else { return }
-        resumeOnShow = controller.isPlaying
+        // A part still loading reports not playing, though it is about to.
+        resumeOnShow = controller.isPlaying || startingToPlay
         pause()
+        // The prefetch cache serves a moving playhead; a paused page fetches again when it plays.
+        controller.dropPrefetch()
     }
 
     /// The page left the navigation stack: playback stops and is released, and nothing it started goes on.
@@ -492,7 +504,7 @@ final class VideoPageModel {
     func pipChanged(_ active: Bool) {
         guard active != pipActive else { return }
         pipActive = active
-        if !active { keeper.pipStopped(self) }
+        if active { keeper.pipStarted(self) } else { keeper.pipStopped(self) }
     }
 
     // MARK: heartbeats
