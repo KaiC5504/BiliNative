@@ -2,7 +2,7 @@
 
 KaiC's screenshots of the official Bilibili iOS app (iPhone 17 Pro Max, 2026-10-16). They are the visual target
 for milestone 2 and later. The images are Bilibili's and stay out of this public repo. They live in
-`local/Sample Images/` (gitignored); read them with the Read tool before building a screen. Copy layout, spacing,
+`local/official-app-reference/` (gitignored); read them with the Read tool before building a screen. Copy layout, spacing,
 order and colours; never the Bilibili logo or wordmark (project rule).
 
 Shared look:
