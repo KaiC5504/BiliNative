@@ -20,6 +20,10 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
+    env:
+      # main and m2 get everything. Task branches skip what the PC already checks (the BiliCore tests) and the
+      # Release build, which main checks before every TestFlight build.
+      FULL_RUN: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/m2' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -29,7 +33,26 @@ jobs:
           if [ -n "$NEWEST" ]; then sudo xcode-select -s "$NEWEST"; fi
           xcodebuild -version
 
+      # Booting takes over a minute, so it runs while everything up to the tests happens.
+      - name: Start a simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          best = None
+          for runtime, items in json.load(sys.stdin)['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for device in items:
+                  if 'iPhone' in device['name'] and device['isAvailable']:
+                      best = device['udid']
+          print(best)
+          ")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID"
+
       - name: Core package tests
+        if: env.FULL_RUN == 'true'
         run: swift test --package-path ios/Packages/BiliCore
 
       - name: Install XcodeGen
@@ -51,23 +74,29 @@ jobs:
           echo "$debug" | grep -qw DEV_TOOLS
           echo "$release" | grep -qw DEV_TOOLS
 
-      - name: Boot a simulator
-        id: sim
+      # Xcode's compilation cache is keyed by content, not file times, so a fresh checkout can reuse it.
+      - name: Restore the compilation cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/xcode-cas
+          key: xcode-cas-${{ runner.os }}-${{ github.sha }}
+          restore-keys: xcode-cas-${{ runner.os }}-
+
+      - name: Build for the simulator
         run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c "
-          import json, sys
-          best = None
-          for runtime, items in json.load(sys.stdin)['devices'].items():
-              if 'iOS' not in runtime:
-                  continue
-              for device in items:
-                  if 'iPhone' in device['name'] and device['isAvailable']:
-                      best = device['udid']
-          print(best)
-          ")
-          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-          xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID" -b
+          set -o pipefail
+          xcodebuild \
+            -project ios/BiliNative.xcodeproj \
+            -scheme BiliNative \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -configuration Debug \
+            -derivedDataPath build \
+            COMPILATION_CACHE_ENABLE_CACHING=YES \
+            COMPILATION_CACHE_CAS_PATH="$RUNNER_TEMP/xcode-cas" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            build-for-testing
 
       - name: Restore test media
         id: media
@@ -84,22 +113,36 @@ jobs:
           command -v ffmpeg >/dev/null || brew install ffmpeg
           python3 ios/scripts/make_test_media.py "$RUNNER_TEMP/media"
 
-      - name: Build and test on the simulator
+      - name: Test on the simulator
         env:
           # xcodebuild hands TEST_RUNNER_-prefixed variables to the tests without the prefix.
           TEST_RUNNER_MEDIA_DIR: ${{ runner.temp }}/media
         run: |
           set -o pipefail
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
           xcodebuild \
             -project ios/BiliNative.xcodeproj \
             -scheme BiliNative \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -configuration Debug \
             -derivedDataPath build \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            test
+            test-without-building
+
+      # The screenshots mostly wait, so the Release build compiles alongside them.
+      - name: Start the Release build
+        if: env.FULL_RUN == 'true'
+        run: |
+          (
+            xcodebuild \
+              -project ios/BiliNative.xcodeproj \
+              -scheme BiliNative \
+              -destination "id=${{ steps.sim.outputs.udid }}" \
+              -configuration Release \
+              -derivedDataPath build-release \
+              CODE_SIGNING_ALLOWED=NO \
+              build > "$RUNNER_TEMP/release.log" 2>&1
+            echo $? > "$RUNNER_TEMP/release.exit"
+          ) &
 
       - name: Install, launch and screenshot
         env:
@@ -144,16 +187,16 @@ jobs:
           shoot block-words-portrait 12 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoPortrait YES -DemoBlockWords YES
 
       - name: Release build (no tests)
+        if: env.FULL_RUN == 'true'
         run: |
-          set -o pipefail
-          xcodebuild \
-            -project ios/BiliNative.xcodeproj \
-            -scheme BiliNative \
-            -destination "id=${{ steps.sim.outputs.udid }}" \
-            -configuration Release \
-            -derivedDataPath build-release \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          while [ ! -f "$RUNNER_TEMP/release.exit" ]; do sleep 5; done
+          status=$(cat "$RUNNER_TEMP/release.exit")
+          if [ "$status" != 0 ]; then
+            grep -E "error:|BUILD FAILED" "$RUNNER_TEMP/release.log" | head -60
+            tail -20 "$RUNNER_TEMP/release.log"
+            exit "$status"
+          fi
+          tail -3 "$RUNNER_TEMP/release.log"
 
       - name: Collect crash reports
         if: always()
