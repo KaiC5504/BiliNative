@@ -30,7 +30,7 @@ struct HomeView: View {
                 }
                 .background(Theme.card.ignoresSafeArea(edges: .top))
                 if let feed {
-                    FeedGrid(feed: feed, onOpen: { route = VideoRoute(bvid: $0.bvid) }, onWatchLater: watchLater)
+                    FeedGrid(feed: feed, onOpen: { openVideo(VideoRoute(bvid: $0.bvid)) }, onWatchLater: watchLater)
                 } else {
                     Theme.pageGrey
                 }
@@ -86,19 +86,19 @@ struct HomeView: View {
         case "settings": showSettings = true
         case "history": showHistory = true
         case "home-menu": menuOpen = true
-        case "page": route = VideoRoute(bvid: VideoPageFixtures.bvidA)
+        case "page": openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA))
         case "danmaku-send", "danmaku-style":
-            route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+            openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
         case "danmaku-portrait":
-            route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+            openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
         case "danmaku-landscape":
-            route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+            openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))
             Task {
                 try? await Task.sleep(for: .seconds(2))
                 OrientationController.shared.enterLandscape()
             }
         case let name:
-            if let demo = ChromeDemo.route(for: name) { route = demo }
+            if let demo = ChromeDemo.route(for: name) { openVideo(demo) }
         }
     }
     #endif
@@ -180,7 +180,12 @@ struct HomeView: View {
         partChoice = nil
         let next = PlayerRoute(bvid: view.bvid, cid: page.cid, title: view.title, part: page.part, page: page.page, pageCount: view.pages.count)
         env.recents.add(next)
-        route = next.videoRoute
+        openVideo(next.videoRoute)
+    }
+
+    /// Every video page home opens (feed cards, pasted links, demo screens) goes through here.
+    private func openVideo(_ next: VideoRoute) {
+        route = next
     }
 
     private static func userMessage(_ error: Error) -> String {
