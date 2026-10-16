@@ -8,12 +8,13 @@ extension Theme {
     enum Actions {
         static let icon = Theme.Page.tabText
         static let count = Theme.Page.tabText
-        static let iconSize: CGFloat = 24
-        static let iconFont = Font.system(size: 23)
+        static let iconSize: CGFloat = 22
+        static let iconFont = Font.system(size: 21)
         static let countFont = Font.system(size: 12)
-        static let ring: CGFloat = 40
+        static let countSpacing: CGFloat = 4
+        static let ring: CGFloat = 38
         static let ringWidth: CGFloat = 2.5
-        static let topPadding: CGFloat = 22
+        static let topPadding: CGFloat = 19
         static let bottomPadding: CGFloat = 2
     }
 }
@@ -90,7 +91,7 @@ private struct ActionCell: View {
     let count: Int64?
 
     var body: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: Theme.Actions.countSpacing) {
             Group {
                 if coin {
                     CoinGlyph(filled: true, tint: tint, ink: Theme.Page.background)
