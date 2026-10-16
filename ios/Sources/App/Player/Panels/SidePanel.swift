@@ -82,7 +82,7 @@ struct SidePanel<Content: View>: View {
                     case .side(let fraction):
                         side(width: geometry.size.width * fraction, insets: insets)
                     case .column:
-                        column(in: geometry.size)
+                        column(in: geometry.size, insets: insets)
                     }
                 } else {
                     sheet(height: geometry.size.height * portraitHeight, insets: insets)
@@ -128,18 +128,19 @@ struct SidePanel<Content: View>: View {
         .offset(x: shown ? 0 : width)
     }
 
-    private func column(in size: CGSize) -> some View {
-        ZStack {
+    /// The 倍速 column: a transparent strip at the right edge with the content centred in it, over a dimmed screen.
+    private func column(in size: CGSize, insets: UIEdgeInsets) -> some View {
+        ZStack(alignment: .trailing) {
             Color.black.opacity(shown ? 0.4 : 0)
                 .allowsHitTesting(false)
             content()
-                .frame(width: 96)
+                .padding(.trailing, insets.right + PanelMetrics.trailingMargin)
+                .frame(width: size.width * 0.28, height: size.height)
                 .contentShape(Rectangle())
                 .onTapGesture {}
                 .opacity(shown ? 1 : 0)
                 .background(PanelProbe(identifier: identifier))
                 .accessibilityIdentifier(identifier)
-                .position(x: size.width * 0.826, y: size.height / 2)
         }
     }
 
