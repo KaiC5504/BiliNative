@@ -61,7 +61,12 @@ these over any simulation.
 - **Akamai-only accounts.** Some accounts get only akamaized.net addresses; the primary `os=cosovbv` address
   was refused (HTTP 403) on every node while the `os=akam` backup worked everywhere, mirrors included. This is
   why BTR (and this port) uses Akamai addresses as host-swap donors when nothing else exists, and why bans are
-  scoped to node, address or node+address pair.
+  scoped to node, address or node+address pair. On 2026-10-16 (KaiC's account, PC) only Akamai refused
+  `os=cosovbv`; the mirrors served it.
+- **Damaged edge copies.** On 2026-10-16 Akamai's copy of KaiC's q80 HEVC file lacked bytes 109972 through
+  1048575 (the end of the first MiB): a range crossing 109972 got a 206 and was cut off there, a range starting
+  inside the gap got no response at all (connection closed before headers), and every range from 1 MiB on was
+  whole and fast. The mirrors served the whole file.
 - **Seek cost.** In the browser with BTR, seek to playing took 1.5-3.1 s; rebuilding the player was only
   ~0.2 s of that, the rest was the first segment's download. The floor is the CDN's cold-range latency.
 - **Bugs found from real data in BTR's scheduler work** (worth avoiding in the port): a startup buffer target
@@ -86,10 +91,16 @@ startup or seeks are slow.
   caused, so a local network blip doesn't ban the fastest nodes for the rest of the video (2026-10-16, after
   the Task 18 review).
 - A refusal (HTTP 4xx) of an address other nodes serve, by a node that has not delivered yet, drops only that
-  node and address pair; the node itself is banned once it refuses a second such address. BTR bans the node at
-  once (`cdn-resolver.js` line 133 at 2026.10.8.1), and a banned node never gets to prove its other address,
-  so the ban never lifts: overseas, cold Akamai lost every early race on `os=akam`, was banned for refusing
-  `os=cosovbv`, and the fastest node went unused for the whole video (2026-10-16, ripper-bench q80 runs).
+  node and address pair, however many such addresses it refuses (both tracks and every new signature are
+  further addresses). BTR blames the node (`cdn-resolver.js` line 133 at 2026.10.8.1), and a banned node never
+  gets to prove its other address, so the ban never lifts: overseas, cold Akamai lost every early race on
+  `os=akam`, was banned for refusing `os=cosovbv`, and the fastest node went unused for the whole video
+  (2026-10-16, ripper-bench q80 runs).
+- Damaged copies: when a node that has delivered breaks off without a status and not by a timeout (cut short,
+  or no response at all), the position is recorded for that node and file, from that byte to the end of its MiB,
+  and no piece or backup copy touching it goes to that node again; the rest resumes elsewhere as before. Such a
+  failure is no strike and no backoff unless that node's copy is damaged in more than two blocks. In BTR the
+  empty replies inside Akamai's gap struck the node and banned it after two (2026-10-16, q80 runs).
 
 ## Known environment limits
 

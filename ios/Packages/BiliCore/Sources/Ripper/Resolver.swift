@@ -30,10 +30,19 @@ public final class Resolver: @unchecked Sendable {
         var cursor = 0
         var mediaRangeCount = 0
         var rangeCursor = 0
+        /// Per route: the first missing byte seen in each damaged block of that node's copy, by block index.
+        var damage: [String: [Int64: Int64]] = [:]
     }
 
     /// A node left out for being slow goes back to the untested ones after this and gets another try.
     static let measurementTTL: Double = 90_000
+
+    /// Akamai's damaged copy of one file (2026-10-16) failed from the first missing byte to the end of that MiB
+    /// and served the next MiB whole, so an edge's damage is taken to end at the next MiB boundary.
+    static let damageBlock: Int64 = 1 << 20
+
+    /// Damage on more blocks of one file than this is a failing node, not a damaged copy.
+    static let damagedBlockLimit = 2
 
     private let state: Locked<State>
     public let mode: NodeMode
@@ -205,7 +214,31 @@ public final class Resolver: @unchecked Sendable {
         }
     }
 
-    public func failure(_ url: String, status: Int?, receivedBytes: Int64) {
+    /// The node's copy of this file is known to be damaged somewhere in `range`.
+    public func avoids(_ url: String, _ range: ByteRange) -> Bool {
+        guard let blocks = state.current.damage[Self.routeKey(url)] else { return false }
+        return blocks.contains { block, from in
+            range.start < (block + 1) * Self.damageBlock && range.end >= from
+        }
+    }
+
+    /// `range` is the part this attempt asked for. A copy of a node that is up which breaks off without a status,
+    /// short of the end and not by a timeout, is a damaged copy at that position: the span is avoided on that
+    /// node, without strikes or backoff, unless the damage spreads over more than two blocks.
+    public func failure(_ url: String, status: Int?, receivedBytes: Int64, range: ByteRange? = nil, timedOut: Bool = false) {
+        let delivered = receivedBytes > 0 || (bans?.hasDelivered(url) ?? false)
+        let key = Self.routeKey(url)
+        let positional = state.withLock { value -> Bool in
+            guard let range, status == nil, !timedOut, receivedBytes < range.length,
+                  delivered || (value.routes[key]?.lastSuccessAt ?? 0) > 0 else { return false }
+            let offset = range.start + receivedBytes
+            var blocks = value.damage[key] ?? [:]
+            let block = offset / Self.damageBlock
+            blocks[block] = min(blocks[block] ?? offset, offset)
+            value.damage[key] = blocks
+            return blocks.count <= Self.damagedBlockLimit
+        }
+        if positional { return }
         bans?.record(url: url, receivedBytes: receivedBytes, status: status)
         let now = clock.nowMs()
         state.withLock { value in
@@ -228,13 +261,13 @@ public final class Resolver: @unchecked Sendable {
         let all = allURLs()
         let usable = bans.map { bans in all.filter(bans.allowsAddress) } ?? all
         let list = usable.isEmpty ? all : usable
-        let bannedNodes = Set(list.filter { !(bans?.allowsNode($0) ?? true) })
+        let banned = Set(list.filter { !(bans?.allows($0) ?? true) })
         let now = clock.nowMs()
         let value = state.current
         return list.map { url in
             let route = value.routes[Self.routeKey(url)]
             let state: String
-            if bannedNodes.contains(url) {
+            if banned.contains(url) {
                 state = "banned"
             } else if (value.health[url]?.blockedUntil ?? 0) > now {
                 state = "blocked"

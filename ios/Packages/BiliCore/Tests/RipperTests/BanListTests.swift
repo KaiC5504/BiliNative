@@ -107,14 +107,27 @@ final class BanListTests: XCTestCase {
         XCTAssertTrue(bans.allows(url("a", "f2")))
     }
 
-    func testNodeRefusingTwoAddressesOthersServeIsBanned() {
+    /// One list serves both tracks, and a new signature is a new address: the video and audio files, before
+    /// and after a refresh, are four addresses Akamai refuses with `os=cosovbv` while it serves `os=akam`.
+    func testRefusingManyServedAddressesNeverBansTheNode() {
+        func akamai(_ file: String, _ os: String, deadline: Int = 9) -> String {
+            "https://upos-hz-mirrorakam.akamaized.net/upgcxcode/\(file).m4s?deadline=\(deadline)&os=\(os)"
+        }
+        func mirror(_ file: String, _ os: String, deadline: Int = 9) -> String {
+            akamai(file, os, deadline: deadline).replacingOccurrences(of: "upos-hz-mirrorakam.akamaized.net", with: "b.bilivideo.com")
+        }
         let bans = BanList()
-        bans.success(url: url("b", "f1"))
-        bans.success(url: url("b", "f2"))
-        bans.record(url: url("a", "f1"), receivedBytes: 0, status: 403)
-        XCTAssertTrue(bans.allowsNode(url("a", "f3")))
-        bans.record(url: url("a", "f2"), receivedBytes: 0, status: 403)
-        XCTAssertFalse(bans.allowsNode(url("a", "f3")))
-        XCTAssertEqual(bans.bannedNodes(), ["a.bilivideo.com"])
+        for deadline in [9, 99] {
+            for file in ["video", "audio"] {
+                bans.success(url: mirror(file, "cosovbv", deadline: deadline))
+                bans.record(url: akamai(file, "cosovbv", deadline: deadline), receivedBytes: 0, status: 403)
+                bans.record(url: akamai(file, "cosovbv", deadline: deadline), receivedBytes: 0, status: 403)
+                XCTAssertFalse(bans.allows(akamai(file, "cosovbv", deadline: deadline)))
+            }
+        }
+        XCTAssertTrue(bans.allowsNode(akamai("video", "akam")))
+        XCTAssertTrue(bans.allows(akamai("video", "akam")))
+        XCTAssertTrue(bans.allows(akamai("audio", "akam")))
+        XCTAssertEqual(bans.bannedNodes(), [])
     }
 }

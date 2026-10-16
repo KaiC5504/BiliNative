@@ -136,7 +136,8 @@ struct AttemptRunner: Sendable {
                                                                 "bytes": .init(received), "ms": .init(elapsed.rounded())])
             } else {
                 let ripperError = error as? RipperError
-                resolver.failure(url, status: ripperError?.status, receivedBytes: received)
+                resolver.failure(url, status: ripperError?.status, receivedBytes: received, range: part,
+                                 timedOut: ripperError?.isTimeout == true)
                 if let status = ripperError?.status, status == 412 || status == 429 {
                     ctx.auto?.pushback(status: status)
                 } else if ripperError?.isTimeout == true && received == 0 {

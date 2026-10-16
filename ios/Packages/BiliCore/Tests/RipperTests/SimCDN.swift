@@ -26,6 +26,9 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         var coldFirstByteMs: Double = 0
         /// Answer 403 at once, as an edge refusal does, to addresses whose query contains one of these.
         var refusedQueries: [String] = []
+        /// Bytes this node's copy lacks, as Akamai's copy of one file lacked 109972 through the end of its first
+        /// MiB on 2026-10-16: a request starting inside gets no response, one running into it is cut off there.
+        var missing: ClosedRange<Int64>?
     }
 
     struct ConnectionLost: Error {}
@@ -67,11 +70,13 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         if (ProcessInfo.processInfo.systemUptime - born) * 1000 < behavior.failForMs { throw ConnectionLost() }
         if behavior.status != 206 { return TransportResponse(status: behavior.status, headers: [:], body: empty) }
         guard range.end < Int64(content.count) else { return TransportResponse(status: 416, headers: [:], body: empty) }
+        if let missing = behavior.missing, missing.contains(range.start) { throw ConnectionLost() }
         let served = behavior.wrongRange ? (ByteRange(start: range.start + 1, end: range.end) ?? range) : range
         let content = self.content
         let deliveredBytes = self.deliveredBytes
         let key = url.absoluteString
         let bodyEnd = min(Int64(content.count) - 1, served.end + behavior.extraBytes)
+        let cutAt = behavior.missing.map(\.lowerBound).flatMap { $0 > served.start && $0 <= bodyEnd ? $0 : nil }
         let body = AsyncThrowingStream<[UInt8], Error> { continuation in
             let task = Task {
                 var offset = served.start
@@ -86,6 +91,13 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
                     // Cut chunks exactly at the truncation and stall points.
                     if let limit = behavior.truncateAfter { end = min(end, served.start + limit - 1) }
                     if let limit = behavior.stallAfter { end = min(end, served.start + limit - 1) }
+                    if let cutAt {
+                        if offset >= cutAt {
+                            continuation.finish(throwing: ConnectionLost())
+                            return
+                        }
+                        end = min(end, cutAt - 1)
+                    }
                     continuation.yield(Array(content[Int(offset)...Int(end)]))
                     let ms = Double(end - offset + 1) / behavior.bytesPerSecond * 1000
                     if ms >= 1 { try? await sleepMs(ms) } else { await Task.yield() }

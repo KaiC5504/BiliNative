@@ -99,9 +99,43 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertTrue(bans.allowsAddress(refused), "the mirrors serve that address")
         var sent: [String: Int64] = [:]
         for (url, bytes) in cdn.deliveredBytes.current { sent[NodeCatalog.nodeKey(of: url), default: 0] += bytes }
-        XCTAssertEqual(sent[akamai], cdn.deliveredBytes.current[served])
         let mirrorMost = sent.filter { $0.key != akamai }.values.max() ?? 0
         XCTAssertGreaterThan(sent[akamai] ?? 0, mirrorMost, "the fastest node carries the most bytes: \(sent)")
+    }
+
+    /// Akamai's copy of KaiC's q80 file, 2026-10-16: bytes 109972 through the end of the first MiB were missing,
+    /// the rest was whole and far faster than any mirror.
+    func testNodeWithADamagedSpanKeepsServingTheRest() async throws {
+        let missing = Int64(109_972)...Int64(1_048_575)
+        var behaviors: [String: SimCDN.Behavior] = [TestEngine.aliov: .init(firstByteMs: 20, bytesPerSecond: 40_000_000, missing: missing)]
+        for node in [TestEngine.cosov, TestEngine.hk1, TestEngine.hk3] { behaviors[node] = .init(bytesPerSecond: 1_000_000) }
+        let cdn = SimCDN(size: 6_500_000, behaviors: behaviors)
+        let transport = RecordingTransport(cdn)
+        let resolver = TestEngine.resolver()
+        let downloader = RangeDownloader(ctx: context(transport, config: TestEngine.slowConfig))
+        func read(_ index: Int64) async throws {
+            let range = ByteRange(start: 1_024 + index << 19, end: 1_023 + (index + 1) << 19)!
+            var bytes: [UInt8] = []
+            for try await chunk in downloader.stream(range, resolver: resolver, startup: index == 0, priority: 50, deadline: nil) {
+                bytes += chunk
+            }
+            XCTAssertEqual(bytes, Array(cdn.content[Int(range.start)...Int(range.end)]))
+        }
+        _ = try await downloader.meta(ByteRange(start: 0, end: 1_023)!, resolver: resolver)
+        for index in Int64(0)..<12 { try await read(index) }
+        let aliovURL = url(on: TestEngine.aliov)
+        XCTAssertTrue(resolver.bans?.allowsNode(aliovURL) ?? false)
+        XCTAssertTrue(resolver.allows(aliovURL))
+        let sent = cdn.deliveredBytes.current
+        let total = sent.values.reduce(0, +)
+        XCTAssertGreaterThan(sent[aliovURL] ?? 0, total / 2, "the fast node carries most bytes: \(sent)")
+
+        // Seeking back: the damaged span is not asked of that node again.
+        let asked = transport.requests.current.count
+        for index in Int64(0)..<2 { try await read(index) }
+        let again = transport.requests.current.dropFirst(asked)
+            .filter { $0.node == TestEngine.aliov && $0.range.end >= missing.lowerBound && $0.range.start <= missing.upperBound }
+        XCTAssertEqual(again.count, 0, "\(again.map(\.range))")
     }
 
     func testBrokenNodesNeverCorruptTheOutput() async throws {

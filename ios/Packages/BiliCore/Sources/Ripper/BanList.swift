@@ -3,7 +3,7 @@ import BiliShared
 /// BTR `createBanList`. A node that twice fails without sending a byte is skipped for the rest of
 /// the video. For HTTP 4xx, what has delivered decides who is blamed: a refusal by a node that
 /// serves other addresses blames the address; a refusal of an address other nodes serve blames
-/// that node and address pair, and the node once it refuses two such addresses.
+/// only that node and address pair.
 public final class BanList: @unchecked Sendable {
     public enum BanKind: Equatable, Sendable {
         case node, address, pair
@@ -78,6 +78,11 @@ public final class BanList: @unchecked Sendable {
         return state.withLock { !$0.banned.contains("node:\(node)") }
     }
 
+    public func hasDelivered(_ url: String) -> Bool {
+        let node = NodeCatalog.nodeKey(of: url)
+        return state.withLock { $0.goodNodes.contains(node) }
+    }
+
     public func allowsAddress(_ url: String) -> Bool {
         let address = NodeCatalog.address(of: url)
         return state.withLock { !$0.banned.contains("address:\(address)") }
@@ -92,27 +97,23 @@ public final class BanList: @unchecked Sendable {
     }
 
     private func judge(_ value: inout State) -> [(String, Int)] {
-        let replies = value.emptyReplies.map { key, count in
-            let parts = key.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            return (node: parts[0], address: parts[1], refused: parts[2] == "refused", count: count)
-        }
-        // Deviation from BTR: refusing one address that others serve costs a node only that pair, and the
-        // node itself once it refuses a second such address. One refused address can be that node's alone
-        // (Akamai refusing os=cosovbv but serving os=akam), and a node ban would keep it from ever
-        // proving its other addresses, so the ban would never lift.
-        var refusedServed: [String: Set<String>] = [:]
-        for reply in replies where reply.refused && !value.goodNodes.contains(reply.node) && value.goodAddresses.contains(reply.address) {
-            refusedServed[reply.node, default: []].insert(reply.address)
-        }
         var strikes: [String: Int] = [:]
-        for (node, address, refused, count) in replies {
+        for (key, count) in value.emptyReplies {
+            let parts = key.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            let node = parts[0]
+            let address = parts[1]
+            let refused = parts[2] == "refused"
             let blamed: String
             if !refused {
                 blamed = "node:\(node)"
             } else if value.goodNodes.contains(node) {
                 blamed = value.goodAddresses.contains(address) ? "pair:\(node) \(address)" : "address:\(address)"
             } else if value.goodAddresses.contains(address) {
-                blamed = (refusedServed[node]?.count ?? 0) > 1 ? "node:\(node)" : "pair:\(node) \(address)"
+                // Deviation from BTR, which blames the node: a refused address can be that node's alone (Akamai
+                // refusing os=cosovbv but serving os=akam), and a banned node never gets to prove its other
+                // addresses. Counting refused addresses per node would not help: both tracks and every new
+                // signature are further addresses.
+                blamed = "pair:\(node) \(address)"
             } else {
                 blamed = ""
             }

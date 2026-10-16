@@ -72,8 +72,9 @@ final class PieceDownloader: @unchecked Sendable {
             while tried.count < limit {
                 try Task.checkCancellation()
                 let untried = candidates.filter { !tried.contains($0) }
-                let open = untried.filter(resolver.allows)
-                let pair = Array((open.isEmpty ? untried : open).prefix(width))
+                let allowed = untried.filter(resolver.allows)
+                let whole = allowed.filter { !resolver.avoids($0, piece) }
+                let pair = Array((!whole.isEmpty ? whole : !allowed.isEmpty ? allowed : untried).prefix(width))
                 if pair.isEmpty { break }
                 pair.forEach { tried.insert($0) }
                 do {
