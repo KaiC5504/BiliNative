@@ -55,4 +55,66 @@ final class NodeCatalogTests: XCTestCase {
         XCTAssertEqual(urls, [local, "http://127.0.0.1:9002/v.mp4?deadline=1"])
         XCTAssertEqual(urls.map(NodeCatalog.nodeKey(of:)), ["127.0.0.1:9001", "127.0.0.1:9002"])
     }
+
+    private func policyAllows(_ text: String) -> Bool {
+        URL(string: text).map(MediaURLPolicy.bilibili.allowsURL) ?? false
+    }
+
+    func testPolicyAcceptsPlainHostsInAnyCase() {
+        XCTAssertTrue(policyAllows("https://upos-sz-mirrorcos.bilivideo.com/v.m4s?deadline=1"))
+        XCTAssertTrue(policyAllows("https://UPOS-SZ-MIRRORCOS.BILIVIDEO.COM/V.M4S"))
+        XCTAssertTrue(policyAllows("https://bilivideo.com/v.mp4"))
+    }
+
+    func testPolicyRejectsLookAlikeHosts() {
+        XCTAssertFalse(policyAllows("https://bilivideo.com.evil.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://evilbilivideo.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://upos-sz-mirrorcos.bilivideo.com.evil.com/v.m4s"))
+    }
+
+    func testPolicyRejectsUserinfoInBothDirections() {
+        XCTAssertFalse(policyAllows("https://upos-sz-mirrorcos.bilivideo.com@evil.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://evil.com@upos-sz-mirrorcos.bilivideo.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://evil.com:pw@upos-sz-mirrorcos.bilivideo.com/v.m4s"))
+    }
+
+    func testPolicyRejectsEncodedAndBackslashHosts() {
+        XCTAssertFalse(policyAllows("https://evil.com%2f.bilivideo.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://evil.com%2F.bilivideo.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://evil%2ecom.bilivideo.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://evil.com\\@upos-sz-mirrorcos.bilivideo.com/v.m4s"))
+        XCTAssertFalse(policyAllows("https://evil.com\\.bilivideo.com/v.m4s"))
+    }
+
+    func testPolicyRejectsTrailingDotHost() {
+        XCTAssertFalse(policyAllows("https://upos-sz-mirrorcos.bilivideo.com./v.m4s"))
+    }
+
+    func testPolicyChecksTheExtensionOnTheEncodedPath() {
+        XCTAssertFalse(policyAllows("https://upos-sz-mirrorcos.bilivideo.com/v.txt%2Em4s"))
+        XCTAssertFalse(policyAllows("https://upos-sz-mirrorcos.bilivideo.com/v.m4s%2F.txt"))
+        XCTAssertTrue(policyAllows("https://upos-sz-mirrorcos.bilivideo.com/a%20b/v.m4s"))
+    }
+
+    func testRepresentationURLsDropEveryBypassAttempt() {
+        let attempts = [
+            "https://evil.com%2f.bilivideo.com/v.m4s",
+            "https://evil.com\\@upos-sz-mirrorcos.bilivideo.com/v.m4s",
+            "https://evil.com@upos-sz-mirrorcos.bilivideo.com/v.m4s",
+        ]
+        for attempt in attempts {
+            XCTAssertTrue(NodeCatalog.representationURLs(primary: attempt, backups: [], mode: .overseas, policy: .bilibili).isEmpty, attempt)
+        }
+    }
+
+    func testNodeKeyHasNoPortWhenThereIsNone() {
+        XCTAssertEqual(NodeCatalog.nodeKey(of: primary), "upos-sz-mirrorcos.bilivideo.com")
+        XCTAssertEqual(NodeCatalog.nodeKey(of: "https://UPOS-SZ-MIRRORCOS.bilivideo.com:4483/v.m4s"), "upos-sz-mirrorcos.bilivideo.com:4483")
+    }
+
+    func testEmptyCustomListFallsBackToMainland() {
+        let urls = NodeCatalog.representationURLs(primary: primary, backups: [backup], mode: .custom([]), policy: .bilibili)
+        XCTAssertEqual(urls, NodeCatalog.representationURLs(primary: primary, backups: [backup], mode: .mainland, policy: .bilibili))
+        XCTAssertEqual(urls.count, 9)
+    }
 }

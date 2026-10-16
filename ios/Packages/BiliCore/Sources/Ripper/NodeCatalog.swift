@@ -26,8 +26,16 @@ public struct MediaURLPolicy: Sendable {
 
     /// Signed download addresses are only ever sent to Bilibili's own media hosts.
     public static let bilibili = MediaURLPolicy { url in
-        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { return false }
-        let path = url.path.lowercased()
+        let text = url.absoluteString
+        // URL and URLComponents read a backslash differently, so the host the policy checks
+        // could differ from the one the rest of the catalog uses.
+        guard !text.contains("\\"), let components = URLComponents(string: text),
+              components.scheme?.lowercased() == "https",
+              components.user == nil, components.password == nil,
+              let host = components.percentEncodedHost?.lowercased(),
+              host == url.host?.lowercased(),
+              NodeCatalog.isPlainHostName(host) else { return false }
+        let path = components.percentEncodedPath.lowercased()
         guard path.hasSuffix(".m4s") || path.hasSuffix(".mp4") || path.hasSuffix(".flv") else { return false }
         return NodeCatalog.mediaHostSuffixes.contains { host == $0 || host.hasSuffix("." + $0) }
     }
@@ -58,6 +66,12 @@ public enum NodeCatalog {
         "bilivideo.com", "bilivideo.cn", "bilivideo.net", "akamaized.net", "szbdyd.com",
         "hdslb.com", "xycdn.com", "mountaintoys.cn", "nexusedgeio.com", "ahdohpiechei.com",
     ]
+
+    /// BTR `normalizeCdnHost`'s shape check: letters, digits and hyphens in dot-separated labels,
+    /// so no percent escapes, userinfo, port or trailing dot.
+    static func isPlainHostName(_ host: String) -> Bool {
+        host.range(of: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", options: .regularExpression) != nil
+    }
 
     public static func host(of url: String) -> String {
         URLComponents(string: url)?.host?.lowercased() ?? ""
@@ -100,6 +114,8 @@ public enum NodeCatalog {
     public static func representationURLs(primary: String, backups: [String], mode: NodeMode, policy: MediaURLPolicy) -> [String] {
         func allowed(_ url: String) -> Bool { URL(string: url).map(policy.allowsURL) ?? false }
         let originals = deduplicated(([primary] + backups).filter(allowed))
+        // BTR: a custom mode without servers works like the mainland mode.
+        let mode = mode == .custom([]) ? NodeMode.mainland : mode
         let nodes = nodes(for: mode)
         // Some overseas accounts only get akamaized.net addresses; the nodes accept those
         // signatures too, so then every one of them is tried on every node.
