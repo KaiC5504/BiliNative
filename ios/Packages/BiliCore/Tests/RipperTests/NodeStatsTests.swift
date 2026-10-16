@@ -71,6 +71,32 @@ final class NodeStatsTests: XCTestCase {
         XCTAssertFalse(stats.isBusy(url))
     }
 
+    func testAkamaiIsFullAtTheTransportsConnectionsPerHostFromTheStart() {
+        let stats = NodeStats(connectionsPerHost: 8)
+        let akamai = "https://upos-hz-mirrorakam.akamaized.net/v.m4s"
+        let mirror = "https://upos-sz-mirrorcosov.bilivideo.com/v.m4s"
+        for _ in 0..<7 { stats.begin(akamai); stats.begin(mirror) }
+        XCTAssertFalse(stats.isFull(akamai))
+        XCTAssertTrue(stats.isFull(akamai, extraInflight: 1))
+        stats.begin(akamai); stats.begin(mirror)
+        XCTAssertTrue(stats.isFull(akamai), "a ninth request would wait inside URLSession")
+        XCTAssertFalse(stats.isFull(mirror), "HTTP/2 sends them all at once over one connection")
+        stats.reset()
+        XCTAssertTrue(stats.isFull(akamai), "a network change does not lift the transport's limit")
+        XCTAssertFalse(NodeStats().isFull(akamai), "no limit when the transport has none")
+    }
+
+    func testBeginTakesTheFirstNodeWithRoom() {
+        let stats = NodeStats(connectionsPerHost: 1)
+        let akamai = "https://upos-hz-mirrorakam.akamaized.net/v.m4s"
+        let mirror = "https://upos-sz-mirrorcosov.bilivideo.com/v.m4s"
+        XCTAssertEqual(stats.begin(firstOpenOf: [akamai, mirror]), akamai)
+        XCTAssertEqual(stats.begin(firstOpenOf: [akamai, mirror]), mirror)
+        XCTAssertEqual(stats.begin(firstOpenOf: [akamai]), akamai, "the first one when every node is full")
+        XCTAssertEqual(stats.inflight(akamai), 2)
+        XCTAssertEqual(stats.inflight(mirror), 1)
+    }
+
     func testRunnerFeedsTheStats() async throws {
         let cdn = SimCDN(size: 400_000, behaviors: [TestEngine.aliov: .init(firstByteMs: 1_000)])
         let ctx = TestEngine.context(cdn)

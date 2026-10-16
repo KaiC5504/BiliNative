@@ -12,7 +12,20 @@ struct EngineContext: @unchecked Sendable {
     let clock: MonotonicClock
     let logger: Logger
     /// A class, so copies of the context share one record.
-    var nodes = NodeStats()
+    let nodes: NodeStats
+
+    init(transport: RangeTransport, pool: ConnectionPool, config: RipperConfig, meter: Meter, stats: EngineStats,
+         auto: AutoConcurrency?, clock: MonotonicClock, logger: Logger) {
+        self.transport = transport
+        self.pool = pool
+        self.config = config
+        self.meter = meter
+        self.stats = stats
+        self.auto = auto
+        self.clock = clock
+        self.logger = logger
+        nodes = NodeStats(connectionsPerHost: transport.connectionsPerHost)
+    }
 }
 
 /// Bytes already held from the front of a piece; a retry or a backup copy asks only for the rest.
@@ -99,9 +112,20 @@ struct AttemptRunner: Sendable {
     func run(url: String, piece: ByteRange, progress: AttemptProgress, resolver: Resolver, priority: Double,
              queueClass: QueueClass, deadline: (@Sendable () -> Double)?, copy: Int = 1,
              resumeBase: @Sendable () -> Prefix) async throws -> AttemptOutput {
+        try await run(claim: { ctx.nodes.begin(url); return url }, piece: piece, progress: progress, resolver: resolver, priority: priority,
+                      queueClass: queueClass, deadline: deadline, copy: copy, resumeBase: resumeBase)
+    }
+
+    /// `claim` runs once a connection permit is held: it picks the URL and counts the request on its node
+    /// (`NodeStats.begin`), so a request that waited for a permit goes where there is room by then.
+    func run(claim: () -> String, piece: ByteRange, progress: AttemptProgress, resolver: Resolver, priority: Double,
+             queueClass: QueueClass, deadline: (@Sendable () -> Double)?, copy: Int = 1,
+             resumeBase: @Sendable () -> Prefix) async throws -> AttemptOutput {
         let permit = try await ctx.pool.acquire(priority: priority, queueClass: queueClass, deadline: deadline)
         defer { permit.release() }
         try Task.checkCancellation()
+        let url = claim()
+        defer { ctx.nodes.end(url, receiving: progress.timing.gotHeaders) }
         // Taken now, not when queued: a backup copy that waited resumes from what the first copy has by now.
         var base = resumeBase()
         if base.bytes >= piece.length { base = Prefix() }
@@ -110,8 +134,6 @@ struct AttemptRunner: Sendable {
         progress.begin(at: started, length: part.length, base: base)
         let node = NodeCatalog.nodeKey(of: url)
         ctx.stats.started(node: node)
-        ctx.nodes.begin(url)
-        defer { ctx.nodes.end(url, receiving: progress.timing.gotHeaders) }
         do {
             let output = try await withThrowingTaskGroup(of: AttemptOutput?.self) { group -> AttemptOutput in
                 group.addTask { try await self.transfer(url: url, part: part, base: base, progress: progress, started: started, node: node) }

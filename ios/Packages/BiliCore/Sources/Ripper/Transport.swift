@@ -18,6 +18,14 @@ public protocol RangeTransport: Sendable {
     /// GET with `Range: bytes=start-end`. Returns once the response headers are in; the body streams.
     /// Cancelling the calling task, or dropping the body stream, must cancel the request.
     func fetch(_ url: URL, range: ByteRange) async throws -> TransportResponse
+
+    /// How many connections the transport opens to one host; further requests to an HTTP/1.1 host wait inside it
+    /// for one to free up. HTTP/2 sends every request over one connection. Nil when there is no such limit.
+    var connectionsPerHost: Int? { get }
+}
+
+public extension RangeTransport {
+    var connectionsPerHost: Int? { nil }
 }
 
 public enum RipperError: Error, Equatable, Sendable {

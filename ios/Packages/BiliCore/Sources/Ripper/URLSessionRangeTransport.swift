@@ -26,9 +26,11 @@ public final class URLSessionRangeTransport: NSObject, RangeTransport, URLSessio
     private let handlers = Locked<[Int: Handler]>([:])
     private let headers: [String: String]
     private var session: URLSession!
+    public let connectionsPerHost: Int?
 
     public init(headers: [String: String] = [:], maxConnectionsPerHost: Int = 8) {
         self.headers = headers
+        connectionsPerHost = maxConnectionsPerHost
         super.init()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpMaximumConnectionsPerHost = maxConnectionsPerHost

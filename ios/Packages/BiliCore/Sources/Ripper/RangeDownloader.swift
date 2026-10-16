@@ -109,7 +109,8 @@ final class RangeDownloader: @unchecked Sendable {
         let primaries = hurried
             ? HurryPlacement.assign(urls: preferred, count: parts.count, pieceBytes: parts.first?.length ?? 0, nodes: ctx.nodes,
                                     delivered: { resolver.bans?.hasDelivered($0) ?? true })
-            : assigner.assign(urls: assignable, count: parts.count, speed: resolver.speed, trialKey: ObjectIdentifier(resolver))
+            : assigner.assign(urls: assignable, count: parts.count, speed: resolver.speed, trialKey: ObjectIdentifier(resolver),
+                              isFull: { ctx.nodes.isFull($0, extraInflight: $1) })
         let mode: PieceMode = startup ? .startup : .normal
         let order = preferred
         try await withThrowingTaskGroup(of: (Int, AttemptOutput).self) { group in

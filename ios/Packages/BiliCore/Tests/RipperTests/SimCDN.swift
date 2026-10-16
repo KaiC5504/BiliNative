@@ -48,10 +48,16 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
     let deliveredBytes = Locked<[String: Int64]>([:])
     private let born = ProcessInfo.processInfo.systemUptime
     private let servedRequests = Locked<[String: Int]>([:])
+    /// As URLSession's `httpMaximumConnectionsPerHost` on HTTP/1.1, which only Akamai speaks: an Akamai node
+    /// serves this many requests at once and the rest wait for a connection, their first-byte clock running.
+    let connectionsPerHost: Int?
+    private let connections: HostConnections?
 
-    init(size: Int, behaviors: [String: Behavior] = [:]) {
+    init(size: Int, behaviors: [String: Behavior] = [:], connectionsPerHost: Int? = nil) {
         content = (0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }
         self.behaviors = Locked(behaviors)
+        self.connectionsPerHost = connectionsPerHost
+        connections = connectionsPerHost.map(HostConnections.init(limit:))
     }
 
     func set(_ node: String, _ behavior: Behavior) {
@@ -60,11 +66,20 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
 
     func requestCount() -> Int { requests.current.count }
 
+    /// The most requests that were waiting at once for one of the node's connections.
+    func peakWaiting(_ node: String) -> Int { connections?.peakWaiting(node) ?? 0 }
+
     func fetch(_ url: URL, range: ByteRange) async throws -> TransportResponse {
         let node = NodeCatalog.nodeKey(of: url.absoluteString)
         requests.withLock { $0.append(node) }
         let behavior = behaviors.current[node] ?? Behavior()
         let empty = AsyncThrowingStream<[UInt8], Error> { $0.finish() }
+        let hostConnections = NodeCatalog.isAkamai(url.absoluteString) ? connections : nil
+        try await hostConnections?.open(node)
+        // Freed before the engine can see the response end, as a finished response frees its connection.
+        let close = Once { hostConnections?.close(node) }
+        var bodyCloses = false
+        defer { if !bodyCloses { close.run() } }
         let query = url.query ?? ""
         if behavior.refusedQueries.contains(where: query.contains) {
             try await sleepMs(2)
@@ -104,6 +119,7 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
                     if let limit = behavior.stallAfter { end = min(end, served.start + limit - 1) }
                     if let cutAt {
                         if offset >= cutAt {
+                            close.run()
                             continuation.finish(throwing: ConnectionLost())
                             return
                         }
@@ -115,13 +131,109 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
                     offset = end + 1
                 }
                 if offset > bodyEnd { deliveredBytes.withLock { $0[key, default: 0] += bodyEnd - served.start + 1 } }
+                close.run()
                 continuation.finish()
             }
-            continuation.onTermination = { _ in task.cancel() }
+            continuation.onTermination = { _ in
+                task.cancel()
+                close.run()
+            }
         }
+        bodyCloses = true
         let total = behavior.totalSize ?? Int64(content.count)
         let headers = behavior.omitContentRange ? [:] : ["content-range": "bytes \(served.start)-\(served.end)/\(total)"]
         return TransportResponse(status: 206, headers: headers, body: body)
+    }
+}
+
+final class Once: @unchecked Sendable {
+    private let action: @Sendable () -> Void
+    private let done = Locked(false)
+
+    init(_ action: @escaping @Sendable () -> Void) {
+        self.action = action
+    }
+
+    func run() {
+        let first = done.withLock { value -> Bool in
+            defer { value = true }
+            return !value
+        }
+        if first { action() }
+    }
+}
+
+/// One HTTP/1.1 client's connections per host: a request beyond the limit waits, before anything is sent,
+/// until a response ends and hands its connection over.
+final class HostConnections: @unchecked Sendable {
+    private struct Waiter {
+        let id: Int
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
+    private struct State {
+        var open: [String: Int] = [:]
+        var waiting: [String: [Waiter]] = [:]
+        var peakWaiting: [String: Int] = [:]
+        var nextID = 0
+    }
+
+    let limit: Int
+    private let state = Locked(State())
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    func peakWaiting(_ node: String) -> Int { state.current.peakWaiting[node] ?? 0 }
+
+    func open(_ node: String) async throws {
+        try Task.checkCancellation()
+        let id = state.withLock { value -> Int in
+            value.nextID += 1
+            return value.nextID
+        }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let granted = state.withLock { value -> Bool in
+                    if value.open[node, default: 0] < limit {
+                        value.open[node, default: 0] += 1
+                        return true
+                    }
+                    value.waiting[node, default: []].append(Waiter(id: id, continuation: continuation))
+                    value.peakWaiting[node] = max(value.peakWaiting[node] ?? 0, value.waiting[node]?.count ?? 0)
+                    return false
+                }
+                if granted {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    giveUp(id, node)
+                }
+            }
+        } onCancel: {
+            self.giveUp(id, node)
+        }
+    }
+
+    func close(_ node: String) {
+        let next = state.withLock { value -> CheckedContinuation<Void, Error>? in
+            if var queue = value.waiting[node], !queue.isEmpty {
+                let first = queue.removeFirst()
+                value.waiting[node] = queue
+                return first.continuation
+            }
+            value.open[node] = max(0, value.open[node, default: 0] - 1)
+            return nil
+        }
+        next?.resume()
+    }
+
+    private func giveUp(_ id: Int, _ node: String) {
+        let waiter = state.withLock { value -> Waiter? in
+            guard let index = value.waiting[node]?.firstIndex(where: { $0.id == id }) else { return nil }
+            return value.waiting[node]?.remove(at: index)
+        }
+        waiter?.continuation.resume(throwing: CancellationError())
     }
 }
 

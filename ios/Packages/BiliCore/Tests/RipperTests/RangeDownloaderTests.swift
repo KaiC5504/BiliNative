@@ -12,6 +12,8 @@ final class RecordingTransport: RangeTransport, @unchecked Sendable {
         self.cdn = cdn
     }
 
+    var connectionsPerHost: Int? { cdn.connectionsPerHost }
+
     func fetch(_ url: URL, range: ByteRange) async throws -> TransportResponse {
         requests.withLock { $0.append((NodeCatalog.nodeKey(of: url.absoluteString), range)) }
         return try await cdn.fetch(url, range: range)
@@ -714,5 +716,78 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertEqual(bytes, Array(cdn.content[0...Int(range.end)]))
         XCTAssertLessThan(Date().timeIntervalSince(started), 6, "cosov's own piece takes about 1 s; the bound only catches an endless loop")
         XCTAssertTrue(sawFull.current, "cosov is capped at the one piece it was sending")
+    }
+
+    /// Akamai, the fastest node and HTTP/1.1, then cosov and aliov. Scaled down from the phone's 8 connections to 4.
+    func akamaiFirstResolver() -> Resolver {
+        let resolver = Resolver(primary: url(on: TestEngine.cosov), backups: [],
+                                mode: .custom([NodeAddress(host: akamai), NodeAddress(host: TestEngine.cosov), NodeAddress(host: TestEngine.aliov)]),
+                                bans: BanList())
+        resolver.success(url(on: akamai), bps: 8_000_000)
+        resolver.success(url(on: TestEngine.cosov), bps: 2_000_000)
+        resolver.success(url(on: TestEngine.aliov), bps: 2_000_000)
+        XCTAssertEqual(resolver.rangeCandidates().map(NodeCatalog.nodeKey(of:)), [akamai, TestEngine.cosov, TestEngine.aliov])
+        return resolver
+    }
+
+    /// The phone on 2026-10-17: by speed Akamai got most pieces of the video and audio ranges, 48-61 requests at once
+    /// over URLSession's 8 connections, and 38 timed out waiting for one while the mirrors sat idle.
+    func testRequestsBeyondAnHTTP1HostsConnectionsGoToNodesWithRoom() async throws {
+        let cdn = SimCDN(size: 4_000_000, behaviors: [
+            akamai: .init(bytesPerSecond: 1_000_000),
+            TestEngine.cosov: .init(bytesPerSecond: 1_000_000),
+            TestEngine.aliov: .init(bytesPerSecond: 1_000_000),
+        ], connectionsPerHost: 4)
+        var config = TestEngine.slowConfig
+        config.fixedConcurrency = 24
+        let ctx = TestEngine.context(cdn, config: config)
+        let downloader = RangeDownloader(ctx: ctx)
+        let resolver = akamaiFirstResolver()
+        // Two ranges placed at the same moment, as a track's prefetch and the other track's read are.
+        let ranges = [ByteRange(start: 0, end: 1_048_575)!, ByteRange(start: 2_000_000, end: 3_048_575)!]
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for range in ranges {
+                group.addTask {
+                    var bytes: [UInt8] = []
+                    for try await chunk in downloader.stream(range, resolver: resolver, startup: false, priority: 50, deadline: nil) {
+                        bytes += chunk
+                    }
+                    XCTAssertEqual(bytes, Array(cdn.content[Int(range.start)...Int(range.end)]))
+                }
+            }
+            try await group.waitForAll()
+        }
+        XCTAssertEqual(cdn.peakWaiting(akamai), 0, "requests waited behind Akamai's connections")
+        XCTAssertGreaterThanOrEqual(cdn.requests.current.filter { $0 == akamai }.count, 4, "Akamai still takes what it can carry")
+        XCTAssertEqual(ctx.stats.snapshot().failures, 0)
+    }
+
+    func testABackupCopySkipsAFullNodeWhileAnotherHasRoom() async throws {
+        let cdn = SimCDN(size: 600_000, behaviors: [TestEngine.cosov: .init(bytesPerSecond: 200_000)], connectionsPerHost: 4)
+        let transport = RecordingTransport(cdn)
+        let ctx = context(transport, config: TestEngine.slowConfig)
+        let akamaiURL = url(on: akamai)
+        // Other pieces hold all four of Akamai's connections.
+        for _ in 0..<4 { ctx.nodes.begin(akamaiURL) }
+        let output = try await PieceDownloader(ctx: ctx).download(piece: ByteRange(start: 0, end: 399_999)!, index: 0, resolver: akamaiFirstResolver(),
+                                                                  preferred: [url(on: TestEngine.cosov)], mode: .normal, priority: 50, deadline: nil)
+        XCTAssertEqual(output.url, url(on: TestEngine.aliov))
+        XCTAssertFalse(transport.requests.current.contains { $0.node == akamai }, "\(transport.requests.current.map(\.node))")
+    }
+
+    func testABackupCopyStillGoesToAFullNodeWhenEveryNodeIsFull() async throws {
+        let cdn = SimCDN(size: 600_000, behaviors: [TestEngine.cosov: .init(bytesPerSecond: 200_000)], connectionsPerHost: 4)
+        let ctx = context(RecordingTransport(cdn), config: TestEngine.slowConfig)
+        let akamaiURL = url(on: akamai)
+        let aliovURL = url(on: TestEngine.aliov)
+        for _ in 0..<4 { ctx.nodes.begin(akamaiURL) }
+        // aliov went silent while sending a piece, so it is capped at that one.
+        ctx.nodes.begin(aliovURL); ctx.nodes.firstByte(aliovURL, ms: 5); ctx.nodes.silent(aliovURL, waitedMs: 5_500)
+        XCTAssertTrue(ctx.nodes.isFull(aliovURL))
+        let started = Date()
+        let output = try await PieceDownloader(ctx: ctx).download(piece: ByteRange(start: 0, end: 399_999)!, index: 0, resolver: akamaiFirstResolver(),
+                                                                  preferred: [url(on: TestEngine.cosov)], mode: .normal, priority: 50, deadline: nil)
+        XCTAssertNotEqual(output.url, url(on: TestEngine.cosov))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5, "cosov alone needs 2 s")
     }
 }

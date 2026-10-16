@@ -10,23 +10,50 @@ final class NodeStats: @unchecked Sendable {
         var ttfbMs = 0.0
         var bps = 0.0
         var load = 0.0
+        /// What the transport sends the node at once.
+        var connections = Int.max
         var limit = Int.max
     }
 
     private let nodes = Locked<[String: Node]>([:])
+    private let akamaiConnections: Int
+
+    /// Akamai answers only HTTP/1.1 (docs/background.md), so it is full at the transport's connections per
+    /// host from the start: a request beyond them would wait inside URLSession with its first-byte clock running.
+    init(connectionsPerHost: Int? = nil) {
+        akamaiConnections = connectionsPerHost ?? .max
+    }
+
+    private func fresh(_ url: String) -> Node {
+        let connections = NodeCatalog.isAkamai(url) ? akamaiConnections : .max
+        return Node(connections: connections, limit: connections)
+    }
 
     private func update(_ url: String, _ change: (inout Node) -> Void) {
         let key = NodeCatalog.nodeKey(of: url)
-        nodes.withLock { change(&$0[key, default: Node()]) }
+        nodes.withLock { change(&$0[key, default: fresh(url)]) }
     }
 
     private func read<Value>(_ url: String, _ get: (Node) -> Value) -> Value {
         let key = NodeCatalog.nodeKey(of: url)
-        return nodes.withLock { get($0[key] ?? Node()) }
+        return nodes.withLock { get($0[key] ?? fresh(url)) }
     }
 
     func begin(_ url: String) {
         update(url) { $0.inflight += 1 }
+    }
+
+    /// Counts a request on the first of `urls` (not empty) whose node has room, or on the first when every one
+    /// is full, and returns it. In one step, so requests starting together cannot all take a node's last connection.
+    func begin(firstOpenOf urls: [String]) -> String {
+        nodes.withLock { all in
+            let url = urls.first { url in
+                let node = all[NodeCatalog.nodeKey(of: url)] ?? fresh(url)
+                return node.inflight < node.limit
+            } ?? urls[0]
+            all[NodeCatalog.nodeKey(of: url), default: fresh(url)].inflight += 1
+            return url
+        }
     }
 
     func firstByte(_ url: String, ms: Double) {
@@ -114,7 +141,7 @@ final class NodeStats: @unchecked Sendable {
     /// stay counted, so their `end` balances.
     func reset() {
         nodes.withLock { all in
-            all = all.mapValues { Node(inflight: $0.inflight, receiving: $0.receiving) }
+            all = all.mapValues { Node(inflight: $0.inflight, receiving: $0.receiving, connections: $0.connections, limit: $0.connections) }
         }
     }
 }

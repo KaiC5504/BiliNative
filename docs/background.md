@@ -137,6 +137,16 @@ listed under "Deviations from BTR". `RipperConfig.hurry` switches all of it off,
   onto it and the range finishes from other nodes. Before this rule, one cold jump gave Akamai and cosov two
   first-byte timeouts each while both were busy, and both were banned for the rest of the video (BV1bmpt6WEom
   at 1:49:47, 2026-10-16).
+- Full nodes are skipped outside a hurry too. Akamai answers only HTTP/1.1 and URLSession opens 8 connections
+  per host, so Akamai counts as full at 8 requests in flight from the start (`RangeTransport.connectionsPerHost`,
+  `NodeStats`). `PrimaryAssigner` lets a full node sit its turns out while another node has room, and every copy
+  of a piece, the first one included, takes its node only once it holds a connection permit: the first candidate
+  with room, or the first one left when every node is full (`CopyTargets`). Before this, on the phone
+  (logs/2026-10-17, t+122-139 s), threads went up to 48-64 and Akamai, measured fastest, carried 48-61 requests
+  while aliov and cosov carried 0-8 and answered in about 100 ms. 38 requests ran out their first-byte timeout
+  inside URLSession (`busy: true`) and playback stalled twice; pieces placed on Akamai earlier also started all
+  at once when the threads went from 48 to 64. The first-byte clock still starts when the request is handed to
+  URLSession, which reports no moment of sending; now a request waits there only when every node is full.
 - A prefetch the player adopted survives the player's cancel. Before this, the player's request was the
   prefetch's only owner, so when AVPlayer gave up after 5 s of silence and cancelled, the 7 finished pieces
   were thrown away and fetched again (BV1jt421t7XH, 2026-10-16). `close()` and a seek (`dropPrefetch`) still cancel it.

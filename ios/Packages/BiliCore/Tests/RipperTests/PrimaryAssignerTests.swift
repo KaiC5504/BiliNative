@@ -18,6 +18,25 @@ final class PrimaryAssignerTests: XCTestCase {
                        ["A", "A", "A", "A"])
     }
 
+    func testAFullNodeSitsOutWhileAnotherHasRoom() {
+        let a = "https://a.example/v", b = "https://b.example/v"
+        let speeds = [a: 10.0, b: 5.0]
+        // a has room for two more pieces.
+        let result = PrimaryAssigner().assign(urls: [a, b], count: 6, speed: { speeds[$0] ?? 0 }, trialKey: ObjectIdentifier(Key()),
+                                              isFull: { url, placed in url == a && placed >= 2 })
+        XCTAssertEqual(result, [a, b, a, b, b, b])
+        let unmeasured = PrimaryAssigner().assign(urls: [a, b], count: 4, speed: { _ in 0 }, trialKey: ObjectIdentifier(Key()),
+                                                  isFull: { url, placed in url == a && placed >= 1 })
+        XCTAssertEqual(unmeasured, [a, b, b, b])
+    }
+
+    func testTurnsGoOnAsUsualWhenEveryNodeIsFull() {
+        let speeds = ["A": 10.0, "B": 5.0, "C": 0.0]
+        let result = PrimaryAssigner().assign(urls: ["A", "B", "C"], count: 8, speed: { speeds[$0] ?? 0 }, trialKey: ObjectIdentifier(Key()),
+                                              isFull: { _, _ in true })
+        XCTAssertEqual(result, ["A", "B", "A", "A", "B", "A", "C", "C"])
+    }
+
     func testRoundRobinWithoutMeasurementsRotatesPerRange() {
         let assigner = PrimaryAssigner()
         let key = ObjectIdentifier(Key())
