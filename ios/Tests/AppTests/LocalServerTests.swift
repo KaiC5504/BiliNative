@@ -73,6 +73,36 @@ final class LocalServerTests: XCTestCase {
             XCTAssertEqual(error as? PlaybackError, .noSidx)
         }
     }
+
+    func testDirectModePlaysFromTheFirstAddressThatAnswers() async throws {
+        let fixture = DebugSupport.headerFixture(withMoov: true)
+        let transport = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total, refusing: ["primary.invalid"])
+        let prepared = try await PlaybackBuilder.prepareDirect(choice: fixture.choice, transport: transport)
+        XCTAssertTrue(prepared.video.mediaURL.hasPrefix("https://backup.invalid/"))
+        XCTAssertTrue(prepared.audio.mediaURL.hasPrefix("https://backup.invalid/"))
+        let playlists = PlaybackBuilder.directPlaylists(prepared, token: "t")
+        for name in ["v.m3u8", "a.m3u8"] {
+            let playlist = try XCTUnwrap(playlists[name])
+            XCTAssertTrue(playlist.contains("https://backup.invalid/"), name)
+            XCTAssertFalse(playlist.contains("primary.invalid"), name)
+        }
+
+        let open = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total, refusing: [])
+        let direct = try await PlaybackBuilder.prepareDirect(choice: fixture.choice, transport: open)
+        XCTAssertTrue(direct.video.mediaURL.hasPrefix("https://primary.invalid/"))
+    }
+
+    func testDirectModeFailsTypedWhenEveryAddressRefuses() async {
+        let fixture = DebugSupport.headerFixture(withMoov: true)
+        let transport = DebugSupport.FixtureTransport(bytes: fixture.bytes, total: fixture.total,
+                                                      refusing: ["primary.invalid", "backup.invalid"])
+        do {
+            _ = try await PlaybackBuilder.prepareDirect(choice: fixture.choice, transport: transport)
+            XCTFail("expected PlaybackError.noSource")
+        } catch {
+            XCTAssertEqual(error as? PlaybackError, .noSource)
+        }
+    }
 }
 
 private final class ReadCounter: @unchecked Sendable {
