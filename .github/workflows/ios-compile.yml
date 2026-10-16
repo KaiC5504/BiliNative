@@ -123,6 +123,8 @@ jobs:
           shoot 02-settings 8 -DemoScreen settings
           shoot 00-demo-home 8 -DemoData YES
           shoot 03-page 10 -DemoData YES -DemoScreen page
+          shoot danmaku-portrait 14 -DemoData YES -DemoScreen danmaku-portrait -DemoPauseAt 26
+          shoot danmaku-landscape 14 -DemoData YES -DemoScreen danmaku-landscape -DemoPauseAt 26
 
       - name: Release build (no tests)
         run: |
