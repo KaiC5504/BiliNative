@@ -53,10 +53,20 @@ final class AppEnvironment {
         case .notFound: break
         case .failed: blocked.withLock { $0 = true }
         }
-        jar.onChange = { [weak jar] _ in
-            queue.async {
-                guard let jar, !blocked.current else { return }
-                KeychainStore.saveCookies(jar.all)
+        #if DEBUG
+        let demo = DemoFixtures.isEnabled
+        #else
+        let demo = false
+        #endif
+        if demo {
+            // Demo screens act as a signed-in account: the write calls need a csrf cookie. Nothing is persisted.
+            jar.replaceAll(["SESSDATA": "demo", "bili_jct": "demo"])
+        } else {
+            jar.onChange = { [weak jar] _ in
+                queue.async {
+                    guard let jar, !blocked.current else { return }
+                    KeychainStore.saveCookies(jar.all)
+                }
             }
         }
         persistQueue = queue

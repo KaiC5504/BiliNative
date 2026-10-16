@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Danmaku
 
 extension Theme {
@@ -6,7 +7,6 @@ extension Theme {
     enum DanmakuPanel {
         static let track = panelRGB(0x424447)
         static let button = panelRGB(0x2C2E32)
-        static let switchOff = panelRGB(0x2F3035)
         static let hairline = panelRGB(0x484C53)
         static let value = panelRGB(0xC9CCD0)
         static let cardRadius: CGFloat = 12
@@ -44,15 +44,14 @@ struct DanmakuSettingsPanel: View {
     }
 
     var body: some View {
-        ZStack {
-            settingsPage
-                .opacity(wordsInPanel ? 0 : 1)
-                .offset(x: wordsInPanel ? -32 : 0)
-                .allowsHitTesting(!wordsInPanel)
-                .accessibilityHidden(wordsInPanel)
+        ZStack(alignment: .topLeading) {
             if wordsInPanel {
                 BlockWordsView(appearance: .panel, onBack: { wordsInPanel = false }, onNeedLogin: onNeedLogin)
+                    .frame(height: Self.wordsPageHeight)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                settingsPage
+                    .transition(.opacity)
             }
         }
         .animation(.smooth(duration: 0.25), value: wordsInPanel)
@@ -61,29 +60,32 @@ struct DanmakuSettingsPanel: View {
         }
         .task {
             #if DEBUG
-            switch UserDefaults.standard.string(forKey: "DemoScreen") {
-            case "panel-danmaku-more": expanded = true
-            case "block-words": wordsInPanel = true
-            default: break
-            }
+            expanded = UserDefaults.standard.bool(forKey: "DemoDanmakuMore")
+            if UserDefaults.standard.bool(forKey: "DemoBlockWords") { presentBlockWords() }
             #endif
         }
     }
 
     private var settingsPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                displayCard
-                sectionTitle("画面防挡")
-                avoidCard
-                sectionTitle("更多工具")
-                toolsCard
-                resetButton
-            }
-            .padding(.top, 16)
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            displayCard
+            sectionTitle("画面防挡")
+            avoidCard
+            sectionTitle("更多工具")
+            toolsCard
+            resetButton
         }
-        .scrollIndicators(.hidden)
+        .padding(.top, 16)
+    }
+
+    /// SidePanel scrolls its content, and a List inside it has no height of its own, so the block words page is
+    /// given the panel's visible height: the window minus the insets and bottom margin SidePanel pads with.
+    private static var wordsPageHeight: CGFloat {
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        guard let window = windows.first(where: \.isKeyWindow) ?? windows.first else { return 320 }
+        let insets = window.safeAreaInsets
+        return max(window.bounds.height - insets.top - insets.bottom - 16, 200)
     }
 
     // MARK: sections
@@ -246,6 +248,10 @@ struct DanmakuSettingsPanel: View {
             onNeedLogin()
             return
         }
+        presentBlockWords()
+    }
+
+    private func presentBlockWords() {
         if OrientationController.shared.presentation == .inline {
             wordsPushed = true
         } else {
@@ -367,24 +373,6 @@ private struct PanelSlider: View {
     }
 }
 
-private struct SwitchGlyph: View {
-    let isOn: Bool
-
-    var body: some View {
-        Capsule()
-            .fill(isOn ? Theme.pink : Theme.DanmakuPanel.switchOff)
-            .frame(width: 34, height: 20)
-            .overlay(alignment: .leading) {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 16, height: 16)
-                    .padding(2)
-                    .offset(x: isOn ? 14 : 0)
-            }
-            .animation(.snappy(duration: 0.2), value: isOn)
-    }
-}
-
 private struct ToggleRow: View {
     let title: String
     let subtitle: String
@@ -402,7 +390,7 @@ private struct ToggleRow: View {
                         .foregroundStyle(Theme.panelSecondary)
                 }
                 Spacer(minLength: 0)
-                SwitchGlyph(isOn: isOn)
+                PanelSwitch(isOn: isOn)
             }
             .padding(.leading, Theme.DanmakuPanel.rowInset)
             .padding(.trailing, 15)

@@ -53,32 +53,25 @@ struct BlockWordsView: View {
     }
 
     private var panelHeader: some View {
-        HStack(spacing: 2) {
-            Button { onBack?() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.panelText)
-                    .frame(width: 28, height: 28, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("返回")
-            Text("弹幕屏蔽词")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Theme.panelText)
-            Spacer(minLength: 0)
-        }
-        .padding(.top, 16)
-        .padding(.bottom, 8)
+        PanelHeader(title: "弹幕屏蔽词", back: onBack)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
     }
 
     private var list: some View {
         List {
             Section {
-                kindPicker
-                    .listRowBackground(rowFill)
-                inputRow
-                    .listRowBackground(rowFill)
+                VStack(spacing: 0) {
+                    kindPicker
+                    Rectangle()
+                        .fill(Theme.DanmakuPanel.hairline.opacity(dark ? 1 : 0.4))
+                        .frame(height: 0.5)
+                    inputRow
+                        .padding(.horizontal, 16)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(rowFill)
             }
             ForEach(Self.kinds) { group in
                 let rules = store.rules.filter { $0.kind == group.kind }
@@ -95,7 +88,9 @@ struct BlockWordsView: View {
                         }
                     } header: {
                         Text("\(group.title) · \(rules.count)")
+                            .font(.system(size: 12))
                             .foregroundStyle(secondary)
+                            .textCase(nil)
                     }
                 }
             }
@@ -105,6 +100,7 @@ struct BlockWordsView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(secondary)
                         .frame(maxWidth: .infinity)
+                        .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                 }
             }
@@ -112,7 +108,10 @@ struct BlockWordsView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
-        .contentMargins(.horizontal, dark ? 0 : 16, for: .scrollContent)
+        // insetGrouped keeps 16 pt at each side; in the panel the cards should span its width like the settings
+        // cards do, so the list is widened by the same amount.
+        .environment(\.horizontalSizeClass, .compact)
+        .padding(.horizontal, dark ? -16 : 0)
         .animation(.smooth(duration: 0.25), value: store.rules)
     }
 
@@ -132,7 +131,7 @@ struct BlockWordsView: View {
                     Text(entry.title)
                         .font(.system(size: 14, weight: entry.kind == kind ? .medium : .regular))
                         .foregroundStyle(entry.kind == kind ? Theme.pink : primary)
-                        .frame(maxWidth: .infinity, minHeight: 36)
+                        .frame(maxWidth: .infinity, minHeight: 38)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

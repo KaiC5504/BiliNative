@@ -129,6 +129,11 @@ jobs:
           shoot 11-panel-speed 16 -DemoData YES -DemoScreen page -DemoPanel speed
           shoot 11-panel-more 16 -DemoData YES -DemoScreen page -DemoPanel more
           shoot 11-panel-more-portrait 12 -DemoData YES -DemoScreen page -DemoPanel more -DemoPortrait YES
+          shoot panel-danmaku 16 -DemoData YES -DemoScreen page -DemoPanel danmaku
+          shoot panel-danmaku-more 16 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoDanmakuMore YES
+          shoot block-words 16 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoBlockWords YES
+          shoot panel-danmaku-portrait 12 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoPortrait YES
+          shoot block-words-portrait 12 -DemoData YES -DemoScreen page -DemoPanel danmaku -DemoPortrait YES -DemoBlockWords YES
 
       - name: Release build (no tests)
         run: |

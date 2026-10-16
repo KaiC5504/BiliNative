@@ -135,7 +135,7 @@ final class BlockRuleStoreTests: XCTestCase {
         XCTAssertTrue(rig.http.requests(to: addPath).isEmpty)
     }
 
-    func testOpeningAVideoPageRefreshesTheRules() async throws {
+    func testOpeningAVideoPageRefreshesTheRulesAndTheDanmakuFilterFollowsThem() async throws {
         let rig = makeRig()
         let suite = "block-rules-\(UUID().uuidString)"
         addTeardownBlock { UserDefaults.standard.removePersistentDomain(forName: suite) }
@@ -144,11 +144,18 @@ final class BlockRuleStoreTests: XCTestCase {
                                    settings: AppSettings(defaults: UserDefaults(suiteName: suite)!), blockRules: rig.store,
                                    account: { .loggedOut }, makeController: { FakePlayback(item: $0) })
         await model.load()
+        try await waitUntil { model.danmaku.rules.count == 4 }
+        XCTAssertEqual(rig.http.requests(to: rulesPath).count, 1)
+        try await rig.store.add(.keyword, filter: "新词")
+        try await waitUntil { model.danmaku.rules.count == 5 }
+    }
+
+    private func waitUntil(_ condition: @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
         let deadline = Date().addingTimeInterval(5)
-        while rig.store.rules.isEmpty, Date() < deadline {
+        while !condition(), Date() < deadline {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTAssertEqual(rig.store.rules.count, 4)
+        XCTAssertTrue(condition(), "timed out", file: file, line: line)
     }
 
     func testDeleteSendsTheIdAndDropsTheRule() async throws {
