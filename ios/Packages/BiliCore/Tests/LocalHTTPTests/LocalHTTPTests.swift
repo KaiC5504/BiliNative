@@ -17,6 +17,21 @@ final class LocalHTTPTests: XCTestCase {
         XCTAssertEqual(HTTPRequestParser.parse([UInt8](repeating: 65, count: 20_000)), .invalid)
     }
 
+    func testHeaderCapAppliesEvenWhenTheTerminatorArrives() {
+        let padding = String(repeating: "a", count: HTTPRequestParser.maxHeaderBytes)
+        XCTAssertEqual(HTTPRequestParser.parse(Array("GET /a HTTP/1.1\r\nX-Pad: \(padding)\r\n\r\n".utf8)), .invalid)
+
+        let prefix = "GET /a HTTP/1.1\r\nX-Pad: "
+        let padFits = HTTPRequestParser.maxHeaderBytes - prefix.utf8.count - 4
+        let fits = Array("\(prefix)\(String(repeating: "a", count: padFits))\r\n\r\n".utf8)
+        XCTAssertEqual(fits.count, HTTPRequestParser.maxHeaderBytes)
+        guard case .complete(_, let length) = HTTPRequestParser.parse(fits) else { return XCTFail("a head of exactly the cap should parse") }
+        XCTAssertEqual(length, fits.count)
+
+        let oneOver = Array("\(prefix)\(String(repeating: "a", count: padFits + 1))\r\n\r\n".utf8)
+        XCTAssertEqual(HTTPRequestParser.parse(oneOver), .invalid)
+    }
+
     /// Review focus 4: whatever range AVPlayer sends gets the right bytes.
     func testRangeVariants() {
         XCTAssertEqual(RangeRequest.parse(nil, totalSize: 1000), .full)
@@ -212,6 +227,71 @@ final class LocalHTTPTests: XCTestCase {
         XCTAssertEqual(received, [UInt8](repeating: 1, count: 50))
     }
 
+    func testHeadServesHeadersWithoutReading() async throws {
+        let reads = Locked<[ByteRange]>([])
+        let (router, token) = makeRouter(reads: reads)
+        let path = "/\(token)/v.mp4"
+
+        let full = try await body(router.route(head(path, method: "HEAD")))
+        XCTAssertEqual(full.0, 200)
+        XCTAssertTrue(full.2.isEmpty)
+        XCTAssertEqual(full.1.first { $0.0 == "Content-Length" }?.1, "1000")
+        XCTAssertNil(full.1.first { $0.0 == "Content-Range" })
+
+        let ranged = try await body(router.route(head(path, range: "bytes=50-599", method: "HEAD")))
+        XCTAssertEqual(ranged.0, 206)
+        XCTAssertTrue(ranged.2.isEmpty)
+        XCTAssertEqual(ranged.1.first { $0.0 == "Content-Length" }?.1, "550")
+        XCTAssertEqual(ranged.1.first { $0.0 == "Content-Range" }?.1, "bytes 50-599/1000")
+
+        let refused = try await body(router.route(head(path, range: "bytes=5000-", method: "HEAD")))
+        XCTAssertEqual(refused.0, 416)
+        XCTAssertTrue(reads.current.isEmpty)
+    }
+
+    func testBodyLengthMustMatchTheAdvertisedLength() async throws {
+        func makeRouter(yielding chunks: [[UInt8]]) -> (PlaybackRouter, String) {
+            let media = MediaResource(totalSize: 1000, prefix: [UInt8](repeating: 1, count: 100)) { _ in
+                AsyncThrowingStream { continuation in
+                    for chunk in chunks { continuation.yield(chunk) }
+                    continuation.finish()
+                }
+            }
+            let router = PlaybackRouter()
+            return (router, router.register(PlaybackAssets(playlists: [:], media: ["v.mp4": media])))
+        }
+        func drain(_ result: RouteResult) async -> (bytes: [UInt8], error: Error?) {
+            guard case .media(_, _, let stream) = result else { return ([], nil) }
+            var received: [UInt8] = []
+            do {
+                for try await chunk in stream { received += chunk }
+                return (received, nil)
+            } catch {
+                return (received, error)
+            }
+        }
+
+        let (shortRouter, shortToken) = makeRouter(yielding: [[UInt8](repeating: 2, count: 60)])
+        let short = await drain(shortRouter.route(head("/\(shortToken)/v.mp4", range: "bytes=200-299")))
+        XCTAssertEqual(short.bytes.count, 60)
+        XCTAssertEqual(short.error as? PlaybackBodyError, .shorter(expected: 100, received: 60))
+
+        let (longRouter, longToken) = makeRouter(yielding: [[UInt8](repeating: 2, count: 80), [UInt8](repeating: 3, count: 80)])
+        let long = await drain(longRouter.route(head("/\(longToken)/v.mp4", range: "bytes=200-299")))
+        XCTAssertEqual(long.bytes.count, 100)
+        XCTAssertEqual(long.error as? PlaybackBodyError, .longer(expected: 100))
+
+        // Straddling the prefix: 50 prefix bytes, then the read part (100..<150) is the one checked.
+        let straddle = await drain(shortRouter.route(head("/\(shortToken)/v.mp4", range: "bytes=50-149")))
+        XCTAssertEqual(straddle.bytes.count, 100)
+        XCTAssertEqual(straddle.error as? PlaybackBodyError, .longer(expected: 50))
+
+        let (exactRouter, exactToken) = makeRouter(yielding: [[UInt8](repeating: 2, count: 40), [UInt8](repeating: 2, count: 60)])
+        let exact = await drain(exactRouter.route(head("/\(exactToken)/v.mp4", range: "bytes=200-299")))
+        XCTAssertEqual(exact.bytes.count, 100)
+        XCTAssertNil(exact.error)
+    }
+
     func testTokens() {
         let tokens = Set((0..<64).map { _ in PlaybackRouter.makeToken() })
         XCTAssertEqual(tokens.count, 64)
@@ -223,7 +303,8 @@ final class LocalHTTPTests: XCTestCase {
 
     func testNoTokenOrExtraSegmentsAre404() async throws {
         let (router, token) = makeRouter(reads: Locked([]))
-        for path in ["/", "/master.m3u8", "/\(token)", "/\(token)/", "/\(token)/master.m3u8/extra", "//master.m3u8"] {
+        for path in ["/", "/master.m3u8", "/\(token)", "/\(token)/", "/\(token)/master.m3u8/extra", "//master.m3u8",
+                     "//\(token)/master.m3u8", "/\(token)//master.m3u8", "/\(token)/master.m3u8/", "\(token)/master.m3u8"] {
             let result = try await body(router.route(head(path)))
             XCTAssertEqual(result.0, 404, path)
         }

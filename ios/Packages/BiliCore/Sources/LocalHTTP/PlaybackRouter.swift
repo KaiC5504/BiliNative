@@ -24,6 +24,11 @@ public struct PlaybackAssets: Sendable {
     }
 }
 
+public enum PlaybackBodyError: Error, Equatable {
+    case shorter(expected: Int64, received: Int64)
+    case longer(expected: Int64)
+}
+
 public enum RouteResult {
     case text(status: Int, contentType: String, body: [UInt8])
     case media(status: Int, headers: [(String, String)], body: AsyncThrowingStream<[UInt8], Error>)
@@ -57,12 +62,12 @@ public final class PlaybackRouter: @unchecked Sendable {
 
     public func route(_ head: HTTPRequestHead) -> RouteResult {
         guard head.method == "GET" || head.method == "HEAD" else { return .failure(status: 405, headers: []) }
-        let parts = head.path.split(separator: "/").map(String.init)
-        guard parts.count == 2, let assets = entries.current[parts[0]] else { return .failure(status: 404, headers: []) }
-        if let playlist = assets.playlists[parts[1]] {
+        let parts = head.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3, parts[0].isEmpty, let assets = entries.current[parts[1]] else { return .failure(status: 404, headers: []) }
+        if let playlist = assets.playlists[parts[2]] {
             return .text(status: 200, contentType: "application/vnd.apple.mpegurl", body: Array(playlist.utf8))
         }
-        guard let media = assets.media[parts[1]] else { return .failure(status: 404, headers: []) }
+        guard let media = assets.media[parts[2]] else { return .failure(status: 404, headers: []) }
         let status: Int
         let range: ByteRange
         switch RangeRequest.parse(head.headers["range"], totalSize: media.totalSize) {
@@ -78,7 +83,40 @@ public final class PlaybackRouter: @unchecked Sendable {
         }
         var headers = [("Content-Type", "video/mp4"), ("Accept-Ranges", "bytes"), ("Content-Length", "\(range.length)")]
         if status == 206 { headers.append(("Content-Range", "bytes \(range.start)-\(range.end)/\(media.totalSize)")) }
+        if head.method == "HEAD" {
+            return .media(status: status, headers: headers, body: AsyncThrowingStream { $0.finish() })
+        }
         return .media(status: status, headers: headers, body: Self.body(media, range))
+    }
+
+    /// Fails the stream unless it delivers exactly `expected` bytes, so a short or long upstream
+    /// cannot leave a client waiting on an advertised Content-Length.
+    static func lengthChecked(_ stream: AsyncThrowingStream<[UInt8], Error>, expected: Int64) -> AsyncThrowingStream<[UInt8], Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                var received: Int64 = 0
+                do {
+                    for try await chunk in stream {
+                        let remaining = expected - received
+                        if Int64(chunk.count) > remaining {
+                            if remaining > 0 { continuation.yield(Array(chunk[0..<Int(remaining)])) }
+                            continuation.finish(throwing: PlaybackBodyError.longer(expected: expected))
+                            return
+                        }
+                        received += Int64(chunk.count)
+                        continuation.yield(chunk)
+                    }
+                    if received == expected {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: PlaybackBodyError.shorter(expected: expected, received: received))
+                    }
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     static func body(_ media: MediaResource, _ range: ByteRange) -> AsyncThrowingStream<[UInt8], Error> {
@@ -90,10 +128,12 @@ public final class PlaybackRouter: @unchecked Sendable {
                 continuation.finish()
             }
         }
-        if range.start > prefixEnd { return media.read(range) }
+        if range.start > prefixEnd { return lengthChecked(media.read(range), expected: range.length) }
         let head = Array(media.prefix[Int(range.start)...Int(prefixEnd)])
-        guard let rest = ByteRange(start: prefixEnd + 1, end: range.end) else { return media.read(range) }
-        let tail = media.read(rest)
+        guard let rest = ByteRange(start: prefixEnd + 1, end: range.end) else {
+            return lengthChecked(media.read(range), expected: range.length)
+        }
+        let tail = lengthChecked(media.read(rest), expected: rest.length)
         return AsyncThrowingStream { continuation in
             continuation.yield(head)
             let task = Task {

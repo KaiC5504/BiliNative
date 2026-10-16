@@ -25,7 +25,7 @@ public enum HTTPRequestParser {
     public static let maxHeaderBytes = 16 * 1024
 
     public static func parse(_ bytes: [UInt8]) -> HTTPParseResult {
-        guard let end = headerEnd(bytes) else { return bytes.count > maxHeaderBytes ? .invalid : .incomplete }
+        guard let end = headerEnd(bytes) else { return bytes.count >= maxHeaderBytes ? .invalid : .incomplete }
         let lines = String(decoding: bytes[0..<end], as: UTF8.self).components(separatedBy: "\r\n")
         let requestLine = lines[0].split(separator: " ")
         guard requestLine.count == 3, requestLine[2].hasPrefix("HTTP/1.") else { return .invalid }
@@ -42,8 +42,9 @@ public enum HTTPRequestParser {
     }
 
     private static func headerEnd(_ bytes: [UInt8]) -> Int? {
-        guard bytes.count >= 4 else { return nil }
-        for index in 0...(bytes.count - 4) where bytes[index] == 13 && bytes[index + 1] == 10 && bytes[index + 2] == 13 && bytes[index + 3] == 10 {
+        let limit = min(bytes.count, maxHeaderBytes)
+        guard limit >= 4 else { return nil }
+        for index in 0...(limit - 4) where bytes[index] == 13 && bytes[index + 1] == 10 && bytes[index + 2] == 13 && bytes[index + 3] == 10 {
             return index
         }
         return nil
