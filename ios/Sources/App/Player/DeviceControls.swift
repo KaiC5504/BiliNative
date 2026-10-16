@@ -33,15 +33,23 @@ enum DeviceControls {
     /// indicator takes the HUD's place; inline the buttons show the system HUD as usual.
     static func attachVolumeView() {
         _ = attachedSlider()
+        observeVolume()
     }
 
     static func detachVolumeView() {
+        volumeObservation?.invalidate()
+        volumeObservation = nil
         volumeView?.removeFromSuperview()
         volumeView = nil
     }
 
+    /// Posted for a volume change made with the hardware buttons while the volume view hides the system HUD.
+    /// `userInfo["volume"]` holds the new level.
+    static let hardwareVolumeChanged = Notification.Name("DeviceControls.hardwareVolumeChanged")
+
     static func setVolume(_ value: Double) {
         let level = Float(min(max(value, 0), 1))
+        lastOwnVolumeChange = Date()
         let (slider, fresh) = attachedSlider()
         guard let slider else {
             if !reportedMissingSlider {
@@ -54,6 +62,7 @@ enum DeviceControls {
         if fresh {
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(50))
+                lastOwnVolumeChange = Date()
                 slider.value = level
             }
         } else {
@@ -63,6 +72,24 @@ enum DeviceControls {
 
     private static var volumeView: MPVolumeView?
     private static var reportedMissingSlider = false
+    private static var volumeObservation: NSKeyValueObservation?
+    private static var lastOwnVolumeChange: Date?
+
+    private static func observeVolume() {
+        guard volumeObservation == nil else { return }
+        // KVO calls back on an audio thread, so the handler must not be main-actor isolated.
+        volumeObservation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { @Sendable _, change in
+            guard let value = change.newValue else { return }
+            Task { @MainActor in DeviceControls.volumeChanged(Double(value)) }
+        }
+    }
+
+    private static func volumeChanged(_ value: Double) {
+        guard volumeObservation != nil else { return }
+        // The system reports our own slider moves too, a little after the drag set them.
+        if let last = lastOwnVolumeChange, Date().timeIntervalSince(last) < 0.5 { return }
+        NotificationCenter.default.post(name: hardwareVolumeChanged, object: nil, userInfo: ["volume": value])
+    }
 
     private static func attachedSlider() -> (UISlider?, fresh: Bool) {
         if let volumeView, volumeView.window != nil {

@@ -73,6 +73,11 @@ final class FilterTests: XCTestCase {
         XCTAssertEqual(shown(elems, rules: rules), ["xyz"])
     }
 
+    func testEmptyRegexBlocksNothing() {
+        let elems = [makeElem("abc", at: 1), makeElem("xyz", at: 2)]
+        XCTAssertEqual(shown(elems, rules: [BlockRule(id: 1, kind: .regex, filter: "//")]), ["abc", "xyz"])
+    }
+
     func testDedupeMergesWithinTenSecondsAndCountBlockDropsMerged() {
         let elems = [makeElem("哈哈", at: 1_000), makeElem("哈哈", at: 5_000), makeElem("哈哈", at: 12_000)]
         XCTAssertEqual(shown(elems, .init(dedupe: true)), ["哈哈 ×2", "哈哈"])

@@ -156,6 +156,8 @@ private struct RuleMatcher {
                 if pattern.count >= 2, pattern.hasPrefix("/"), pattern.hasSuffix("/") {
                     pattern = String(pattern.dropFirst().dropLast())
                 }
+                // NSRegularExpression accepts "" on Apple platforms, and it matches every danmaku.
+                guard !pattern.isEmpty else { continue }
                 if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
                     regexes.append(regex)
                 }

@@ -33,7 +33,7 @@ struct VideoPageView: View {
                 PageLayout(model: model, chrome: chrome, panel: panel, danmaku: danmakuView(for: model),
                            danmakuEnabled: env.settings.danmaku.enabled,
                            onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar)
-                PanelLayer(panel: panel, model: model)
+                PanelLayer(panel: panel, model: model, onNeedLogin: presentLogin)
                     .ignoresSafeArea()
             } else {
                 Color.black.ignoresSafeArea()
@@ -74,6 +74,12 @@ struct VideoPageView: View {
         }
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             OrientationController.shared.videoIsVertical = vertical ?? false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DeviceControls.hardwareVolumeChanged)) { note in
+            if let volume = note.userInfo?["volume"] as? Double { chrome.showHardwareVolume(volume) }
+        }
+        .onChange(of: OrientationController.shared.presentation) { _, presentation in
+            if presentation == .inline { sendBarOpen = false }
         }
         .onChange(of: panel.wrappedValue == nil) { _, closed in
             chrome.panelOpen = !closed || sendBarOpen

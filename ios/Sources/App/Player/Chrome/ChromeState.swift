@@ -33,6 +33,7 @@ final class ChromeState {
     @ObservationIgnored private var seekCount = 0
     @ObservationIgnored private var levelStart: Double?
     @ObservationIgnored private var holding = false
+    @ObservationIgnored private var volumeHUDTask: Task<Void, Never>?
 
     init(sleep: @escaping (Double) async -> Void = { seconds in
         _ = try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
@@ -120,6 +121,19 @@ final class ChromeState {
         case .levelEnded:
             levelStart = nil
             if case .level? = hud { hud = nil }
+        }
+    }
+
+    /// The hardware volume buttons in full screen, where iOS leaves out its own HUD: shows the level for a second.
+    func showHardwareVolume(_ value: Double) {
+        guard levelStart == nil else { return }
+        hud = .level(.volume, value)
+        volumeHUDTask?.cancel()
+        let sleep = self.sleep
+        volumeHUDTask = Task { [weak self] in
+            await sleep(1)
+            guard !Task.isCancelled, let self, self.levelStart == nil, case .level(.volume, _)? = self.hud else { return }
+            self.hud = nil
         }
     }
 
