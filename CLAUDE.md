@@ -81,10 +81,19 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - Live speed test from the PC: `swift run --package-path ios/Packages/BiliCore ripper-bench --bv BV… --mb 8`
   (Task 20). If Bilibili refuses API calls from the PC, save a playurl response from the browser to
   `local/playurl.json` (gitignored) and pass `--playurl local/playurl.json`.
-- App code: only in CI ("iOS compile check" workflow: core tests, simulator build, unit and integration
-  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac. Debug builds take
-  `-DemoData YES` (invented fixtures, no network or account) and `-DemoScreen <name>` to open any screen for
-  screenshots; the `shoot` list in `.github/workflows/ios-compile.yml` names them all.
+- App code, compile only, on the PC: `bash tools/check-app.sh` (PowerShell: `tools\check-app.ps1`). It
+  builds the app target and AppTests for the iOS simulator in WSL with xtool's iOS SDK and prints only
+  compiler errors with repo paths; about 35 s cold, a few seconds after small edits. `--warnings`,
+  `--release` (no `DEBUG`), `--device`, `--app-only`, `--repo DIR` (default: the checkout holding the
+  current folder, so it works from any worktree). Run it before every push that touches `ios/`.
+  It does not run tests, build assets/xcstrings/Info.plist or sign, and it compiles with Xcode 27.1
+  (Swift 6.4) while CI uses Xcode 26.6 (Swift 6.3), so CI stays the gate. Warnings show only for files
+  recompiled in that run. Setup and the manifest it compiles with: `tools/app-check/README.md`.
+- App code, everything else: only in CI ("iOS compile check" workflow: simulator build, unit and integration
+  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac. On `main` and `m2` it also runs
+  the BiliCore tests and a Release build; other branches skip both, since the PC already runs `swift test`.
+  Debug builds take `-DemoData YES` (invented fixtures, no network or account) and `-DemoScreen <name>` to open
+  any screen for screenshots; the `shoot` list in `.github/workflows/ios-compile.yml` names them all.
 - On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (M1) and `docs/m2-phone-checklist.md` (M2).
 
 ## Debugging from evidence
