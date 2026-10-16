@@ -1,0 +1,249 @@
+# Signed device build to TestFlight on GitHub Actions. Free and queue-free on a public
+# repo. The unsigned compile check is ios-compile.yml; this runs only when dispatched.
+#
+# Start it with `python scripts/testflight.py start`, never by hand: that hands main's
+# exact head to this workflow and checks the environment first.
+#
+# The repo is public, so this log and every artifact are public too. Secrets live in
+# the `testflight` environment, which only main can use (manual-steps §5), and reach
+# only the steps that need them. Never upload the IPA or Xcode logs, never `set -x`.
+name: TestFlight
+run-name: TestFlight ${{ inputs.upload && 'upload' || 'dry run' }} ${{ inputs.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Head of main to build"
+        required: true
+        type: string
+      upload:
+        description: "Upload to TestFlight (off: sign and check the IPA only)"
+        required: true
+        type: boolean
+        default: false
+      create_signing:
+        description: "Register the bundle id and create the certificate/profile if missing (first build, renewal)"
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# This job holds the signing key: never restore a cache another workflow wrote.
+cache-mode: none
+
+env:
+  # cli-tools otherwise caches an App Store Connect token in $TMPDIR, where the build's
+  # third-party code could read it.
+  APP_STORE_CONNECT_DISABLE_JWT_CACHE: "1"
+  BUNDLE_ID: com.kaichuan.bilinative
+  # App Store Connect → the app → App Information → Apple ID. Placeholder until KaiC
+  # creates the app record (manual-steps §3); builds fail at "Pick the build number" until
+  # it is filled in.
+  ASC_APP_ID: "__ASC_APP_ID__"
+  PROJECT: ios/BiliNative.xcodeproj
+  SCHEME: BiliNative
+  # For an app that already shipped elsewhere: its highest build number. Installed apps
+  # compare build numbers only, so they must keep rising.
+  BUILD_NUMBER_FLOOR: "0"
+
+jobs:
+  build:
+    name: Signed build
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: testflight
+    outputs:
+      build_number: ${{ steps.number.outputs.build_number }}
+    steps:
+      - name: Build only the checked commit
+        env:
+          WANT: ${{ inputs.sha }}
+        run: |
+          if [ "$WANT" != "$GITHUB_SHA" ]; then
+            echo "main is at $GITHUB_SHA, not $WANT. Start again on the new head."
+            exit 1
+          fi
+
+      # Pin every action to a commit SHA (look up the current release's SHA).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Toolchain
+        run: |
+          # Newest Xcode on the image; the app targets iOS 26. Pin a version (and check
+          # `xcodebuild -version`'s build number) once the app is stable.
+          NEWEST=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST"
+          xcodebuild -version
+          # cli-tools shells out to `openssl smime`; keep OpenSSL 3 first on PATH.
+          if [ -d /opt/homebrew/opt/openssl@3/bin ]; then
+            echo /opt/homebrew/opt/openssl@3/bin >> "$GITHUB_PATH"
+          fi
+          # Homebrew's Python refuses global installs (PEP 668), hence setup-python.
+          python -m pip install --quiet --require-hashes -r scripts/testflight-requirements.txt
+
+      - name: Generate the Xcode project
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Create signing files
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          CERT_KEY_B64: ${{ secrets.CERT_KEY_B64 }}
+          # The legal name in the certificate, which cli-tools prints. As a secret it is
+          # masked; unset, the public log shows it.
+          SIGNING_NAME: ${{ secrets.SIGNING_NAME }}
+          CREATE: ${{ inputs.create_signing }}
+        run: |
+          set -e
+          umask 077
+          key="$RUNNER_TEMP/cert_key.pem"
+          trap 'rm -f "$key"' EXIT
+          # Not cli-tools' empty default: with it, anything that copies the keychain
+          # file can decrypt the signing key offline.
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          export KEYCHAIN_PASSWORD
+          keychain initialize --password @env:KEYCHAIN_PASSWORD
+          # Carried base64 because a PEM pasted into a web form loses its line breaks.
+          printf '%s' "$CERT_KEY_B64" | openssl base64 -d -A > "$key"
+          # The runner only knows this key in its base64 form.
+          grep -v -e '-----' "$key" | while IFS= read -r line; do echo "::add-mask::$line"; done
+          p12_password=$(openssl rand -hex 16)
+          echo "::add-mask::$p12_password"
+          # Normally this only finds the existing certificate and profile, so a wrong key
+          # fails here instead of minting certificates. create_signing registers a new
+          # bundle id and profile (first build) or renews an expired certificate.
+          create=""
+          if [ "$CREATE" = true ]; then create="--create"; fi
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE $create \
+            --certificate-key "@file:$key" \
+            --p12-password "$p12_password"
+          # One call per extension whose bundle id has no profile yet, e.g.:
+          # app-store-connect fetch-signing-files "$BUNDLE_ID.widget" \
+          #   --type IOS_APP_STORE $create --certificate-key "@file:$key" \
+          #   --p12-password "$p12_password"
+          rm -f "$key"
+          keychain add-certificates --certificate-password "$p12_password"
+          rm -f "$HOME/Library/Developer/Xcode/UserData/Certificates/"*.p12 \
+            "$HOME/Library/MobileDevice/Certificates/"*.p12
+          # Lets codesign use the key without a GUI prompt on a headless runner.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+            "$(security default-keychain | sed -e 's/^ *"//' -e 's/"$//')" > /dev/null
+
+      - name: Apply signing settings
+        run: |
+          xcode-project use-profiles \
+            --project "$PROJECT" \
+            --code-signing-setup-verbose-logging
+
+      - name: Pick the build number
+        id: number
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          # A brand-new app has no builds yet; anything else non-numeric is an error.
+          if ! latest=$(app-store-connect get-latest-testflight-build-number "$ASC_APP_ID" --all-versions 2>&1); then
+            if echo "$latest" | grep -qi "no build"; then latest=0; else echo "$latest"; exit 1; fi
+          fi
+          case "$latest" in
+            ''|*[!0-9]*) echo "App Store Connect gave no build number: '$latest'"; exit 1 ;;
+          esac
+          next=$(( (10#$latest > BUILD_NUMBER_FLOOR ? 10#$latest : BUILD_NUMBER_FLOOR) + 1 ))
+          echo "latest uploaded build is $latest; this one is $next"
+          echo "BUILD_NUMBER=$next" >> "$GITHUB_ENV"
+          echo "build_number=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Build IPA
+        run: |
+          # A command-line build setting outranks the project, which is how the build
+          # number gets in. For big SPM apps add to --archive-flags:
+          # "-destination 'generic/platform=iOS' -skipPackagePluginValidation -skipMacroValidation"
+          xcode-project build-ipa \
+            --project "$PROJECT" \
+            --scheme "$SCHEME" \
+            --archive-xcargs "COMPILER_INDEX_STORE_ENABLE=NO CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+          set -- build/ios/ipa/*.ipa
+          if [ $# -ne 1 ] || [ ! -f "$1" ]; then
+            echo "expected exactly one IPA, found: $*"
+            exit 1
+          fi
+          echo "IPA=$1" >> "$GITHUB_ENV"
+          echo "### $BUILD_NUMBER from ${GITHUB_SHA:0:8}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to TestFlight
+        if: inputs.upload
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: app-store-connect publish --path "$IPA"
+
+  # Green means Apple has processed the build; testers can install it minutes later.
+  processed:
+    name: Apple processing
+    needs: build
+    if: inputs.upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: testflight
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/testflight-requirements.txt
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install cli-tools
+        run: python -m pip install --quiet --require-hashes -r scripts/testflight-requirements.txt
+
+      - name: Wait for Apple to finish processing
+        env:
+          BUILT: ${{ needs.build.outputs.build_number }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          deadline=$((SECONDS + 3600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            # One failed call is a blip; Apple's answer decides. NOT_FOUND for the first
+            # few minutes is normal.
+            state=$(timeout 120 app-store-connect builds list --app-id "$ASC_APP_ID" \
+                --build-version-number "$BUILT" --json \
+              | python -c 'import json,sys; b=json.load(sys.stdin); print(b[0]["attributes"]["processingState"] if b else "NOT_FOUND")') \
+              || state="no answer, retrying"
+            echo "$(date -u +%H:%M:%S) build $BUILT: $state"
+            case "$state" in
+              VALID) exit 0 ;;
+              FAILED|INVALID) echo "Apple rejected build $BUILT; its email says why."; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "Still processing after an hour. Once TestFlight shows it, rerun this job:"
+          echo "  gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY --failed"
+          exit 1

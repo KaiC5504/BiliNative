@@ -1,0 +1,113 @@
+name: iOS compile check
+
+# Unsigned simulator build, tests, launch and screenshots. Needs no Apple account.
+# The signed device build lives in testflight.yml.
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-compile.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-compile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$NEWEST" ]; then sudo xcode-select -s "$NEWEST"; fi
+          xcodebuild -version
+
+      - name: Core package tests
+        run: swift test --package-path ios/Packages/BiliCore
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: cd ios && xcodegen generate
+
+      - name: Check compilation conditions
+        run: |
+          set -e
+          conditions() {
+            xcodebuild -project ios/BiliNative.xcodeproj -target BiliNative -configuration "$1" -showBuildSettings \
+              | grep SWIFT_ACTIVE_COMPILATION_CONDITIONS
+          }
+          debug=$(conditions Debug); echo "Debug:   $debug"
+          release=$(conditions Release); echo "Release: $release"
+          echo "$debug" | grep -qw DEBUG
+          echo "$debug" | grep -qw DEV_TOOLS
+          echo "$release" | grep -qw DEV_TOOLS
+
+      - name: Boot a simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          best = None
+          for runtime, items in json.load(sys.stdin)['devices'].items():
+              if 'iOS' not in runtime:
+                  continue
+              for device in items:
+                  if 'iPhone' in device['name'] and device['isAvailable']:
+                      best = device['udid']
+          print(best)
+          ")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Build and test on the simulator
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ios/BiliNative.xcodeproj \
+            -scheme BiliNative \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            test
+
+      - name: Install, launch and screenshot
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          APP=com.kaichuan.bilinative
+          xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/BiliNative.app
+          mkdir -p shots
+          xcrun simctl launch "$UDID" $APP
+          sleep 15
+          xcrun simctl io "$UDID" screenshot shots/01-first-launch.png
+          shoot() {
+            name=$1; wait=$2; shift 2
+            xcrun simctl terminate "$UDID" $APP || true
+            xcrun simctl launch "$UDID" $APP -DemoData YES "$@"
+            sleep "$wait"
+            xcrun simctl io "$UDID" screenshot "shots/$name.png"
+          }
+
+      - name: Collect crash reports
+        if: always()
+        run: |
+          mkdir -p shots/crashes
+          find ~/Library/Logs/DiagnosticReports -name "BiliNative*" -exec cp {} shots/crashes/ \; 2>/dev/null || true
+          if [ -n "$(ls -A shots/crashes 2>/dev/null)" ]; then
+            echo "CRASHES FOUND:"; head -60 shots/crashes/* || true
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: simulator-screenshots
+          path: shots/

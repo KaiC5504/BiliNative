@@ -1,0 +1,105 @@
+name: BiliNative
+
+options:
+  bundleIdPrefix: com.kaichuan
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: zh-Hans
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    # Swift 5 mode on purpose (see the ios-testflight template): strict concurrency cannot be
+    # iterated on without a Mac.
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CODE_SIGN_STYLE: Automatic
+
+packages:
+  BiliCore:
+    path: Packages/BiliCore
+
+targets:
+  BiliNative:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/App
+      - path: Resources
+    dependencies:
+      - package: BiliCore
+        product: BiliCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kaichuan.bilinative
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # Set per target and configuration: a project-level value would replace XcodeGen's
+        # Debug DEBUG. Internal builds stream logs to the PC; a public release build drops
+        # DEV_TOOLS.
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG DEV_TOOLS"
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEV_TOOLS"
+    info:
+      path: Generated/BiliNative-Info.plist
+      properties:
+        CFBundleDisplayName: BiliNative
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleIconName: AppIcon
+        CFBundleDevelopmentRegion: zh-Hans
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIBackgroundModes:
+          - audio
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: 用于把调试日志发送到你电脑上的日志服务器。
+        NSBonjourServices:
+          - _bilinative-log._tcp
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+
+  BiliNativeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/AppTests
+    dependencies:
+      - target: BiliNative
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.kaichuan.bilinative.tests
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG DEV_TOOLS"
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEV_TOOLS"
+
+schemes:
+  BiliNative:
+    build:
+      targets:
+        BiliNative: all
+        BiliNativeTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BiliNativeTests
+    archive:
+      config: Release

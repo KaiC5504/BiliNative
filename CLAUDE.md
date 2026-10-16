@@ -66,3 +66,27 @@ AVPlayer made to the in-app server, and AVPlayer's own access and error logs.
   `git -C D:\Repos\Apps\Bilibili-thread-ripper show 2026.10.8.1:src/idm-downloader.js`
   (or https://github.com/MrTangLuyao/Bilibili-thread-ripper/tree/2026.10.8.1/src).
 - `swift test` on Windows prints a `wchar_t ... broken by a context change` warning from the WinSDK module a few times per run. It comes from the toolchain, not this repo; ignore it.
+
+## Building and shipping
+
+iOS app, developed on Windows with no Mac. GitHub Actions does everything:
+`ios-compile.yml` compiles and screenshots on every push, and `testflight.yml` signs and
+uploads when `scripts/testflight.py start` dispatches it. The full playbook, including
+every manual step and known failures, is the global `ios-testflight` skill. Load it
+before touching signing, `testflight.yml`, `ios/project.yml` or the compile workflow.
+
+Identity: app `BiliNative`, scheme `BiliNative`, bundle id `com.kaichuan.bilinative`
+(extensions: none). Repo `KaiC5504/BiliNative` (public). App Store Connect name:
+`BiliNative`, Apple ID: not created yet (`ASC_APP_ID` in `testflight.yml` is a placeholder
+until then).
+
+1. Work on `main` (this repo has no `dev` branch). Push. Wait for the compile check
+   (`gh run list --limit 1`, then `gh run watch <id> --exit-status`), and look at the
+   `simulator-screenshots` artifact for every screen you touched.
+2. `python scripts/testflight.py start`, then `python scripts/testflight.py watch <id>` in
+   the background. Green means Apple has processed the build. After any change to
+   `testflight.yml`, run `start --dry-run` first.
+3. Report the TestFlight build number, what changed and test steps for the phone.
+
+The owner has authorised commit, push and Actions runs without asking. Never start a
+signed build before the compile check is green.
