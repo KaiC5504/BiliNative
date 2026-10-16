@@ -10,31 +10,35 @@ struct VideoPlayerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let (controller, host) = Self.makeController(player: player, overlay: overlay ?? AnyView(EmptyView()))
+        controller.delegate = context.coordinator
+        context.coordinator.onFullScreenChange = onFullScreenChange
+        context.coordinator.overlayHost = host
+        return controller
+    }
+
+    static func makeController(player: AVPlayer, overlay: AnyView) -> (AVPlayerViewController, UIHostingController<AnyView>?) {
         let controller = AVPlayerViewController()
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = true
         controller.entersFullScreenWhenPlaybackBegins = false
-        controller.delegate = context.coordinator
-        context.coordinator.onFullScreenChange = onFullScreenChange
         controller.loadViewIfNeeded()
-        if let contentOverlay = controller.contentOverlayView {
-            let host = UIHostingController(rootView: overlay ?? AnyView(EmptyView()))
-            host.view.backgroundColor = .clear
-            host.view.isUserInteractionEnabled = false
-            host.view.translatesAutoresizingMaskIntoConstraints = false
-            controller.addChild(host)
-            contentOverlay.addSubview(host.view)
-            NSLayoutConstraint.activate([
-                host.view.leadingAnchor.constraint(equalTo: contentOverlay.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: contentOverlay.trailingAnchor),
-                host.view.topAnchor.constraint(equalTo: contentOverlay.topAnchor),
-                host.view.bottomAnchor.constraint(equalTo: contentOverlay.bottomAnchor),
-            ])
-            host.didMove(toParent: controller)
-            context.coordinator.overlayHost = host
-        }
-        return controller
+        guard let contentOverlay = controller.contentOverlayView else { return (controller, nil) }
+        let host = UIHostingController(rootView: overlay)
+        host.view.backgroundColor = .clear
+        host.view.isUserInteractionEnabled = false
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        controller.addChild(host)
+        contentOverlay.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.leadingAnchor.constraint(equalTo: contentOverlay.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: contentOverlay.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: contentOverlay.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: contentOverlay.bottomAnchor),
+        ])
+        host.didMove(toParent: controller)
+        return (controller, host)
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
