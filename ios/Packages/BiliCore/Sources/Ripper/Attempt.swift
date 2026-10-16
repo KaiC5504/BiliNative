@@ -11,6 +11,8 @@ struct EngineContext: @unchecked Sendable {
     let auto: AutoConcurrency?
     let clock: MonotonicClock
     let logger: Logger
+    /// A class, so copies of the context share one record.
+    var nodes = NodeStats()
 }
 
 /// Bytes already held from the front of a piece; a retry or a backup copy asks only for the rest.
@@ -103,6 +105,8 @@ struct AttemptRunner: Sendable {
         progress.begin(at: started, length: part.length, base: base)
         let node = NodeCatalog.nodeKey(of: url)
         ctx.stats.started(node: node)
+        ctx.nodes.begin(url)
+        defer { ctx.nodes.end(url, receiving: progress.timing.gotHeaders) }
         do {
             let output = try await withThrowingTaskGroup(of: AttemptOutput?.self) { group -> AttemptOutput in
                 group.addTask { try await self.transfer(url: url, part: part, base: base, progress: progress, started: started, node: node) }
@@ -120,6 +124,7 @@ struct AttemptRunner: Sendable {
             }
             let elapsed = max(1, ctx.clock.nowMs() - started)
             ctx.meter.record(bytes: part.length, elapsedMs: elapsed)
+            ctx.nodes.body(url, bytes: part.length, ms: ctx.clock.nowMs() - progress.headersAt)
             resolver.success(url, bps: part.length >= Meter.sampleMinBytes ? Double(part.length) * 1000 / elapsed : 0)
             ctx.logger.debug(.engine, "piece", ["node": .init(node), "range": .init(part.description),
                                                 "firstByteMs": .init((progress.headersAt - started).rounded()),
@@ -129,7 +134,13 @@ struct AttemptRunner: Sendable {
             let received = progress.received
             let elapsed = max(1, ctx.clock.nowMs() - started)
             let cancelled = Task.isCancelled || error is CancellationError
+            let gotHeaders = progress.timing.gotHeaders
             if cancelled {
+                if gotHeaders {
+                    ctx.nodes.crawl(url, bytes: received, ms: ctx.clock.nowMs() - progress.headersAt)
+                } else {
+                    ctx.nodes.outrun(url, waitedMs: elapsed)
+                }
                 // A copy that lost the race still measured its node; without this a slow node is never measured.
                 if received >= Meter.sampleMinBytes { resolver.sample(url, bps: Double(received) * 1000 / elapsed) }
                 if received > 0 { resolver.streamed(url) }
@@ -137,6 +148,7 @@ struct AttemptRunner: Sendable {
                                                                 "bytes": .init(received), "ms": .init(elapsed.rounded())])
             } else {
                 let ripperError = error as? RipperError
+                if ripperError == .firstByteTimeout { ctx.nodes.silent(url, waitedMs: elapsed) }
                 resolver.failure(url, status: ripperError?.status, receivedBytes: received, range: part,
                                  timedOut: ripperError?.isTimeout == true)
                 if let status = ripperError?.status, status == 412 || status == 429 {
@@ -159,6 +171,7 @@ struct AttemptRunner: Sendable {
         let now = ctx.clock.nowMs()
         progress.headers(at: now)
         ctx.stats.firstByte(node: node, ms: now - started)
+        ctx.nodes.firstByte(url, ms: now - started)
         let contentRange = ContentRange.parse(response.headers["content-range"])
         guard response.status == 206, let contentRange, contentRange.range == part else {
             throw RipperError.badResponse(status: response.status)

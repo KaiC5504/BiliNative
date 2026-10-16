@@ -168,6 +168,7 @@ public final class RipperSession: @unchecked Sendable {
     public func networkChanged(interfaceChanged: Bool) {
         bans.reset()
         for resolver in resolvers.values { resolver.resetHealth(clearMeasurements: interfaceChanged) }
+        ctx.nodes.reset()
         ctx.logger.info(.engine, "network changed, node health reset", ["interfaceChanged": .init(interfaceChanged)])
     }
 
@@ -404,6 +405,7 @@ extension RipperSession {
     func isCached(_ track: TrackKind, _ range: ByteRange) -> Bool {
         state.withLock { $0.cache[CacheKey(track: track, range: range)] != nil }
     }
+    var nodeStats: NodeStats { ctx.nodes }
     var seekCount: Int { state.withLock { $0.seeks } }
     var mediaRequestCount: Int { state.withLock { Int($0.requests) } }
     func prefetchedBytes(_ track: TrackKind) -> Int64 { state.withLock { Self.prefetchedBytes($0, track) } }
