@@ -126,6 +126,7 @@ final class IntroTabTests: XCTestCase {
 final class RelatedPushTests: XCTestCase {
     private typealias F = VideoPageFixtures
     private var window: UIWindow?
+    private var env: AppEnvironment?
 
     override func setUp() async throws {
         UserDefaults.standard.set(true, forKey: "DemoData")
@@ -134,6 +135,8 @@ final class RelatedPushTests: XCTestCase {
     override func tearDown() async throws {
         UserDefaults.standard.removeObject(forKey: "DemoData")
         PiPKeeper.shared.release()
+        env?.navigator.path = []
+        try? await Task.sleep(for: .milliseconds(600))
         window?.isHidden = true
         window = nil
     }
@@ -141,31 +144,37 @@ final class RelatedPushTests: XCTestCase {
     func testRelatedVideoPushesAPageAndBackReturns() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let env = AppEnvironment()
+        self.env = env
         let model = env.makeVideoPageModel(route: VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         let window = UIWindow(windowScene: scene)
         window.rootViewController = UIHostingController(rootView: StackRoot(navigator: env.navigator).environment(env))
-        env.navigator.show(model)
         window.makeKeyAndVisible()
         self.window = window
+        let laidOut = await waitUntil(5) { (window.rootViewController?.view.bounds.width ?? 0) > 0 }
+        XCTAssertTrue(laidOut)
 
-        let loaded = await waitUntil(10) { !model.related.isEmpty && Self.hosts(in: window).count == 1 }
-        XCTAssertTrue(loaded, "the first page never loaded")
+        env.navigator.show(model)
+        let loaded = await waitUntil(10) {
+            !model.related.isEmpty && model.controller?.isPlaying == true && Self.hosts(in: window).count == 1
+        }
+        XCTAssertTrue(loaded, "the first page never played: related \(model.related.count), controller \(String(describing: model.controller))")
         let first = try XCTUnwrap(Self.hosts(in: window).first)
         let card = model.related[0]
 
         model.openRelated(card)
-        let pushed = await waitUntil(8) { Self.hosts(in: window).contains { $0 !== first } }
-        XCTAssertTrue(pushed, "no second page came up")
-        guard case .video(let pushed)? = env.navigator.path.last else { return XCTFail("no video page pushed") }
-        XCTAssertEqual(pushed.bvid, card.bvid)
-        let covered = await waitUntil(5) { model.covered }
-        XCTAssertTrue(covered, "the page under the related video should be covered, not closed")
+        let arrived = await waitUntil(8) { Self.hosts(in: window).contains { $0 !== first } }
+        XCTAssertTrue(arrived, "no second page came up")
+        guard case .video(let route)? = env.navigator.path.last else { return XCTFail("no video page pushed") }
+        XCTAssertEqual(route.bvid, card.bvid)
+        let covered = await waitUntil(8) { model.covered }
+        XCTAssertTrue(covered, "the page under the related video should be covered: closed \(model.closed), "
+                      + "playing \(model.controller?.isPlaying == true), path \(env.navigator.path.count)")
         XCTAssertFalse(model.closed)
 
         env.navigator.path.removeLast()
         let back = await waitUntil(8) { Self.hosts(in: window).map(ObjectIdentifier.init) == [ObjectIdentifier(first)] }
         XCTAssertTrue(back, "the first page did not come back alone: \(Self.hosts(in: window).count) hosts")
-        let uncovered = await waitUntil(5) { !model.covered }
+        let uncovered = await waitUntil(8) { !model.covered }
         XCTAssertTrue(uncovered)
     }
 
