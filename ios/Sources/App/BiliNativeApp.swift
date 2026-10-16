@@ -9,6 +9,7 @@ struct BiliNativeApp: App {
 
     init() {
         DevLogSetup.install()
+        BorrowedIcon.registerFont()
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         } catch {
