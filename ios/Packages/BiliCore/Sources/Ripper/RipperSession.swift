@@ -35,12 +35,15 @@ public final class RipperSession: @unchecked Sendable {
         var segmentAt: [TrackKind: [Int64: Int]] = [:]
         var cache: [CacheKey: CacheEntry] = [:]
         var inflight: [CacheKey: Task<[UInt8], Error>] = [:]
+        /// Segments a player request is downloading or waiting on, with how many requests; prefetch leaves them alone.
+        var playerPending: [CacheKey: Int] = [:]
         var reads: [UInt64: Task<Void, Never>] = [:]
         var nextReadID: UInt64 = 0
         var lastRequest: [TrackKind: ByteRange] = [:]
         var requests: UInt64 = 0
         /// Requests numbered up to this were already covered by an `onFatal` call.
         var fatalCovered: UInt64 = 0
+        /// For tests.
         var seeks = 0
         var closed = false
     }
@@ -234,7 +237,16 @@ public final class RipperSession: @unchecked Sendable {
             } else if request.seek {
                 value.seeks += 1
             }
+            if case .memory = request.plan {} else { value.playerPending[key, default: 0] += 1 }
             return request
+        }
+        defer {
+            if case .memory = request.plan {} else {
+                state.withLock { value in
+                    let left = (value.playerPending[key] ?? 1) - 1
+                    value.playerPending[key] = left > 0 ? left : nil
+                }
+            }
         }
         var served = false
         var source = "fetch"
@@ -283,13 +295,14 @@ public final class RipperSession: @unchecked Sendable {
     }
 
     /// AVPlayer may ask for a track's next segment before the current one is in, and two such requests
-    /// can arrive out of order, so a request within a segment of the previous one is not a seek.
+    /// can arrive out of order, so a request within a segment (or, unaligned, its own length) of the
+    /// previous one is not a seek.
     private static func isSeek(_ range: ByteRange, previous: ByteRange?, positions: [Int64: Int]?) -> Bool {
         guard let previous else { return true }
         if let position = positions?[range.start], let last = positions?[previous.start] {
             return position < last - 1 || position > last + 2
         }
-        return range.start < previous.start || range.start > previous.end + 1
+        return range.start < previous.start - range.length || range.start > previous.end + 1 + range.length
     }
 
     private func claimFatal(_ number: UInt64) -> Bool {
@@ -342,7 +355,7 @@ public final class RipperSession: @unchecked Sendable {
             for next in segments[(position + 1)...] {
                 if next.startTime - playhead > aheadLimit { break }
                 let key = CacheKey(track: track, range: next.range)
-                if value.cache[key] != nil || value.inflight[key] != nil { continue }
+                if value.cache[key] != nil || value.inflight[key] != nil || value.playerPending[key] != nil { continue }
                 if next.range.length > budget { break }
                 budget -= next.range.length
                 let deadline = deadline(for: next)
@@ -378,7 +391,11 @@ public final class RipperSession: @unchecked Sendable {
     }
 }
 
+/// For tests.
 extension RipperSession {
+    func isCached(_ track: TrackKind, _ range: ByteRange) -> Bool {
+        state.withLock { $0.cache[CacheKey(track: track, range: range)] != nil }
+    }
     var seekCount: Int { state.withLock { $0.seeks } }
     var mediaRequestCount: Int { state.withLock { Int($0.requests) } }
     func prefetchedBytes(_ track: TrackKind) -> Int64 { state.withLock { Self.prefetchedBytes($0, track) } }

@@ -3,11 +3,15 @@ import BiliShared
 import DevLog
 @testable import Ripper
 
-/// Wraps a SimCDN: holds every request until opened, and refuses ranges from a given offset on with 403.
+/// Wraps a SimCDN: holds every request until opened; from given offsets on it refuses with 403, holds
+/// requests, or advertises a wrong file size. Records every requested range.
 final class ScriptedTransport: RangeTransport, @unchecked Sendable {
     let cdn: SimCDN
     let open: Locked<Bool>
     let refuseFrom: Locked<Int64?>
+    let holdFrom = Locked<Int64?>(nil)
+    let lieFrom = Locked<Int64?>(nil)
+    let ranges = Locked<[ByteRange]>([])
 
     init(_ cdn: SimCDN, open: Bool = true, refuseFrom: Int64? = nil) {
         self.cdn = cdn
@@ -16,12 +20,25 @@ final class ScriptedTransport: RangeTransport, @unchecked Sendable {
     }
 
     func fetch(_ url: URL, range: ByteRange) async throws -> TransportResponse {
+        ranges.withLock { $0.append(range) }
         while !open.current { try await sleepMs(5) }
         if let from = refuseFrom.current, range.start >= from {
             try await sleepMs(2)
             return TransportResponse(status: 403, headers: [:], body: AsyncThrowingStream { $0.finish() })
         }
-        return try await cdn.fetch(url, range: range)
+        while let from = holdFrom.current, range.start >= from { try await sleepMs(5) }
+        let response = try await cdn.fetch(url, range: range)
+        guard let from = lieFrom.current, range.start >= from else { return response }
+        var headers = response.headers
+        headers["content-range"] = "bytes \(range.start)-\(range.end)/\(cdn.content.count + 1)"
+        return TransportResponse(status: response.status, headers: headers, body: response.body)
+    }
+
+    /// Bytes of `segment` asked for, over all requests.
+    func requestedBytes(in segment: ByteRange) -> Int64 {
+        ranges.current.reduce(Int64(0)) { sum, range in
+            sum + max(0, min(range.end, segment.end) - max(range.start, segment.start) + 1)
+        }
     }
 }
 
@@ -148,6 +165,22 @@ final class RipperSessionTests: XCTestCase {
         session.close()
     }
 
+    func testPrefetchWithAWrongTotalIsNotCached() async throws {
+        let all = segments()
+        let transport = ScriptedTransport(SimCDN(size: size))
+        let session = makeSession(transport, config: TestEngine.config)
+        _ = try await session.loadHeaders(.video, through: headerEnd)
+        session.setSegments(.video, all)
+        let fatal = Locked(0)
+        session.onFatal = { _ in fatal.withLock { $0 += 1 } }
+        transport.lieFrom.withLock { $0 = all[1].range.start }
+        _ = try await read(session, all[0].range)
+        try await waitUntil { session.prefetchesRunning(.video) == 0 }
+        XCTAssertEqual(session.cachedBytes(.video), 0)
+        XCTAssertEqual(fatal.current, 0)
+        session.close()
+    }
+
     func testClosedSessionRefusesReads() async {
         let session = makeSession(SimCDN(size: size))
         session.close()
@@ -268,6 +301,47 @@ final class RipperSessionTests: XCTestCase {
         XCTAssertEqual(session.seekCount, 3)
         _ = try await read(session, ByteRange(start: 5_000, end: 70_000)!)
         XCTAssertEqual(session.seekCount, 3, "inside the previous request")
+
+        // Unaligned neighbours arriving out of order: 100 000-139 999 before 70 001-99 999.
+        transport.open.withLock { $0 = false }
+        let before = session.mediaRequestCount
+        async let later = read(session, ByteRange(start: 100_000, end: 139_999)!)
+        try await waitUntil { session.mediaRequestCount == before + 1 }
+        async let earlier = read(session, ByteRange(start: 70_001, end: 99_999)!)
+        try await waitUntil { session.mediaRequestCount == before + 2 }
+        transport.open.withLock { $0 = true }
+        _ = try await (later, earlier)
+        XCTAssertEqual(session.seekCount, 3, "unaligned neighbours out of order")
+        _ = try await read(session, ByteRange(start: 20_000, end: 49_999)!)
+        XCTAssertEqual(session.seekCount, 4, "more than its own length before the previous request")
+        session.close()
+    }
+
+    func testSegmentsThePlayerIsLoadingAreNotPrefetchedAgain() async throws {
+        var config = TestEngine.config
+        config.firstByteTimeoutMs = 3_000
+        let all = segments()
+        let transport = ScriptedTransport(SimCDN(size: size), open: false)
+        transport.holdFrom.withLock { $0 = all[2].range.start }
+        // One node means no backup copies, so every byte is asked for exactly once.
+        let session = RipperSession(sources: [.video: (TestEngine.primary, [])],
+                                    mode: .custom([NodeAddress(host: "upos-sz-mirrorcos.bilivideo.com")]), config: config,
+                                    transport: transport, auto: nil, logger: Logger(session: "test"))
+        session.setSegments(.video, all)
+        async let first = read(session, all[1].range)
+        try await waitUntil { session.mediaRequestCount == 1 }
+        async let second = read(session, all[2].range)
+        try await waitUntil { session.mediaRequestCount == 2 }
+        transport.open.withLock { $0 = true }
+        _ = try await first
+        // Segment 1 is in and its prefetch is scheduled while the player still waits for segment 2.
+        XCTAssertGreaterThan(session.prefetchesRunning(.video), 0)
+        transport.holdFrom.withLock { $0 = nil }
+        _ = try await second
+        try await waitUntil { session.prefetchesRunning(.video) == 0 }
+        XCTAssertFalse(session.isCached(.video, all[2].range))
+        XCTAssertTrue(session.isCached(.video, all[3].range))
+        XCTAssertEqual(transport.requestedBytes(in: all[2].range), segmentLength)
         session.close()
     }
 
