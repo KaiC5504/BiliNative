@@ -25,6 +25,8 @@ final class HistoryModel {
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let timeZone: TimeZone
     @ObservationIgnored private var cursor: HistoryCursor?
+    /// Bumped by a reload, so a load more still running cannot append to the new list.
+    @ObservationIgnored private var generation = 0
 
     init(client: BiliClient, now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current) {
         self.client = client
@@ -38,34 +40,49 @@ final class HistoryModel {
 
     func loadMore() async {
         guard !loading, !isEnd, !needsLogin else { return }
+        await load(replacing: false)
+    }
+
+    /// Starts over, as after logging in and on pull to refresh. The rows already shown stay until the first page
+    /// answers, so the list (and the scroll view running the refresh) never goes away mid-pull.
+    func reload() async {
+        generation += 1
+        needsLogin = false
+        error = nil
+        await load(replacing: true)
+    }
+
+    private func load(replacing: Bool) async {
+        let mine = generation
         loading = true
-        defer { loading = false }
+        defer { if mine == generation { loading = false } }
+        var next = replacing ? nil : cursor
+        var kept = replacing ? [] : items
         do {
-            let page = try await client.history(after: cursor)
-            var seen = Set(items.map(\.id))
-            items += page.items.filter { seen.insert($0.id).inserted }
-            cursor = page.next
-            isEnd = page.next == nil || page.items.isEmpty
+            // A page of videos already listed adds no row, so no row appears to ask for the next; ask on, a few times.
+            for _ in 0..<3 {
+                let page = try await client.history(after: next)
+                guard mine == generation else { return }
+                var seen = Set(kept.map(\.id))
+                let fresh = page.items.filter { seen.insert($0.id).inserted }
+                kept += fresh
+                next = page.next
+                isEnd = page.next == nil || page.items.isEmpty
+                if !fresh.isEmpty || isEnd { break }
+            }
+            items = kept
+            cursor = next
             error = nil
         } catch let error as BiliError where error.needsLogin {
+            guard mine == generation else { return }
             needsLogin = true
-        } catch is CancellationError {
+        } catch where FeedModel.isCancellation(error) {
             return
         } catch {
+            guard mine == generation else { return }
             Logger.shared.warn(.ui, "history failed", ["error": .init(String(describing: error))])
             self.error = FeedModel.message(for: error)
         }
-    }
-
-    /// Starts over, as after logging in.
-    func reload() async {
-        guard !loading else { return }
-        items = []
-        cursor = nil
-        isEnd = false
-        needsLogin = false
-        error = nil
-        await loadMore()
     }
 
     /// A finished video (progress -1) starts again from the beginning.

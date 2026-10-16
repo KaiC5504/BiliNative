@@ -55,6 +55,48 @@ final class HistoryModelTests: XCTestCase {
         XCTAssertNil(model.error)
     }
 
+    /// Pull to refresh: the rows stay until the first page answers, then the list is that page alone.
+    func testReloadKeepsTheRowsUntilTheFirstPageAnswers() async {
+        let http = HoldingHTTP(path: historyPath)
+        let model = HistoryModel(client: BiliClient(transport: http, cookies: CookieJar(["SESSDATA": "s", "bili_jct": "T"])))
+        await model.loadMore()
+        await model.loadMore()
+        let all = F.historyPageSizes.reduce(0, +)
+        XCTAssertEqual(model.items.count, all)
+
+        http.hold()
+        let reload = Task { await model.reload() }
+        while http.requests(to: historyPath).count < 3 { await Task.yield() }
+        XCTAssertEqual(model.items.count, all, "the list emptied before the answer")
+        XCTAssertTrue(model.loading)
+        http.release()
+        await reload.value
+        XCTAssertEqual(model.items.count, F.historyPageSizes[0])
+        XCTAssertFalse(model.isEnd)
+        XCTAssertFalse(model.loading)
+        await model.loadMore()
+        XCTAssertEqual(model.items.count, all, "the reload lost its place")
+    }
+
+    /// A reload while a page is still loading (a login landing during the first, cookie-less load) is not refused,
+    /// and the older answer cannot append to the new list.
+    func testReloadSupersedesALoadInFlight() async {
+        let http = HoldingHTTP(path: historyPath)
+        let model = HistoryModel(client: BiliClient(transport: http, cookies: CookieJar(["SESSDATA": "s", "bili_jct": "T"])))
+        await model.loadMore()
+        http.hold()
+        let more = Task { await model.loadMore() }
+        while http.requests(to: historyPath).count < 2 { await Task.yield() }
+        let reload = Task { await model.reload() }
+        while http.requests(to: historyPath).count < 3 { await Task.yield() }
+        http.release()
+        await more.value
+        await reload.value
+        XCTAssertEqual(model.items.count, F.historyPageSizes[0])
+        XCTAssertEqual(Set(model.items.map(\.id)).count, model.items.count)
+        XCTAssertFalse(model.loading)
+    }
+
     func testTimeLabelShowsTheClockForTodayAndYesterdayAndTheDateBefore() {
         let zone = TimeZone(secondsFromGMT: 8 * 3600)!
         // 2026-10-17 01:00 in UTC+8.
@@ -62,6 +104,38 @@ final class HistoryModelTests: XCTestCase {
         XCTAssertEqual(HistoryModel.timeLabel(1_792_168_200, now: now, timeZone: zone), "00:30")
         XCTAssertEqual(HistoryModel.timeLabel(1_792_162_800, now: now, timeZone: zone), "23:00")
         XCTAssertEqual(HistoryModel.timeLabel(1_791_088_200, now: now, timeZone: zone), "2026年10月4日 12:30")
+    }
+}
+
+/// Holds requests to one path while held; `release` lets every held one through.
+final class HoldingHTTP: FixtureHTTP, @unchecked Sendable {
+    private let path: String
+    private let lock = NSLock()
+    private var gate: (stream: AsyncStream<Void>, continuation: AsyncStream<Void>.Continuation)?
+
+    init(path: String) {
+        self.path = path
+        super.init()
+    }
+
+    func hold() {
+        lock.withLock { gate = AsyncStream<Void>.makeStream(bufferingPolicy: .unbounded) }
+    }
+
+    func release() {
+        lock.withLock {
+            gate?.continuation.finish()
+            gate = nil
+        }
+    }
+
+    override func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let held = request.url.path == path ? lock.withLock { gate?.stream } : nil
+        let response = try await super.send(request)
+        if let held {
+            for await _ in held {}
+        }
+        return response
     }
 }
 

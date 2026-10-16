@@ -45,18 +45,23 @@ final class FeedModel {
         guard !loading else { return }
         guard !cards.isEmpty else { return await refresh() }
         let mine = generation
-        let index = nextIndex
         loading = true
         defer { if mine == generation { loading = false } }
         do {
-            let page = try await client.recommendFeed(index: index)
-            guard mine == generation else { return }
-            cards = Self.appending(page, to: cards)
-            nextIndex = index + 1
+            // A page of cards already shown (or only ads) adds nothing, and then no card appears to ask for the
+            // next one; ask on, a few times.
+            for _ in 0..<3 {
+                let page = try await client.recommendFeed(index: nextIndex)
+                guard mine == generation else { return }
+                let before = cards.count
+                cards = Self.appending(page, to: cards)
+                nextIndex += 1
+                if cards.count > before { break }
+            }
             error = nil
         } catch {
             guard mine == generation, !Self.isCancellation(error) else { return }
-            Logger.shared.warn(.ui, "feed load more failed", ["index": .init(index), "error": .init(String(describing: error))])
+            Logger.shared.warn(.ui, "feed load more failed", ["index": .init(nextIndex), "error": .init(String(describing: error))])
             self.error = Self.message(for: error)
         }
     }
@@ -67,7 +72,7 @@ final class FeedModel {
         return cards + page.filter { seen.insert($0.bvid).inserted }
     }
 
-    private static func isCancellation(_ error: Error) -> Bool {
+    static func isCancellation(_ error: Error) -> Bool {
         error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 

@@ -13,6 +13,8 @@ struct HomeView: View {
     @State private var menuOpen = false
     @State private var showLogin = false
     @State private var showSettings = false
+    /// Whether the feed on screen was fetched logged in; nil until the first account check has answered.
+    @State private var feedSignedIn: Bool?
 
     var body: some View {
         @Bindable var navigator = env.navigator
@@ -59,6 +61,18 @@ struct HomeView: View {
             }
             .animation(.spring(duration: 0.3), value: opening)
             .toast($toast)
+            .onChange(of: env.account, initial: true) { _, account in
+                // Logging in or out changes what 推荐 recommends; the first check at launch does not.
+                let signedIn: Bool
+                switch account {
+                case .unknown: return
+                case .loggedIn: signedIn = true
+                case .loggedOut, .expired: signedIn = false
+                }
+                defer { feedSignedIn = signedIn }
+                guard let previous = feedSignedIn, previous != signedIn, let feed else { return }
+                Task { await feed.refresh() }
+            }
             .task {
                 // The task runs again whenever a pushed page is popped; the feed and the demo staging happen once.
                 if feed == nil {
@@ -329,7 +343,9 @@ private struct FeedGrid: View {
             if let error = feed.error {
                 RetryMessage(message: error) { Task { await feed.loadMore() } }
             } else {
+                // Also asks by itself, in case the last cards were already on screen when the page before added nothing.
                 ProgressView()
+                    .onAppear { Task { await feed.loadMore() } }
             }
         }
         .frame(maxWidth: .infinity)

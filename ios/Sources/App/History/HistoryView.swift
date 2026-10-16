@@ -123,7 +123,9 @@ struct HistoryView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.secondaryText)
             } else {
+                // Also asks by itself, in case the last row was already on screen when the page before added nothing.
                 ProgressView()
+                    .onAppear { Task { await model.loadMore() } }
             }
         }
         .frame(maxWidth: .infinity)
