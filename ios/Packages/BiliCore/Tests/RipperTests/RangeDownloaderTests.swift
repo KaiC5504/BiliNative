@@ -509,4 +509,54 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertFalse(warm.contains { $0.range == head(of: second) }, "\(warm.map(\.range))")
         XCTAssertEqual(warm.filter { $0.range.start == second.start }.count, 1, "one ordinary piece starts the range")
     }
+
+    /// cosov is sending its first piece slowly, so its later requests wait behind it and miss the first-byte
+    /// timeout. That is the node being busy, not silent: it must not be banned.
+    func slowBusyCosov(size: Int, bytesPerSecond: Double) -> SimCDN {
+        SimCDN(size: size, behaviors: [TestEngine.cosov: .init(bytesPerSecond: bytesPerSecond, coldFirstByteMs: 2_500, lateFirstByteFromRequest: 2)])
+    }
+
+    func testSilentRequestsToABusyNodeDoNotBanIt() async throws {
+        let cdn = slowBusyCosov(size: 5_000_000, bytesPerSecond: 220_000)
+        // Not Resolver's default list: the first piece of cosov finishing heals its strikes, so only the
+        // ban event itself shows that the node was ever banned.
+        let bans = BanList()
+        let banned = Locked<[String]>([])
+        bans.onBan = { node, _, _ in banned.withLock { $0.append(node) } }
+        let resolver = Resolver(primary: TestEngine.primary, backups: [], mode: .overseas, bans: bans)
+        var config = TestEngine.slowConfig
+        config.hedgeDelayMs = 5_000
+        config.fixedConcurrency = 16
+        let range = ByteRange(start: 0, end: 4 * 1_048_576 - 1)!
+        let bytes = try await collect(cdn, range: range, resolver: resolver, config: config)
+        XCTAssertEqual(bytes, Array(cdn.content[0...Int(range.end)]))
+        let cosovRequests = cdn.requests.current.filter { $0 == TestEngine.cosov }.count
+        XCTAssertGreaterThanOrEqual(cosovRequests, 2, "the test needs requests that wait behind the first one")
+        XCTAssertEqual(banned.current, [], "a node that is sending other pieces was banned")
+    }
+
+    func testABusyNodeThatNeverAnswersNewRequestsStillLetsTheRangeFinish() async throws {
+        let cdn = slowBusyCosov(size: 9_000_000, bytesPerSecond: 1_600_000)
+        var config = TestEngine.slowConfig
+        config.hedgeDelayMs = 5_000
+        let ctx = TestEngine.context(cdn, config: config)
+        let cosovURL = url(on: TestEngine.cosov)
+        let sawFull = Locked(false)
+        let watcher = Task {
+            while !Task.isCancelled {
+                if ctx.nodes.isFull(cosovURL) { sawFull.withLock { $0 = true } }
+                try? await sleepMs(10)
+            }
+        }
+        defer { watcher.cancel() }
+        let range = ByteRange(start: 0, end: 8 * 1_048_576 - 1)!
+        let started = Date()
+        var bytes: [UInt8] = []
+        for try await chunk in RangeDownloader(ctx: ctx).stream(range, resolver: TestEngine.resolver(), startup: false, priority: 50, deadline: nil) {
+            bytes += chunk
+        }
+        XCTAssertEqual(bytes, Array(cdn.content[0...Int(range.end)]))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3, "cosov's own piece takes about 1 s")
+        XCTAssertTrue(sawFull.current, "cosov is capped at the one piece it was sending")
+    }
 }

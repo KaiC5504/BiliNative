@@ -24,6 +24,9 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         /// edge that does not have the file cached yet.
         var coldRequests = 0
         var coldFirstByteMs: Double = 0
+        /// From this request on (counting from 1, per node) the first byte takes `coldFirstByteMs`, as when a
+        /// node is busy sending other pieces and queues new requests behind them.
+        var lateFirstByteFromRequest: Int?
         /// Answer 403 at once, as an edge refusal does, to addresses whose query contains one of these.
         var refusedQueries: [String] = []
         /// Bytes this node's copy lacks, as Akamai's copy of one file lacked 109972 through the end of its first
@@ -63,8 +66,9 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
             return TransportResponse(status: 403, headers: [:], body: empty)
         }
         let cold = servedRequests.withLock { map -> Bool in
-            map[node, default: 0] += 1
-            return map[node, default: 0] <= behavior.coldRequests
+            let number = map[node, default: 0] + 1
+            map[node] = number
+            return number <= behavior.coldRequests || number >= (behavior.lateFirstByteFromRequest ?? Int.max)
         }
         try await sleepMs(cold ? behavior.coldFirstByteMs : behavior.firstByteMs)
         if (ProcessInfo.processInfo.systemUptime - born) * 1000 < behavior.failForMs { throw ConnectionLost() }
