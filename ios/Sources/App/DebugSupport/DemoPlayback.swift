@@ -79,6 +79,8 @@ final class DemoPlayback: PlaybackControlling {
         player.replaceCurrentItem(with: nil)
     }
 
+    func dropPrefetch() {}
+
     func handOver() {
         detach()
         player.pause()

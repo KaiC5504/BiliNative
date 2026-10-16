@@ -81,6 +81,8 @@ Build A replaces the M1 test player with the official-style player. The page und
 37. On a 合集 or multi-part video with 自动连播 on, seek to a few seconds before the end, start the small window and swipe home. At the end the next episode plays inside the small window.
 38. On a video page, open a related video under the player: the first video pauses. Go back: it carries on from where it was, without a reload. 弹幕设置 → 添加屏蔽词 in the small player does the same: back resumes the video.
 39. Open a related video, start the small window on it, and go back: the small window keeps playing and the first video stays paused. Tap play on the first video: the small window closes.
-40. Open a vertical video, then a related landscape video, then go back: turning the phone sideways on the vertical video does nothing, as in step 16. On the landscape video page, turn sideways (full screen) and swipe right from the left edge: if the page closes, the previous page shows upright.
+40. On a related video page, start the back swipe from the left edge, drag halfway and let go so the page springs back: it keeps playing and turning the phone still works. Then swipe all the way back: the first video carries on and the second stops.
+41. Open a related video, start the small window on it, go back to the first video, and tap the small window's restore button: the second video's page opens on top of the first, at the same place, and going back from it returns to the first video (still paused).
+42. Open a vertical video, then a related landscape video, then go back: turning the phone sideways on the vertical video does nothing, as in step 16. On the landscape video page, turn sideways (full screen) and swipe right from the left edge: if the page closes, the previous page shows upright.
 
 Tell Claude which steps failed and roughly when; the logs have the rest.

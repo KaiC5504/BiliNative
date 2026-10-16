@@ -32,16 +32,22 @@ final class PageLifecycle {
             show(model, opened: true)
             return
         }
-        settle { place in
-            if place == .top { self.show(model, opened: false) }
-        }
+        settleAndApply()
     }
 
     func disappeared() {
-        guard let model else { return }
+        settleAndApply()
+    }
+
+    /// Every event ends in the same check, and what it does is idempotent, so a missing or extra onAppear or
+    /// onDisappear (SwiftUI sends an onAppear when a back swipe starts and none back if it is cancelled) cannot
+    /// leave the page in the wrong state.
+    private func settleAndApply() {
+        guard shown, model != nil else { return }
         settle { place in
+            guard let model = self.model else { return }
             switch place {
-            case .top: break
+            case .top: self.show(model, opened: false)
             case .covered: self.hide(model, removed: false)
             case .removed: self.hide(model, removed: true)
             }
@@ -64,7 +70,13 @@ final class PageLifecycle {
     }
 
     private func show(_ model: VideoPageModel, opened: Bool) {
-        model.presenter = self
+        // Only a page's first appearance claims the model. The page a restored model left keeps its own
+        // lifecycle until SwiftUI tears it down, and must not take the model back.
+        if opened {
+            model.presenter = self
+        } else if model.presenter !== self {
+            return
+        }
         let resume = keeper.pageShown(model, opened: opened)
         orientation.begin(owner: model, videoIsVertical: model.detail?.isVertical ?? false)
         model.appear(resuming: resume)
@@ -81,22 +93,29 @@ final class PageLifecycle {
         }
     }
 
-    private func settle(_ body: @escaping @MainActor (Place) -> Void) {
-        locate()
-        guard let coordinator = page?.transitionCoordinator ?? navigation?.transitionCoordinator else {
-            body(place)
-            return
+    /// Reads the page's place only once no transition runs: during an interactive pop UIKit has already taken the
+    /// page out of `viewControllers`, and puts it back if the swipe is cancelled. The first look is on the next
+    /// turn of the main queue, since SwiftUI can report before UIKit has started the transition.
+    private func settle(attempt: Int = 0, _ body: @escaping @MainActor (Place) -> Void) {
+        Task { @MainActor in
+            if attempt > 0 { try? await Task.sleep(for: .milliseconds(50)) }
+            self.locate()
+            // About 10 s of retries; a transition never lasts that long.
+            guard attempt < 200, let coordinator = self.navigation?.transitionCoordinator ?? self.page?.transitionCoordinator else {
+                body(self.place)
+                return
+            }
+            var retried = false
+            let retry = {
+                guard !retried else { return }
+                retried = true
+                self.settle(attempt: attempt + 1, body)
+            }
+            let queued = coordinator.animate(alongsideTransition: nil) { _ in
+                MainActor.assumeIsolated { retry() }
+            }
+            if !queued { retry() }
         }
-        var done = false
-        let finish = {
-            guard !done else { return }
-            done = true
-            body(self.place)
-        }
-        let queued = coordinator.animate(alongsideTransition: nil) { _ in
-            MainActor.assumeIsolated { finish() }
-        }
-        if !queued { finish() }
     }
 
     private func locate() {
@@ -111,8 +130,10 @@ final class PageLifecycle {
         }
     }
 
+    /// The page's view entering or leaving the window is a second signal besides SwiftUI's.
     fileprivate func probeMoved(to window: UIWindow?) {
         if window != nil { locate() }
+        settleAndApply()
     }
 }
 

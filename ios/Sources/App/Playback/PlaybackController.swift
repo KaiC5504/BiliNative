@@ -286,6 +286,10 @@ final class PlaybackController {
         stop(keepingFrame: true)
     }
 
+    func dropPrefetch() {
+        session?.dropCache()
+    }
+
     private func stop(keepingFrame: Bool) {
         heldPosition = currentSeconds
         advance()
