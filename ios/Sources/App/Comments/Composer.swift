@@ -24,7 +24,8 @@ struct Composer: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let insets = geometry.safeAreaInsets
+            // The reader ignores the safe area, so its own insets read zero.
+            let insets = ScreenInsets.current(merging: geometry.safeAreaInsets)
             ZStack(alignment: .bottom) {
                 T.dim
                     .opacity(shown ? 1 : 0)

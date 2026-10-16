@@ -118,7 +118,8 @@ enum ComposerFixtures {
                 UIColor(red: 1, green: 0.93, blue: 0.85, alpha: 1).setFill()
                 UIBezierPath(roundedRect: CGRect(x: 4, y: 4, width: side - 8, height: side - 8), cornerRadius: 16).fill()
             }
-            let size = large ? side * 0.55 : side * 0.8
+            // Bilibili's emotes fill their square; an emoji glyph needs to be drawn larger to look the same size.
+            let size = large ? side * 0.55 : side * 0.9
             let text = NSAttributedString(string: glyph, attributes: [.font: UIFont.systemFont(ofSize: size)])
             let bounds = text.size()
             text.draw(at: CGPoint(x: (side - bounds.width) / 2, y: (side - bounds.height) / 2))
