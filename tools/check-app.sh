@@ -7,13 +7,15 @@
 #   bash tools/check-app.sh --device    build for iPhone instead of the simulator
 #   bash tools/check-app.sh --app-only  skip AppTests
 #   bash tools/check-app.sh --warnings  print warnings too
+#   bash tools/check-app.sh --repo DIR  check another checkout (default: the one holding the current
+#                                       folder, else the one holding this script)
 set -euo pipefail
 
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         here=$(cd "$(dirname "$0")" && pwd -W)
         drive=$(printf '%s' "${here:0:1}" | tr '[:upper:]' '[:lower:]')
-        MSYS_NO_PATHCONV=1 exec wsl.exe -d Ubuntu -- bash "/mnt/$drive${here:2}/check-app.sh" "$@"
+        MSYS_NO_PATHCONV=1 exec wsl.exe -d Ubuntu --exec bash "/mnt/$drive${here:2}/check-app.sh" "$@"
         ;;
 esac
 
@@ -21,17 +23,33 @@ config=debug
 triple=arm64-apple-ios-simulator
 tests=1
 warnings=0
-for arg in "$@"; do
-    case "$arg" in
+repo=
+while [ $# -gt 0 ]; do
+    case "$1" in
         --release) config=release; tests=0 ;;
         --device) triple=arm64-apple-ios ;;
         --app-only) tests=0 ;;
         --warnings) warnings=1 ;;
-        *) echo "unknown option: $arg" >&2; exit 2 ;;
+        --repo) repo=${2:?--repo needs a folder}; shift ;;
+        --repo=*) repo=${1#--repo=} ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
+    shift
 done
 
-repo=$(cd "$(dirname "$0")/.." && pwd)
+manifest="$(cd "$(dirname "$0")" && pwd)/app-check/Package.swift"
+if [ -n "$repo" ]; then
+    case "$repo" in [A-Za-z]:*) repo=$(wslpath -u "$repo") ;; esac
+    repo=$(cd "$repo" && pwd)
+else
+    repo=$PWD
+    while [ "$repo" != / ] && [ ! -f "$repo/ios/project.yml" ]; do repo=$(dirname "$repo"); done
+    [ -f "$repo/ios/project.yml" ] || repo=$(cd "$(dirname "$0")/.." && pwd)
+fi
+if [ ! -f "$repo/ios/project.yml" ]; then
+    echo "check-app: $repo is not a BiliNative checkout" >&2
+    exit 2
+fi
 sdk="$HOME/.swiftpm/swift-sdks/darwin.artifactbundle"
 [ -n "${XDG_CONFIG_HOME:-}" ] && sdk="$XDG_CONFIG_HOME/swiftpm/swift-sdks/darwin.artifactbundle"
 swiftly_bin="$HOME/.local/share/swiftly/bin"
@@ -56,7 +74,7 @@ start=$(date +%s)
 rsync -a --delete "$repo/ios/Sources/App/" "$stage/App/"
 rsync -a --delete "$repo/ios/Tests/AppTests/" "$stage/AppTests/"
 rsync -a --delete --exclude .build --exclude .swiftpm "$repo/ios/Packages/BiliCore/" "$stage/BiliCore/"
-cp -p "$repo/tools/app-check/Package.swift" "$stage/Package.swift"
+cp -p "$manifest" "$stage/Package.swift"
 
 build=(swift build --package-path "$stage" --scratch-path "$stage/.build-$config-$triple"
     --build-system swiftbuild --triple "$triple" --toolset "$sdk/toolset-swb.json"
@@ -84,7 +102,7 @@ errors=$(matching ': error: ' | wc -l)
 warns=$(matching ': warning: ' | wc -l)
 what="app"
 [ "$tests" = 1 ] && what="app + AppTests"
-summary="$what, $config, $triple: $errors errors, $warns warnings in $(($(date +%s) - start))s"
+summary="$what, $config, $triple, ${repo##*/}: $errors errors, $warns warnings in $(($(date +%s) - start))s"
 
 if [ "$status" -ne 0 ]; then
     if [ "$errors" -eq 0 ]; then

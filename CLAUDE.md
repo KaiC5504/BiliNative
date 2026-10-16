@@ -78,7 +78,8 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - App code, compile only, on the PC: `bash tools/check-app.sh` (PowerShell: `tools\check-app.ps1`). It
   builds the app target and AppTests for the iOS simulator in WSL with xtool's iOS SDK and prints only
   compiler errors with repo paths; about 35 s cold, a few seconds after small edits. `--warnings`,
-  `--release` (no `DEBUG`), `--device`, `--app-only`. Run it before every push that touches `ios/`.
+  `--release` (no `DEBUG`), `--device`, `--app-only`, `--repo DIR` (default: the checkout holding the
+  current folder, so it works from any worktree). Run it before every push that touches `ios/`.
   It does not run tests, build assets/xcstrings/Info.plist or sign, and it compiles with Xcode 27.1
   (Swift 6.4) while CI uses Xcode 26.6 (Swift 6.3), so CI stays the gate. Warnings show only for files
   recompiled in that run. Setup and the manifest it compiles with: `tools/app-check/README.md`.
