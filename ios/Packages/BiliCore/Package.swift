@@ -23,8 +23,8 @@ let package = Package(
         .testTarget(name: "RipperTests", dependencies: ["Ripper", "BiliShared", "DevLog"]),
         .target(name: "LocalHTTP", dependencies: ["BiliShared"]),
         .testTarget(name: "LocalHTTPTests", dependencies: ["LocalHTTP", "BiliShared"]),
-        .target(name: "AppLogic", dependencies: ["BiliShared"]),
-        .testTarget(name: "AppLogicTests", dependencies: ["AppLogic", "BiliShared"]),
+        .target(name: "AppLogic", dependencies: ["BiliShared", "BiliAPI"]),
+        .testTarget(name: "AppLogicTests", dependencies: ["AppLogic", "BiliShared", "BiliAPI"]),
         .executableTarget(name: "ripper-bench", dependencies: ["BiliShared", "BiliAPI", "DashHLS", "Ripper", "DevLog"]),
     ],
     swiftLanguageModes: [.v5]

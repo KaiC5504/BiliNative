@@ -10,22 +10,8 @@ struct QualityPanel: View {
     let toast: (String) -> Void
     let close: () -> Void
 
-    /// The official app's names, which differ from the playurl's descriptions ("超清 4K", "高清 1080P").
     static func title(for option: QualityOption) -> String {
-        switch option.id {
-        case 127: "8K 超高清"
-        case 126: "杜比视界"
-        case 125: "HDR 真彩"
-        case 120: "4K 超高清"
-        case 116: "1080P 60帧"
-        case 112: "1080P+ 高码率"
-        case 80: "1080P 高清"
-        case 74: "720P 60帧"
-        case 64: "720P 准高清"
-        case 32: "480P 清晰"
-        case 16: "360P 流畅"
-        default: option.name
-        }
+        QualityNames.full(qn: option.id, serverText: option.name)
     }
 
     static func subtitle(for option: QualityOption) -> String? {

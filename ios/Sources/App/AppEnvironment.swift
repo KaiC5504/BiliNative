@@ -160,7 +160,10 @@ final class AppEnvironment {
         persistBlocked.withLock { $0 = false }
         cookies.removeAll()
         blockRules.clear()
-        persistQueue.async { KeychainStore.deleteCookies() }
+        persistQueue.async {
+            KeychainStore.deleteCookies()
+            AppTokenStore.delete()
+        }
         await WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         accountCheckFailed = false
         account = .loggedOut

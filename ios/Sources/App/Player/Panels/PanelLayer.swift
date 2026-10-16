@@ -60,7 +60,7 @@ struct PanelLayer: View {
                 EpisodesPanel(model: model, close: close)
             }
         case .danmakuSettings:
-            SidePanel(identifier: panel.identifier, dismiss: close) {
+            SidePanel(identifier: panel.identifier, edge: .hard, dismiss: close) {
                 DanmakuSettingsPanel(onNeedLogin: needLogin)
             }
         }

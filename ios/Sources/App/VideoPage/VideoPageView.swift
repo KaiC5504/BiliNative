@@ -442,7 +442,7 @@ private struct PlayerBox: View {
 
     private func qualityLine(_ controller: PlaybackControlling) -> String? {
         controller.playing.map { playing in
-            playing.line(qualityName: controller.qualities.first { $0.id == playing.quality }?.name)
+            playing.line(qualityName: QualityNames.full(qn: playing.quality, serverText: controller.qualities.first { $0.id == playing.quality }?.name))
         }
     }
 }

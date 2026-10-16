@@ -12,8 +12,15 @@ enum Theme {
     static let divider = rgb(0xE3E5E7)
     static let link = rgb(0x00699D)
 
-    static let panel = Color.black.opacity(0.92)
-    static let panelCard = rgb(0x212327)
+    static let toastFill = Color.black.opacity(0.92)
+    /// How dark the layer behind a panel is once it is fully in, as a share of black.
+    static let panelShadeOpacity = 0.86
+    static let panelShade = Color.black.opacity(panelShadeOpacity)
+    /// Share of black at 0, 35, 70 and 100 per cent of the ramp that leads into a panel; the official app's frames
+    /// give a slow start and about 0.74 where the cards begin.
+    static let panelFade: [(location: CGFloat, black: Double)] = [(0, 0), (0.35, 0.2), (0.7, 0.55), (1, 0.74)]
+    /// Over black this lands on the official #212327; over a bright video it lifts a few levels, as theirs does.
+    static let panelCard = rgb(0x2B2C30).opacity(0.8)
     static let panelText = Color.white
     static let panelSecondary = rgb(0x9499A0)
 
