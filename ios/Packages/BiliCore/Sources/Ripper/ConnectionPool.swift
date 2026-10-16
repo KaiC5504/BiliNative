@@ -77,7 +77,7 @@ public final class ConnectionPool: @unchecked Sendable {
             value.nextID += 1
             return value.nextID
         }
-        let ages = queueClass == .ordinary && deadline != nil
+        let ages = queueClass == .ordinary && (deadline.map { $0().isFinite } ?? false)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Permit, Error>) in
                 let queuedAt = clock.nowMs()
@@ -85,9 +85,13 @@ public final class ConnectionPool: @unchecked Sendable {
                     $0.queue.append(Waiter(id: id, priority: priority, queueClass: queueClass, deadline: deadline,
                                            ages: ages, queuedAt: queuedAt, continuation: continuation))
                 }
-                drain()
-                // The cancellation handler may have run before the waiter was queued.
-                if Task.isCancelled { cancelWaiter(id) }
+                // The cancellation handler may have run before the waiter was queued; checking before the
+                // drain keeps a cancelled task from being granted a permit it would only have to give back.
+                if Task.isCancelled {
+                    cancelWaiter(id)
+                } else {
+                    drain()
+                }
             }
         } onCancel: { [weak self] in
             self?.cancelWaiter(id)

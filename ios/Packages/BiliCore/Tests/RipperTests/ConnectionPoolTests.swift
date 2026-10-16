@@ -224,13 +224,48 @@ final class ConnectionPoolTests: XCTestCase {
         XCTAssertEqual(order.current, ["old", "newer"])
     }
 
+    func testInfiniteDeadlineDoesNotAge() async throws {
+        let manual = ManualClock(0)
+        let pool = ConnectionPool(limit: 1, clock: manual.clock)
+        let held = try await pool.acquire(priority: 0, queueClass: .ordinary)
+        let order = Locked<[String]>([])
+        let unbounded = Task {
+            let permit = try await pool.acquire(priority: 0, queueClass: .ordinary, deadline: { .infinity })
+            order.withLock { $0.append("unbounded") }
+            permit.release()
+        }
+        try await waitUntil { pool.queued == 1 }
+        manual.advance(4_500)
+        let newer = Task {
+            let permit = try await pool.acquire(priority: 10, queueClass: .ordinary)
+            order.withLock { $0.append("newer") }
+            permit.release()
+        }
+        try await waitUntil { pool.queued == 2 }
+        held.release()
+        try await unbounded.value
+        try await newer.value
+        XCTAssertEqual(order.current, ["newer", "unbounded"])
+    }
+
+    func testCancellationRacingAFreePoolNeverLeaksAPermit() async throws {
+        let pool = ConnectionPool(limit: 1)
+        for _ in 0..<300 {
+            let task = Task { try await pool.acquire(priority: 0, queueClass: .critical) }
+            task.cancel()
+            if let permit = try? await task.value { permit.release() }
+            XCTAssertEqual(pool.active, 0)
+            XCTAssertEqual(pool.queued, 0)
+        }
+    }
+
     func testOnChangeReportsEveryStateChange() async throws {
         let pool = ConnectionPool(limit: 1)
         let events = Locked<[[Int]]>([])
         pool.onChange = { active, limit, queued in events.withLock { $0.append([active, limit, queued]) } }
         let held = try await pool.acquire(priority: 0, queueClass: .ordinary)
         let waiter = Task { try await pool.acquire(priority: 0, queueClass: .ordinary) }
-        try await waitUntil { pool.queued == 1 }
+        try await waitUntil { events.current.contains([1, 1, 1]) }
         held.release()
         let second = try await waiter.value
         second.release()
