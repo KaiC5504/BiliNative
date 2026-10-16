@@ -14,7 +14,7 @@ public final class BiliClient: @unchecked Sendable {
 
     private let transport: HTTPTransport
     public let cookies: CookieJar
-    private let now: @Sendable () -> Date
+    let now: @Sendable () -> Date
     private let logger: Logger
     private let wbiCache = Locked<(day: String, mixin: String)?>(nil)
 
