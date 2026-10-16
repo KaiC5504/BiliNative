@@ -83,3 +83,20 @@ video, not a perfect A/B.
 | Cold, hurry off: 1080P60 | 4.39 s | 6.99 s |
 | Warm 4K, hurry on | 0.35 s | 0.41 s |
 | Warm 4K, hurry off | 0.17 s | 1.46 s |
+
+Phone, build 3 (2026-10-17, BV1NKszezErg, 4K, `logs/2026-10-17/99fd24e3ec7fc8c9.jsonl`). KaiC: BTR is faster; a jump
+into a fresh part still lags a little, less than direct.
+
+| | BTR | 直连 |
+|---|---|---|
+| First frame | 4.09 s (cold nodes: cosov and aliov answered in 0.5-0.9 s) | 2.84 s |
+| Resume after a jump | 0.02-0.46 s, fresh parts 0.8-1.1 s | 9.0, 12.0, 12.6 and 11.5 s on four jumps |
+| Stalls while playing | 2, both at 2:16 (below) | 1 |
+
+- Copies: 693 pieces from the first copy, 230 from a second, 3 from a third.
+- 38 first-byte timeouts on a busy node, all on Akamai and none counted as strikes. Automatic threads rose to 48-64,
+  Akamai takes 8 requests at a time over HTTP/1.1, and outside a hurry pieces were still placed on it while it was
+  full. The two stalls fell in that stretch. Akamai was banned once, after two dropped connections (`-1005`) during
+  a Wi-Fi change.
+- Direct mode's lag was the wait after a jump, which 卡顿 did not count. A jump that takes over 1 s to resume now
+  counts as 卡顿, and the overlay shows the slowest jump.

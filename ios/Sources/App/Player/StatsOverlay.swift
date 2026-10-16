@@ -11,7 +11,9 @@ struct StatsOverlay: View {
             line("模式", mode.label)
             line("画质", quality ?? "-")
             line("首帧", stats.firstFrameMs.map { String(format: "%.2f 秒", $0 / 1000) } ?? "-")
-            line("跳转恢复", stats.lastSeekMs.map { String(format: "%.2f 秒", $0 / 1000) } ?? "-")
+            line("跳转恢复", stats.lastSeekMs.map { last in
+                String(format: "%.2f 秒  最慢 %.2f 秒", last / 1000, (stats.worstSeekMs ?? last) / 1000)
+            } ?? "-")
             line("卡顿", "\(stats.stalls) 次")
             line("下载", String(format: "%.1f MB/s", stats.downloadBps / 1_048_576))
             if let ripper = stats.ripper {

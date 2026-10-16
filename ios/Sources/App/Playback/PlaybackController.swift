@@ -865,7 +865,11 @@ final class PlaybackController {
 
     private func seekResumed(_ ms: Double, via: String) {
         overlay.lastSeekMs = ms
-        Logger.shared.info(.player, "seek resumed", ["ms": .init(ms.rounded()), "mode": .init(mode.label), "via": .init(via)])
+        overlay.worstSeekMs = max(overlay.worstSeekMs ?? 0, ms)
+        let lag = StallFilter.isLag(seekMs: ms)
+        if lag { overlay.stalls += 1 }
+        Logger.shared.info(.player, "seek resumed", ["ms": .init(ms.rounded()), "mode": .init(mode.label), "via": .init(via),
+                                                     "lag": .init(lag)])
     }
 
     private func startStatsLoop() {

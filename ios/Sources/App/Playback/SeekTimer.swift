@@ -58,7 +58,11 @@ struct SeekTimer {
 struct StallFilter {
     static let before: TimeInterval = 1.0
     static let after: TimeInterval = 0.75
+    /// The wait after a jump is not a stall, but one this long is lag the viewer feels; direct mode waited 9-12 s.
+    static let slowSeekMs = 1_000.0
     private var lastJump: Date?
+
+    static func isLag(seekMs: Double) -> Bool { seekMs > slowSeekMs }
 
     mutating func jumped(at now: Date) {
         lastJump = now

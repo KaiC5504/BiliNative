@@ -166,4 +166,11 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertFalse(filter.isSeekWait(stalledAt: start.addingTimeInterval(-0.9)), "a drag 0.9 s into a stall is the user reacting")
         XCTAssertFalse(filter.isSeekWait(stalledAt: start.addingTimeInterval(17)), "a stall well after the drag")
     }
+
+    func testOnlyASlowSeekCountsAsLag() {
+        XCTAssertFalse(StallFilter.isLag(seekMs: 815), "a fresh jump that resumes within a second")
+        XCTAssertFalse(StallFilter.isLag(seekMs: 1_000))
+        XCTAssertTrue(StallFilter.isLag(seekMs: 1_088))
+        XCTAssertTrue(StallFilter.isLag(seekMs: 12_045), "direct mode's wait after a jump")
+    }
 }
