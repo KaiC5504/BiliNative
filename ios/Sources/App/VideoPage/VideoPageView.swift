@@ -20,6 +20,7 @@ struct VideoPageView: View {
     /// Made once the video's aid is known, and again for each video the page switches to.
     @State private var comments: CommentsModel?
     @State private var loginRequested = false
+    @State private var tvLoginRequested = false
     @State private var actions: ActionsModel?
     @State private var actionToast: String?
     #if DEBUG
@@ -68,6 +69,8 @@ struct VideoPageView: View {
         .toolbar(.hidden, for: .navigationBar)
         .toast($actionToast)
         .loginGate($loginRequested)
+        .tvLoginGate($tvLoginRequested, makeModel: { TVLoginModel(client: env.client, signer: .tv) },
+                     onDone: { if let actions { Task { await actions.toggleDislike() } } })
         .onAppear {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
@@ -115,6 +118,11 @@ struct VideoPageView: View {
         .onChange(of: env.account) { old, account in
             guard case .loggedIn = account, old != account, let actions else { return }
             Task { await actions.refreshRelation() }
+        }
+        .onChange(of: actions?.needsAppToken) { _, needed in
+            guard needed == true else { return }
+            actions?.needsAppToken = false
+            tvLoginRequested = true
         }
         .onChange(of: actions?.prompt) { _, prompt in
             if let prompt, let actions { handle(prompt, for: actions) }
@@ -272,7 +280,9 @@ private struct PageLayout: View {
                     PageTabs(state: tabs, reserve: collapsing.reserve) {
                         IntroTab(model: model, state: tabs, following: actions?.following, onFollow: { actions?.tapFollow() },
                                  onNeedLogin: onNeedLogin) {
-                            if let actions { ActionRow(actions: actions) }
+                            if let actions {
+                                ActionRow(actions: actions, onDislike: { Task { await actions.toggleDislike() } })
+                            }
                         }
                     } comments: {
                         if let comments {
