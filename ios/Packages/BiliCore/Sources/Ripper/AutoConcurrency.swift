@@ -58,7 +58,8 @@ public final class AutoConcurrency: @unchecked Sendable {
     private let handler = Locked<ChangeHandler?>(nil)
     private let clock: MonotonicClock
 
-    /// Called outside the lock, once per step, in the order the steps happened.
+    /// Called outside the lock, once per step. Steps made by one call arrive in order; calls from
+    /// different threads may deliver out of order, so read `threads` for the current value.
     public var onChange: ChangeHandler? {
         get { handler.current }
         set { handler.withLock { $0 = newValue } }
