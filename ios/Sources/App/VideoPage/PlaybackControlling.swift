@@ -31,6 +31,8 @@ protocol PlaybackControlling: AnyObject {
     func stop()
     /// Stops for the next part, leaving the last frame on the page's player until the next item replaces it.
     func handOver()
+    /// Frees the engine's prefetched segments; the session stays and refetches what playback needs.
+    func dropPrefetch()
     func play()
     func pause()
     func seek(to seconds: Double) async

@@ -20,6 +20,8 @@ final class AppEnvironment {
 
     let settings = AppSettings()
     let recents = RecentStore()
+    /// Every video page is pushed through it (`AppNavigator.swift`).
+    let navigator = AppNavigator()
     @ObservationIgnored let cookies: CookieJar
     @ObservationIgnored let client: BiliClient
     @ObservationIgnored let auto = AutoConcurrency()

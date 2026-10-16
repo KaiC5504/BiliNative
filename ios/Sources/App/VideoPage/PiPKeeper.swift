@@ -1,5 +1,4 @@
 import Observation
-import SwiftUI
 import DevLog
 
 /// Holds the video page that was closed while picture in picture plays it, as the official app does: the small
@@ -11,8 +10,10 @@ final class PiPKeeper {
     static let shared = PiPKeeper()
 
     private(set) var kept: VideoPageModel?
-    /// The kept page the restore button asked for; the restorer on screen pushes it.
+    /// The kept page the restore button asked for; `videoPageDestinations()` appends it to the navigator's path.
     private(set) var restoring: VideoPageModel?
+    /// The page whose video is in the small window, kept or still on its page.
+    @ObservationIgnored private(set) weak var inPiP: VideoPageModel?
 
     /// A page left its navigation stack: kept while picture in picture plays it, closed otherwise.
     func pageRemoved(_ model: VideoPageModel) {
@@ -30,16 +31,20 @@ final class PiPKeeper {
     /// Every page reports here when it shows; the answer is whether it may resume its own playback. The kept
     /// page is handed back to its page. A page that opens stops any other kept one first. A page uncovered by
     /// going back leaves the small window playing and stays paused until it is played, which stops the window.
+    /// Going back can show the page below before the popped page in the small window is reported removed, so the
+    /// answer follows whichever page has picture in picture, kept yet or not.
     func pageShown(_ model: VideoPageModel, opened: Bool) -> Bool {
-        guard let kept else { return true }
-        if kept === model {
+        if let kept, kept === model {
             self.kept = nil
             restoring = nil
             return true
         }
-        guard opened else { return false }
-        release()
-        return true
+        if opened {
+            release()
+            return true
+        }
+        if let inPiP, inPiP !== model { return false }
+        return kept == nil
     }
 
     /// Called before a page plays: one video at a time.
@@ -55,7 +60,12 @@ final class PiPKeeper {
         return true
     }
 
+    func pipStarted(_ model: VideoPageModel) {
+        inPiP = model
+    }
+
     func pipStopped(_ model: VideoPageModel) {
+        if inPiP === model { inPiP = nil }
         guard kept === model else { return }
         guard restoring === model else {
             release()
@@ -75,36 +85,7 @@ final class PiPKeeper {
         guard let model = kept else { return }
         kept = nil
         restoring = nil
+        if inPiP === model { inPiP = nil }
         model.close()
-    }
-}
-
-/// A page that can be pushed by `navigationDestination(item:)`: models compare by identity.
-struct KeptPage: Hashable {
-    let model: VideoPageModel
-
-    static func == (lhs: KeptPage, rhs: KeptPage) -> Bool { lhs.model === rhs.model }
-    func hash(into hasher: inout Hasher) { hasher.combine(ObjectIdentifier(model)) }
-}
-
-extension View {
-    /// Pushes the page picture in picture kept when its window's restore button is tapped. Belongs on the root
-    /// of a navigation stack that can be on screen while a page is kept (home).
-    func restoresKeptVideoPage() -> some View {
-        modifier(KeptPageRestorer())
-    }
-}
-
-private struct KeptPageRestorer: ViewModifier {
-    @State private var page: KeptPage?
-
-    func body(content: Content) -> some View {
-        let keeper = PiPKeeper.shared
-        return content
-            .navigationDestination(item: $page) { VideoPageView(model: $0.model) }
-            .onChange(of: keeper.restoring.map { ObjectIdentifier($0) }) { _, requested in
-                guard requested != nil, let model = keeper.restoring else { return }
-                page = KeptPage(model: model)
-            }
     }
 }

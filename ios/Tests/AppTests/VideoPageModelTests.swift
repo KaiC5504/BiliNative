@@ -275,6 +275,54 @@ final class VideoPageModelTests: XCTestCase {
         XCTAssertEqual(fake.starts.count, 1, "no reload")
     }
 
+    /// The page below can report shown before the popped page in the small window is reported removed.
+    func testPageBelowWaitsWhileAnotherPageIsInPiPBeforeItIsKept() async throws {
+        let keeper = PiPKeeper()
+        let (below, belowFake) = try await playingPage(keeper: keeper)
+        below.model.cover()
+        let (top, topFake) = try await playingPage(VideoRoute(bvid: F.bvidC, startSeconds: 0), keeper: keeper)
+        top.model.pipChanged(true)
+
+        let resume = keeper.pageShown(below.model, opened: false)
+        XCTAssertFalse(resume, "the page below resumed beside the small window")
+        below.model.appear(resuming: resume)
+        keeper.pageRemoved(top.model)
+        XCTAssertFalse(belowFake.isPlaying)
+        XCTAssertTrue(keeper.kept === top.model)
+        XCTAssertTrue(topFake.isPlaying)
+    }
+
+    func testPartChosenWhileCoveredLoadsPausedBesideAnotherPagesPiP() async throws {
+        let keeper = PiPKeeper()
+        let (below, _) = try await playingPage(keeper: keeper)
+        below.model.cover()
+        await below.model.play(PlayItem(bvid: F.bvidA, cid: F.cidA2), at: 5)
+        let next = try XCTUnwrap(below.fakes.all.last)
+        let (top, topFake) = try await playingPage(VideoRoute(bvid: F.bvidC, startSeconds: 0), keeper: keeper)
+        top.model.pipChanged(true)
+        keeper.pageRemoved(top.model)
+
+        below.model.appear(resuming: keeper.pageShown(below.model, opened: false))
+        try await waitUntil { next.starts.count == 1 }
+        XCTAssertEqual(next.starts.first?.autoplay, false)
+        XCTAssertFalse(next.isPlaying)
+        XCTAssertTrue(keeper.kept === top.model, "loading the part closed the other page's small window")
+        XCTAssertFalse(topFake.stopped)
+    }
+
+    func testPageCoveredWhileLoadingComesBackPlaying() async throws {
+        let page = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0), startDelay: .milliseconds(300))
+        page.model.appear()
+        try await waitUntil { page.fakes.all.first?.starts.count == 1 }
+        let fake = try XCTUnwrap(page.fakes.all.first)
+        XCTAssertFalse(fake.isPlaying)
+        page.model.cover()
+        try await waitUntil { fake.phase == .playing }
+        XCTAssertFalse(fake.isPlaying, "a covered page started playing")
+        page.model.appear()
+        XCTAssertTrue(fake.isPlaying, "the page came back paused although nobody paused it")
+    }
+
     func testRestoreThatNeverShowsThePageReleasesIt() async throws {
         let keeper = PiPKeeper()
         let (page, fake) = try await playingPage(keeper: keeper)
@@ -325,7 +373,8 @@ final class VideoPageModelTests: XCTestCase {
 
     private func makePage(_ route: VideoRoute, resume: (Int64, Int64)? = nil, loggedIn: Bool = false,
                           sleep: @escaping (Double) async -> Void = { _ in _ = try? await Task.sleep(nanoseconds: 3_600_000_000_000) },
-                          transport: FixtureHTTP = FixtureHTTP(), active: Bool = true, keeper: PiPKeeper? = nil) -> Page {
+                          transport: FixtureHTTP = FixtureHTTP(), active: Bool = true, keeper: PiPKeeper? = nil,
+                          startDelay: Duration? = nil) -> Page {
         let fakes = Fakes()
         let account = AccountBox(loggedIn ? .loggedIn(name: "测试", vip: false) : .loggedOut)
         let client = BiliClient(transport: transport, cookies: CookieJar(["SESSDATA": "s", "bili_jct": "T", "buvid3": "b3", "buvid4": "b4"]))
@@ -336,6 +385,7 @@ final class VideoPageModelTests: XCTestCase {
                                    makeController: { item, player in
                                        let fake = FakePlayback(item: item, player: player)
                                        fake.resume = resume.map { (timeMs: $0.0, cid: $0.1) }
+                                       fake.startDelay = startDelay
                                        fakes.all.append(fake)
                                        return fake
                                    },
@@ -419,6 +469,7 @@ final class FakePlayback: PlaybackControlling {
     private(set) var seeks: [Double] = []
     private(set) var stopped = false
     private(set) var handedOver = false
+    private(set) var prefetchDropped = false
     private(set) var paused = false
 
     init(item: PlayItem, player: AVPlayer = AVPlayer()) {
@@ -431,12 +482,21 @@ final class FakePlayback: PlaybackControlling {
         onPosition?(seconds)
     }
 
+    /// Makes start take this long, reporting not playing meanwhile; a pause during it holds, as in the real one.
+    var startDelay: Duration?
+    private var pausedWhileStarting = false
+
     func start(at time: Double, autoplay: Bool) async {
         starts.append((time, autoplay))
         stopped = false
         position = time
+        pausedWhileStarting = false
+        if let startDelay {
+            phase = .loading
+            try? await Task.sleep(for: startDelay)
+        }
         phase = .playing
-        isPlaying = autoplay
+        isPlaying = autoplay && !pausedWhileStarting
     }
 
     func stop() {
@@ -450,10 +510,13 @@ final class FakePlayback: PlaybackControlling {
         handedOver = true
     }
 
+    func dropPrefetch() { prefetchDropped = true }
+
     func play() { isPlaying = true }
 
     func pause() {
         paused = true
+        pausedWhileStarting = true
         isPlaying = false
     }
 
