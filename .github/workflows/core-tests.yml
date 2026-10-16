@@ -1,0 +1,28 @@
+name: Core tests
+
+on:
+  push:
+    paths:
+      - "ios/Packages/**"
+      - ".github/workflows/core-tests.yml"
+  pull_request:
+    paths:
+      - "ios/Packages/**"
+  workflow_dispatch:
+
+concurrency:
+  group: core-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$NEWEST" ]; then sudo xcode-select -s "$NEWEST"; fi
+          swift --version
+      - name: swift test
+        run: swift test --package-path ios/Packages/BiliCore

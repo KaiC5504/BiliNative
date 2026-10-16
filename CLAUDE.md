@@ -14,6 +14,8 @@ Working name; the display name and icon are picked in plan Task 2.
 ## Status
 
 - 2026-10-16: spec approved, plan written and committed. No code yet; the GitHub repo is created in Task 1.
+- 2026-10-16: Task 1 done: `BiliShared` module in `ios/Packages/BiliCore`, "Core tests" CI workflow, public repo
+  `KaiC5504/BiliNative`.
 - Next: KaiC picks the execution method (subagent-driven was recommended: the engine tasks depend tightly on
   each other, so a review after every task is worth it), then start at Task 1.
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
@@ -56,7 +58,7 @@ AVPlayer made to the in-app server, and AVPlayer's own access and error logs.
 
 ## Environment facts (KaiC's Windows PC)
 
-- The Swift toolchain is not installed yet (plan Task 1 installs it, after asking KaiC).
+- Swift 6.4.1 is installed at `D:\Tools\Swift` (PATH and SDKROOT are set in the User environment).
 - Sideloadly must keep being started from `D:\Tools\Sideloadly\Sideloadly (Swift-safe).cmd`: Swift's
   `Foundation.dll` on PATH breaks Sideloadly's Apple login otherwise. Never put Sideloadly's `an\` folder
   on the system PATH (that breaks Swift instead).

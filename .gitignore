@@ -7,3 +7,7 @@ DerivedData/
 *.cookies.txt
 .DS_Store
 local/
+ios/Generated/
+ios/build/
+__pycache__/
+design/icons/*.tmp.png
