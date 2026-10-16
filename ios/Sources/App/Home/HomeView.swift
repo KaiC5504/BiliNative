@@ -10,15 +10,13 @@ struct HomeView: View {
     @State private var opening = false
     @State private var toast: String?
     @State private var partChoice: VideoView?
-    @State private var route: VideoRoute?
     @State private var menuOpen = false
-    @State private var showHistory = false
-    @State private var showRecents = false
     @State private var showLogin = false
     @State private var showSettings = false
 
     var body: some View {
-        NavigationStack {
+        @Bindable var navigator = env.navigator
+        NavigationStack(path: $navigator.path) {
             VStack(spacing: 0) {
                 VStack(spacing: 0) {
                     TopRow(text: $linkText, opening: opening, face: env.face,
@@ -38,10 +36,7 @@ struct HomeView: View {
             .background(Theme.pageGrey)
             .overlay(alignment: .topLeading) { menu }
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
-            .restoresKeptVideoPage()
-            .navigationDestination(isPresented: $showHistory) { HistoryView() }
-            .navigationDestination(isPresented: $showRecents) { RecentsView() }
+            .videoPageDestinations()
             .sheet(isPresented: $showLogin) { LoginView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),
@@ -84,7 +79,7 @@ struct HomeView: View {
     private func stageDemo() {
         switch UserDefaults.standard.string(forKey: "DemoScreen") {
         case "settings": showSettings = true
-        case "history": showHistory = true
+        case "history": env.navigator.open(.history)
         case "home-menu": menuOpen = true
         case "page": openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA))
         case "danmaku-send", "danmaku-style":
@@ -116,8 +111,8 @@ struct HomeView: View {
                     closeMenu()
                     switch item {
                     case .login: showLogin = true
-                    case .history: showHistory = true
-                    case .recents: showRecents = true
+                    case .history: env.navigator.open(.history)
+                    case .recents: env.navigator.open(.recents)
                     case .settings: showSettings = true
                     }
                 }
@@ -185,7 +180,7 @@ struct HomeView: View {
 
     /// Every video page home opens (feed cards, pasted links, demo screens) goes through here.
     private func openVideo(_ next: VideoRoute) {
-        route = next
+        env.navigator.open(next)
     }
 
     private static func userMessage(_ error: Error) -> String {
@@ -345,13 +340,12 @@ private struct FeedGrid: View {
 /// The M1 recents list, now behind 最近打开.
 struct RecentsView: View {
     @Environment(AppEnvironment.self) private var env
-    @State private var route: VideoRoute?
     @State private var confirmClear = false
 
     var body: some View {
         List {
             ForEach(env.recents.items) { item in
-                Button { route = item.videoRoute } label: { RecentRow(item: item) }
+                Button { env.navigator.open(item.videoRoute) } label: { RecentRow(item: item) }
             }
         }
         .overlay {
@@ -374,7 +368,6 @@ struct RecentsView: View {
         .confirmationDialog("清空最近打开的视频？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空", role: .destructive) { env.recents.clear() }
         }
-        .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
     }
 }
 

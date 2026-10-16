@@ -19,7 +19,6 @@ private enum HistoryMetrics {
 struct HistoryView: View {
     @Environment(AppEnvironment.self) private var env
     @State private var model: HistoryModel?
-    @State private var route: VideoRoute?
     @State private var showLogin = false
 
     private var loggedOut: Bool {
@@ -35,7 +34,6 @@ struct HistoryView: View {
             .background(Theme.card)
             .navigationTitle("历史记录")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
             .sheet(isPresented: $showLogin) { LoginView() }
             .task {
                 if model == nil { model = HistoryModel(client: env.client) }
@@ -98,7 +96,7 @@ struct HistoryView: View {
                         .padding(.bottom, 6)
                     ForEach(section.items) { item in
                         HistoryRow(item: item, time: model.timeLabel(for: item))
-                            .onTapGesture { route = HistoryModel.route(for: item) }
+                            .onTapGesture { env.navigator.open(HistoryModel.route(for: item)) }
                             .onAppear {
                                 if item.id == model.items.last?.id, model.error == nil {
                                     Task { await model.loadMore() }
