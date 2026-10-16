@@ -121,18 +121,11 @@ struct DescriptionText: View {
     let onRun: (RichRun) -> Void
 
     var body: some View {
-        Text(RichLink.attributed(runs, linkColor: Theme.link))
-            .font(Theme.Page.metaFont)
-            .foregroundStyle(Theme.secondaryText)
-            .tint(Theme.link)
-            .lineSpacing(3)
+        RichTextView(runs: runs, font: Theme.Page.metaFont, fontSize: 13, color: Theme.secondaryText, lineSpacing: 3)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .environment(\.openURL, OpenURLAction { url in
-                guard let run = RichLink.run(for: url) else { return .systemAction }
-                onRun(run)
-                return .handled
-            })
+            .environment(\.richTextActions, RichTextActions(seek: { onRun(.timestamp(label: "", seconds: $0)) },
+                                                            openVideo: { onRun(.video(id: $0)) }))
     }
 }
 

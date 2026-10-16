@@ -35,9 +35,11 @@ public struct CommentMember: Sendable, Equatable {
     public var pendant: String?
     public var fanCardImage: String?
     public var fanCardNumber: String?
+    /// The number's colour as the server writes it, such as "#f35543".
+    public var fanCardColor: String?
 
     public init(mid: Int64, name: String = "", face: String = "", level: Int = 0, isVip: Bool = false,
-                pendant: String? = nil, fanCardImage: String? = nil, fanCardNumber: String? = nil) {
+                pendant: String? = nil, fanCardImage: String? = nil, fanCardNumber: String? = nil, fanCardColor: String? = nil) {
         self.mid = mid
         self.name = name
         self.face = face
@@ -46,6 +48,7 @@ public struct CommentMember: Sendable, Equatable {
         self.pendant = pendant
         self.fanCardImage = fanCardImage
         self.fanCardNumber = fanCardNumber
+        self.fanCardColor = fanCardColor
     }
 }
 
@@ -62,6 +65,7 @@ extension CommentMember: Decodable {
         let card = container.nested("user_sailing")?.nested("cardbg")
         fanCardImage = card?.text("image").flatMap { $0.isEmpty ? nil : $0 }
         fanCardNumber = card?.nested("fan")?.text("num_desc").flatMap { $0.isEmpty ? nil : $0 }
+        fanCardColor = card?.nested("fan")?.text("color").flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 

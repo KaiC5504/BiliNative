@@ -16,6 +16,7 @@ struct ChromeLayer: View {
     var onSendDanmaku: () -> Void = {}
     /// The page's actions, for the full-screen icons, 关注 and the end screens.
     @Environment(ActionsModel.self) private var actions: ActionsModel?
+    var onComments: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -31,11 +32,11 @@ struct ChromeLayer: View {
                 case .landscape:
                     LandscapeChrome(model: model, chrome: chrome, panel: $panel, insets: insets, actions: actions,
                                     danmakuEnabled: danmakuEnabled, onToggleDanmaku: onToggleDanmaku,
-                                    onSendDanmaku: onSendDanmaku, onBack: back)
+                                    onSendDanmaku: onSendDanmaku, onBack: back, onComments: onComments)
                 case .vertical:
                     VerticalChrome(model: model, chrome: chrome, panel: $panel, insets: insets, actions: actions,
                                    danmakuEnabled: danmakuEnabled, onToggleDanmaku: onToggleDanmaku,
-                                   onSendDanmaku: onSendDanmaku, onBack: back)
+                                   onSendDanmaku: onSendDanmaku, onBack: back, onComments: onComments)
                 }
                 PlayerHUD(hud: chrome.hud)
             }
