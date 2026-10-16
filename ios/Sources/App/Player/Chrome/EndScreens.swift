@@ -50,15 +50,17 @@ struct EndScreenPortrait: View {
                             Spacer(minLength: 4)
                             UploaderLine(name: card.ownerName)
                             CountsLine(views: card.views, danmaku: card.danmaku)
+                                .fixedSize()
                                 .padding(.top, 4)
                         }
                         .frame(height: 72)
-                        Spacer(minLength: 8)
+                        Spacer(minLength: 6)
                         Button { onOpen(card) } label: {
                             Text("立即播放")
                                 .font(Theme.Chrome.labelFont)
                                 .foregroundStyle(.white)
-                                .padding(.horizontal, 12)
+                                .fixedSize()
+                                .padding(.horizontal, 11)
                                 .frame(height: 29)
                                 .background(Theme.Chrome.endButton, in: Capsule())
                         }
@@ -299,11 +301,11 @@ private struct CountsLine: View {
     let danmaku: Int64
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Image(systemName: "play.rectangle")
             Text(CountFormat.short(views))
             Image(systemName: "list.bullet.rectangle")
-                .padding(.leading, 8)
+                .padding(.leading, 7)
             Text(CountFormat.short(danmaku))
         }
         .font(.system(size: 12))

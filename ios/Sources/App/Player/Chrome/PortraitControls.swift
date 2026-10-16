@@ -52,7 +52,7 @@ struct PortraitControls: View {
                             BadgedGlyph(badge: "竖屏", offset: CGSize(width: 12, height: -16)) {
                                 CornersGlyph(inward: false)
                                     .stroke(.white, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
-                                    .frame(width: 14.5, height: 17)
+                                    .frame(width: 13, height: 15.5)
                             }
                         }
                         .accessibilityLabel("竖屏")
@@ -62,7 +62,7 @@ struct PortraitControls: View {
                         } label: {
                             FullScreenGlyph()
                                 .stroke(.white, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
-                                .frame(width: 15.5, height: 15.5)
+                                .frame(width: 14, height: 14)
                                 .frame(width: Theme.Chrome.button, height: Theme.Chrome.button)
                                 .contentShape(Rectangle())
                         }
@@ -167,10 +167,10 @@ struct BadgedGlyph<Glyph: View>: View {
             .frame(width: Theme.Chrome.button, height: Theme.Chrome.button)
             .overlay {
                 Text(badge)
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 8.5))
                     .foregroundStyle(.white.opacity(0.9))
                     .fixedSize()
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 3.5)
                     .frame(height: 11.5)
                     .background(Color.black.opacity(0.25), in: Capsule())
                     .overlay(Capsule().stroke(Color.white.opacity(0.5), lineWidth: 0.7))

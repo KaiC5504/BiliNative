@@ -34,7 +34,7 @@ extension Theme {
         static let hiddenLine: CGFloat = 2
         static let hideDelay: Double = 3
 
-        static let timeFont = Font.system(size: 14).monospacedDigit()
+        static let timeFont = Font.system(size: 12).monospacedDigit()
         static let titleFont = Font.system(size: 17, weight: .medium)
         static let labelFont = Font.system(size: 15)
         static let smallFont = Font.system(size: 13)

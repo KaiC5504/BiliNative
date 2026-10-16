@@ -99,10 +99,10 @@ struct VerticalChrome: View {
         let title = Text(verbatim: detail.title)
         let views = Text(verbatim: "  \(CountFormat.short(detail.stat.view))播放")
             .font(.system(size: 14))
-            .foregroundStyle(Theme.Chrome.secondary)
+            .foregroundStyle(.white.opacity(0.85))
         let chevron = Text(Image(systemName: "chevron.down"))
             .font(.system(size: 11))
-            .foregroundStyle(Theme.Chrome.secondary)
+            .foregroundStyle(.white.opacity(0.85))
         return Text("\(title)\(views)\(chevron)")
     }
 
@@ -174,7 +174,7 @@ struct VerticalChrome: View {
                 BadgedGlyph(badge: "详情页", offset: CGSize(width: 9, height: -18)) {
                     CornersGlyph(inward: true)
                         .stroke(.white, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
-                        .frame(width: 15, height: 16.5)
+                        .frame(width: 13.5, height: 15)
                 }
             }
             .accessibilityLabel("详情页")
@@ -185,7 +185,7 @@ struct VerticalChrome: View {
             } label: {
                 FullScreenGlyph()
                     .stroke(.white, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
-                    .frame(width: 15.5, height: 15.5)
+                    .frame(width: 14, height: 14)
                     .frame(width: Theme.Chrome.button, height: Theme.Chrome.button)
                     .contentShape(Rectangle())
             }
