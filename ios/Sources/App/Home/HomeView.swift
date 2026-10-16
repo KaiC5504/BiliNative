@@ -97,7 +97,8 @@ struct HomeView: View {
                 switch UserDefaults.standard.string(forKey: "DemoScreen") {
                 case "settings": showSettings = true
                 case "page": route = VideoRoute(bvid: VideoPageFixtures.bvidA)
-                default: break
+                case let name:
+                    if let demo = ChromeDemo.route(for: name) { route = demo }
                 }
                 #endif
                 if env.account == .unknown { await env.refreshAccount() }

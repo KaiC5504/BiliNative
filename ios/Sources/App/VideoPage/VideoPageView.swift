@@ -10,11 +10,14 @@ struct VideoPageView: View {
     @State private var model: VideoPageModel?
     @State private var chrome = ChromeState()
     @State private var panel: PlayerPanel?
+    /// Stands in until Task 12's danmaku settings own the switch.
+    @State private var danmakuEnabled = true
 
     var body: some View {
         ZStack {
             if let model {
-                PageLayout(model: model, chrome: chrome, panel: $panel, danmaku: danmakuView(for: model))
+                PageLayout(model: model, chrome: chrome, panel: $panel, danmaku: danmakuView(for: model),
+                           danmakuEnabled: danmakuEnabled, onToggleDanmaku: { danmakuEnabled.toggle() }, onSendDanmaku: {})
             } else {
                 Color.black.ignoresSafeArea()
             }
@@ -25,6 +28,9 @@ struct VideoPageView: View {
             model = page
             OrientationController.shared.begin()
             page.appear()
+            #if DEBUG
+            ChromeDemo.stage(page: page, chrome: chrome)
+            #endif
         }
         .onDisappear {
             model?.disappear()
@@ -35,6 +41,9 @@ struct VideoPageView: View {
         }
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             OrientationController.shared.videoIsVertical = vertical ?? false
+        }
+        .onChange(of: panel == nil) { _, closed in
+            chrome.panelOpen = !closed
         }
     }
 
@@ -49,13 +58,20 @@ private struct PageLayout: View {
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
     let danmaku: UIView?
+    let danmakuEnabled: Bool
+    let onToggleDanmaku: () -> Void
+    let onSendDanmaku: () -> Void
 
     var body: some View {
-        let inline = OrientationController.shared.presentation == .inline
+        let presentation = OrientationController.shared.presentation
+        let inline = presentation == .inline
         GeometryReader { geometry in
             let box = CGSize(width: geometry.size.width, height: inline ? geometry.size.width * 9 / 16 : geometry.size.height)
             VStack(spacing: 0) {
-                PlayerBox(model: model, chrome: chrome, panel: $panel, danmaku: danmaku, size: box, inline: inline)
+                // Full screen ignores the safe area, so the reader's insets are the screen's and the chrome keeps clear of them.
+                PlayerBox(model: model, chrome: chrome, panel: $panel, danmaku: danmaku, size: box, presentation: presentation,
+                          insets: geometry.safeAreaInsets, danmakuEnabled: danmakuEnabled,
+                          onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
                     .frame(width: box.width, height: box.height)
                     .background(Color.black.ignoresSafeArea(edges: .top))
                 if inline {
@@ -66,7 +82,9 @@ private struct PageLayout: View {
         }
         .ignoresSafeArea(edges: inline ? [] : .all)
         .background((inline ? Color(uiColor: .systemBackground) : Color.black).ignoresSafeArea())
-        .statusBarHidden(!inline)
+        // 09 keeps the status bar, light on black; landscape hides it (04).
+        .statusBarHidden(presentation == .landscape)
+        .preferredColorScheme(presentation == .vertical ? .dark : nil)
         .persistentSystemOverlays(inline ? .automatic : .hidden)
     }
 }
@@ -77,8 +95,20 @@ private struct PlayerBox: View {
     @Binding var panel: PlayerPanel?
     let danmaku: UIView?
     let size: CGSize
-    let inline: Bool
+    let presentation: OrientationController.Presentation
+    let insets: EdgeInsets
+    let danmakuEnabled: Bool
+    let onToggleDanmaku: () -> Void
+    let onSendDanmaku: () -> Void
     @Environment(AppEnvironment.self) private var env
+
+    private var inline: Bool { presentation == .inline }
+
+    /// 竖屏 full screen sets a landscape video above the middle (09); a vertical one fills the height.
+    private var surfaceHeight: CGFloat {
+        guard presentation == .vertical, model.detail?.isVertical != true else { return size.height }
+        return size.height * VerticalLayout.videoCentre * 2
+    }
 
     var body: some View {
         ZStack {
@@ -88,6 +118,8 @@ private struct PlayerBox: View {
                           allowsLevelGestures: !inline,
                           onGesture: { chrome.handle($0, page: model, size: size) },
                           danmaku: danmaku)
+                .frame(height: surfaceHeight)
+                .frame(maxHeight: .infinity, alignment: .top)
             if let controller = model.controller {
                 if env.settings.showOverlay {
                     StatsOverlay(stats: controller.overlay, mode: controller.mode, quality: qualityLine(controller))
@@ -96,7 +128,8 @@ private struct PlayerBox: View {
                         .transition(.opacity)
                 }
             }
-            ChromeLayer(model: model, chrome: chrome, panel: $panel)
+            ChromeLayer(model: model, chrome: chrome, panel: $panel, insets: insets, danmakuEnabled: danmakuEnabled,
+                        onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
             status
             PanelLayer(panel: $panel, model: model)
         }
