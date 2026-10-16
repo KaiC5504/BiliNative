@@ -85,8 +85,36 @@ final class BanListTests: XCTestCase {
         bans.record(url: url("a", "f1"), receivedBytes: 0, status: 403)
         XCTAssertTrue(bans.allows(url("a", "f1")))
         bans.success(url: url("b", "f1"))
-        XCTAssertFalse(bans.allowsNode(url("a", "f1")))
+        XCTAssertFalse(bans.allows(url("a", "f1")))
         bans.reset()
         XCTAssertTrue(bans.allows(url("a", "f1")))
+    }
+
+    func testRefusalByANodeThatHasNotDeliveredDropsOnlyThePair() {
+        let bans = BanList()
+        var reports: [String] = []
+        bans.onBan = { node, strikes, kind in reports.append("\(node) \(strikes) \(kind)") }
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: 403)
+        bans.success(url: url("b", "f1"))
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: 403)
+        XCTAssertFalse(bans.allows(url("a", "f1")))
+        XCTAssertTrue(bans.allowsNode(url("a", "f2")))
+        XCTAssertTrue(bans.allows(url("a", "f2")))
+        XCTAssertTrue(bans.allowsAddress(url("b", "f1")))
+        XCTAssertEqual(reports, ["a.bilivideo.com 2 pair"], "the pair is reported against the refusing node")
+        bans.success(url: url("a", "f2"))
+        XCTAssertFalse(bans.allows(url("a", "f1")))
+        XCTAssertTrue(bans.allows(url("a", "f2")))
+    }
+
+    func testNodeRefusingTwoAddressesOthersServeIsBanned() {
+        let bans = BanList()
+        bans.success(url: url("b", "f1"))
+        bans.success(url: url("b", "f2"))
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: 403)
+        XCTAssertTrue(bans.allowsNode(url("a", "f3")))
+        bans.record(url: url("a", "f2"), receivedBytes: 0, status: 403)
+        XCTAssertFalse(bans.allowsNode(url("a", "f3")))
+        XCTAssertEqual(bans.bannedNodes(), ["a.bilivideo.com"])
     }
 }

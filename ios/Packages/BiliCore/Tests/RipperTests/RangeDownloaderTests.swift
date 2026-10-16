@@ -63,6 +63,47 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertFalse(resolver.allows(cosovURL))
     }
 
+    /// The overseas Akamai node of 2026-10-16: it refuses the primary `os=cosovbv` address at the edge and serves
+    /// the `os=akam` backup, slow to start while cold and then far faster than every mirror. The mirrors serve both.
+    func testAddressRefusedOnTheFastestNodeDropsOnlyThatPair() async throws {
+        let akamai = "upos-hz-mirrorakam.akamaized.net"
+        let address = "https://\(akamai)/upgcxcode/1/2/3/v.m4s?deadline=9"
+        let refused = address + "&os=cosovbv"
+        let served = address + "&os=akam"
+        var behaviors: [String: SimCDN.Behavior] = [
+            akamai: .init(firstByteMs: 20, bytesPerSecond: 40_000_000, coldRequests: 2, coldFirstByteMs: 400, refusedQueries: ["os=cosovbv"]),
+        ]
+        for node in NodeCatalog.overseas { behaviors[node] = .init(firstByteMs: 5, bytesPerSecond: 400_000) }
+        let cdn = SimCDN(size: 6_500_000, behaviors: behaviors)
+        var config = TestEngine.slowConfig
+        config.firstByteTimeoutMs = 1_000
+        let clock = ManualClock(1_000_000)
+        let bans = BanList()
+        let resolver = Resolver(primary: refused, backups: [served], mode: .overseas, bans: bans, clock: clock.clock)
+        let downloader = RangeDownloader(ctx: TestEngine.context(cdn, config: config))
+        _ = try await downloader.meta(ByteRange(start: 0, end: 1_023)!, resolver: resolver)
+        // Unproven, the Akamai node gets work only after the four warm-up ranges (BTR's exploration order).
+        for index in Int64(0)..<12 {
+            // Playback time passes between segments, so the refused address's backoff runs out.
+            clock.advance(7_000)
+            let range = ByteRange(start: 1_024 + index << 19, end: 1_023 + (index + 1) << 19)!
+            var bytes: [UInt8] = []
+            for try await chunk in downloader.stream(range, resolver: resolver, startup: index == 0, priority: 50, deadline: nil) {
+                bytes += chunk
+            }
+            XCTAssertEqual(bytes, Array(cdn.content[Int(range.start)...Int(range.end)]))
+        }
+        XCTAssertTrue(bans.allowsNode(served), "a refusal of one address must not ban the node")
+        XCTAssertTrue(resolver.allows(served))
+        XCTAssertFalse(bans.allows(refused), "the refusing node and address pair is dropped")
+        XCTAssertTrue(bans.allowsAddress(refused), "the mirrors serve that address")
+        var sent: [String: Int64] = [:]
+        for (url, bytes) in cdn.deliveredBytes.current { sent[NodeCatalog.nodeKey(of: url), default: 0] += bytes }
+        XCTAssertEqual(sent[akamai], cdn.deliveredBytes.current[served])
+        let mirrorMost = sent.filter { $0.key != akamai }.values.max() ?? 0
+        XCTAssertGreaterThan(sent[akamai] ?? 0, mirrorMost, "the fastest node carries the most bytes: \(sent)")
+    }
+
     func testBrokenNodesNeverCorruptTheOutput() async throws {
         let cdn = SimCDN(size: 2_000_000, behaviors: [
             TestEngine.cosov: .init(wrongRange: true),

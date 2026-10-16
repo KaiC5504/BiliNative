@@ -20,6 +20,12 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         var extraBytes: Int64 = 0
         /// The total the Content-Range advertises, when it should differ from the content size.
         var totalSize: Int64? = nil
+        /// The first this many requests the node serves take `coldFirstByteMs` to the first byte, as on a CDN
+        /// edge that does not have the file cached yet.
+        var coldRequests = 0
+        var coldFirstByteMs: Double = 0
+        /// Answer 403 at once, as an edge refusal does, to addresses whose query contains one of these.
+        var refusedQueries: [String] = []
     }
 
     struct ConnectionLost: Error {}
@@ -27,7 +33,10 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
     let content: [UInt8]
     private let behaviors: Locked<[String: Behavior]>
     let requests = Locked<[String]>([])
+    /// Bytes of responses sent to the end, per full URL; copies cancelled midway are not counted.
+    let deliveredBytes = Locked<[String: Int64]>([:])
     private let born = ProcessInfo.processInfo.systemUptime
+    private let servedRequests = Locked<[String: Int]>([:])
 
     init(size: Int, behaviors: [String: Behavior] = [:]) {
         content = (0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }
@@ -44,13 +53,24 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         let node = NodeCatalog.nodeKey(of: url.absoluteString)
         requests.withLock { $0.append(node) }
         let behavior = behaviors.current[node] ?? Behavior()
-        try await sleepMs(behavior.firstByteMs)
-        if (ProcessInfo.processInfo.systemUptime - born) * 1000 < behavior.failForMs { throw ConnectionLost() }
         let empty = AsyncThrowingStream<[UInt8], Error> { $0.finish() }
+        let query = url.query ?? ""
+        if behavior.refusedQueries.contains(where: query.contains) {
+            try await sleepMs(2)
+            return TransportResponse(status: 403, headers: [:], body: empty)
+        }
+        let cold = servedRequests.withLock { map -> Bool in
+            map[node, default: 0] += 1
+            return map[node, default: 0] <= behavior.coldRequests
+        }
+        try await sleepMs(cold ? behavior.coldFirstByteMs : behavior.firstByteMs)
+        if (ProcessInfo.processInfo.systemUptime - born) * 1000 < behavior.failForMs { throw ConnectionLost() }
         if behavior.status != 206 { return TransportResponse(status: behavior.status, headers: [:], body: empty) }
         guard range.end < Int64(content.count) else { return TransportResponse(status: 416, headers: [:], body: empty) }
         let served = behavior.wrongRange ? (ByteRange(start: range.start + 1, end: range.end) ?? range) : range
         let content = self.content
+        let deliveredBytes = self.deliveredBytes
+        let key = url.absoluteString
         let bodyEnd = min(Int64(content.count) - 1, served.end + behavior.extraBytes)
         let body = AsyncThrowingStream<[UInt8], Error> { continuation in
             let task = Task {
@@ -71,6 +91,7 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
                     if ms >= 1 { try? await sleepMs(ms) } else { await Task.yield() }
                     offset = end + 1
                 }
+                if offset > bodyEnd { deliveredBytes.withLock { $0[key, default: 0] += bodyEnd - served.start + 1 } }
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }

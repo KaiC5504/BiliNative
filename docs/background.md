@@ -85,6 +85,11 @@ startup or seeks are slow.
 - Blip strikes heal: a successful transfer clears a node's empty-reply strikes and lifts a node ban they
   caused, so a local network blip doesn't ban the fastest nodes for the rest of the video (2026-10-16, after
   the Task 18 review).
+- A refusal (HTTP 4xx) of an address other nodes serve, by a node that has not delivered yet, drops only that
+  node and address pair; the node itself is banned once it refuses a second such address. BTR bans the node at
+  once (`cdn-resolver.js` line 133 at 2026.10.8.1), and a banned node never gets to prove its other address,
+  so the ban never lifts: overseas, cold Akamai lost every early race on `os=akam`, was banned for refusing
+  `os=cosovbv`, and the fastest node went unused for the whole video (2026-10-16, ripper-bench q80 runs).
 
 ## Known environment limits
 
