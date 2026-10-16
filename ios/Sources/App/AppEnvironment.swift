@@ -38,6 +38,9 @@ final class AppEnvironment {
     private(set) var mid: Int64?
     /// The last nav call failed (network, not a verdict), so `account` is still `.unknown`.
     private(set) var accountCheckFailed = false
+    /// The comment emote panel's packages, asked once per app run (again only after a failure).
+    private(set) var emotePackages: [EmotePackage] = []
+    @ObservationIgnored private var emoteLoad: Task<Void, Never>?
 
     /// Serial, and each write reads the jar's current state: onChange callbacks from concurrent
     /// requests can arrive out of order, so a callback's own snapshot may already be stale.
@@ -138,6 +141,21 @@ final class AppEnvironment {
             }
             return false
         }
+    }
+
+    func loadEmotePackages() async {
+        guard emotePackages.isEmpty else { return }
+        if let emoteLoad { return await emoteLoad.value }
+        let task = Task {
+            do {
+                emotePackages = try await client.emotePackages()
+            } catch {
+                Logger.shared.warn(.api, "emote packages failed", ["error": .init(String(describing: error))])
+            }
+        }
+        emoteLoad = task
+        await task.value
+        emoteLoad = nil
     }
 
     func didLogin(_ webCookies: [String: String]) async {

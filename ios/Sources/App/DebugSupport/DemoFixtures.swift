@@ -10,7 +10,7 @@ enum DemoFixtures {
 
     /// Tried in order; a task that adds an endpoint adds a handler in its own file and lists it here.
     static let handlers: [Handler] = [DemoFixtures.launch, VideoPageFixtures.handle, DanmakuFixtures.handle, DemoFixtures.danmakuPost, DemoFixtures.blockRules,
-                                       IntroFixtures.handle, CommentFixtures.handle]
+                                       IntroFixtures.handle, CommentFixtures.handle, ComposerFixtures.handle]
 
     static func response(for url: URL, method: String) -> (Int, Data) {
         for handler in handlers {
@@ -43,7 +43,7 @@ enum DemoFixtures {
 
     /// A flat-gradient PNG whose colour comes from the URL, so covers and avatars differ without a network.
     static func image(for url: URL) async throws -> Data {
-        if let art = CommentFixtures.image(for: url) { return art }
+        if let art = CommentFixtures.image(for: url) ?? ComposerFixtures.image(for: url) { return art }
         var hash: UInt32 = 5381
         for byte in url.absoluteString.utf8 { hash = hash &* 33 &+ UInt32(byte) }
         let hue = CGFloat(hash % 360) / 360

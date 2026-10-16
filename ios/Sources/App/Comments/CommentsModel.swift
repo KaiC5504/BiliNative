@@ -49,6 +49,8 @@ final class CommentsModel {
     /// Set by a failed reaction or delete; the page shows it as a toast and clears it.
     var toast: String?
     var viewing: PictureViewing?
+    /// The composer's unsent text per reply target (`ComposerModel.draftKey`), kept while the page lives.
+    @ObservationIgnored var drafts: [String: String] = [:]
 
     @ObservationIgnored private let client: BiliClient
     @ObservationIgnored private let isLoggedIn: () -> Bool
@@ -225,7 +227,8 @@ final class CommentsModel {
         }
     }
 
-    private func fail(_ error: Error) {
+    /// Also the composer's: the server's words as a toast, and the login screen when the session is gone.
+    func fail(_ error: Error) {
         guard !(error is CancellationError) else { return }
         Logger.shared.warn(.api, "comment action failed", ["error": .init(String(describing: error))])
         if (error as? BiliError)?.needsLogin == true { requestLogin() }
