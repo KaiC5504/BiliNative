@@ -73,6 +73,28 @@ struct Bench {
         return try await client.playURL(bvid: view.bvid, cid: page.cid, quality: options.quality)
     }
 
+    /// The first of the primary and backup URLs that answers a small probe with 206; some accounts get 403
+    /// from the primary node while a backup works. Probed on a throwaway session so the timed run starts cold.
+    static func baselineURL(_ video: DashStream) async -> (url: String, label: String)? {
+        let probe = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
+        for (index, candidate) in ([video.baseURL] + video.backupURLs).enumerated() {
+            let label = index == 0 ? "primary" : "backup \(index)"
+            let node = NodeCatalog.nodeKey(of: candidate)
+            guard let url = URL(string: candidate) else { continue }
+            do {
+                let answer = try await probe.fetch(url, range: ByteRange(start: 0, end: 1_023)!)
+                if answer.status == 206 {
+                    for try await _ in answer.body {}
+                    return (candidate, label)
+                }
+                print("baseline probe: \(label) on \(node) answered HTTP \(answer.status)")
+            } catch {
+                print("baseline probe: \(label) on \(node) failed: \(Redactor.text(String(describing: error)))")
+            }
+        }
+        return nil
+    }
+
     static func run(_ options: Options) async throws {
         let info = try await loadPlayURL(options)
         guard let dash = info.dash,
@@ -83,16 +105,23 @@ struct Bench {
         print("video \(video.id) \(video.codecs) \(video.width)x\(video.height) \(video.bandwidth / 1000) kbps on \(NodeCatalog.nodeKey(of: video.baseURL))")
         let target = Int64(options.megabytes) << 20
 
-        let singleStart = Date()
         let singleRange = ByteRange(start: video.indexRange.end + 1, end: video.indexRange.end + target)!
-        // Each run gets its own URLSession so neither starts with the other's warm connections.
-        let response = try await URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
-            .fetch(URL(string: video.baseURL)!, range: singleRange)
         var singleBytes: Int64 = 0
-        if response.status == 206 {
-            for try await chunk in response.body { singleBytes += Int64(chunk.count) }
+        var singleStatus = 0
+        var singleSeconds = 0.0
+        var singleSource = "no URL answered 206"
+        if let chosen = await baselineURL(video) {
+            singleSource = "\(chosen.label) on \(NodeCatalog.nodeKey(of: chosen.url))"
+            // Each run gets its own URLSession so neither starts with the other's warm connections.
+            let singleStart = Date()
+            let response = try await URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
+                .fetch(URL(string: chosen.url)!, range: singleRange)
+            singleStatus = response.status
+            if response.status == 206 {
+                for try await chunk in response.body { singleBytes += Int64(chunk.count) }
+            }
+            singleSeconds = Date().timeIntervalSince(singleStart)
         }
-        let singleSeconds = Date().timeIntervalSince(singleStart)
 
         let session = RipperSession(sources: [.video: (video.baseURL, video.backupURLs)], mode: options.mode,
                                     transport: URLSessionRangeTransport(headers: BiliClient.mediaHeaders), auto: AutoConcurrency())
@@ -112,7 +141,7 @@ struct Bench {
         func rate(_ bytes: Int64, _ seconds: Double) -> String {
             String(format: "%.2f MB/s", Double(bytes) / 1_048_576 / max(seconds, 0.001))
         }
-        print("one connection: \(singleBytes) bytes in \(String(format: "%.2f", singleSeconds)) s = \(rate(singleBytes, singleSeconds)) (HTTP \(response.status))")
+        print("one connection: \(singleBytes) bytes in \(String(format: "%.2f", singleSeconds)) s = \(rate(singleBytes, singleSeconds)) (HTTP \(singleStatus), \(singleSource))")
         print("ripper:         \(rippedBytes) bytes in \(String(format: "%.2f", rippedSeconds)) s = \(rate(rippedBytes, rippedSeconds))")
         print("connections \(stats.concurrency), requests \(stats.requests), failures \(stats.failures), duplicate \(String(format: "%.1f", stats.duplicateShare * 100))%")
         for node in stats.nodes {
