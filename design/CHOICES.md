@@ -13,5 +13,5 @@ Name ideas (shown under the icon; avoid "Bili"/"哔哩" for the public release):
 - Kairo
 - 疾影 (Jiying)
 
-Chosen icon: (KaiC fills in)
+Chosen icon: 2 (Bolt), picked by KaiC on 2026-10-16
 Chosen name: (KaiC fills in)
