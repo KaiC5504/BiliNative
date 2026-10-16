@@ -91,7 +91,7 @@ struct CommentRow: View {
             }
         }
         // Clear of the fan card, which sits higher at the right.
-        .padding(.trailing, comment.member.fanCardImage == nil ? 0 : T.fanCard.width)
+        .padding(.trailing, comment.member.fanCardImage == nil ? 0 : T.fanCard.width + T.fanCardTrailing - T.trailing)
         .frame(height: 18)
     }
 
