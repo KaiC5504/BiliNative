@@ -10,6 +10,7 @@ struct VideoPageView: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: VideoPageModel?
+    @State private var lifecycle = PageLifecycle()
     @State private var chrome = ChromeState()
     @State private var ownPanel: PlayerPanel?
     @State private var danmakuSlot = DanmakuSlot()
@@ -27,6 +28,13 @@ struct VideoPageView: View {
     init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil, model: VideoPageModel? = nil) {
         self.route = route
         panelOverride = panel
+        _model = State(initialValue: model)
+    }
+
+    /// A page for a model that already exists: the one picture in picture kept after its page closed.
+    init(model: VideoPageModel) {
+        route = model.route
+        panelOverride = nil
         _model = State(initialValue: model)
     }
 
@@ -49,6 +57,7 @@ struct VideoPageView: View {
                 sendBar(sender)
             }
         }
+        .background { PageProbe(lifecycle: lifecycle) }
         .toolbar(.hidden, for: .navigationBar)
         .toast($actionToast)
         .loginGate($loginRequested)
@@ -56,8 +65,7 @@ struct VideoPageView: View {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
             if sender == nil { sender = makeSender(for: page) }
-            OrientationController.shared.begin()
-            page.appear()
+            lifecycle.appeared(page)
             #if DEBUG
             ChromeDemo.stage(page: page, chrome: chrome)
             ActionsDemo.stage(page: page, chrome: chrome)
@@ -69,8 +77,7 @@ struct VideoPageView: View {
         }
         .onDisappear {
             sendBarOpen = false
-            model?.disappear()
-            OrientationController.shared.end()
+            lifecycle.disappeared()
         }
         .onChange(of: sender?.needsLogin) { _, needsLogin in
             if needsLogin == true { presentLogin() }
@@ -82,7 +89,8 @@ struct VideoPageView: View {
             if phase == .background { model?.backgrounded() }
         }
         .onChange(of: model?.detail?.isVertical) { _, vertical in
-            OrientationController.shared.videoIsVertical = vertical ?? false
+            guard let model else { return }
+            OrientationController.shared.setVideoIsVertical(vertical ?? false, owner: model)
         }
         .onChange(of: model?.detail?.bvid, initial: true) { makeActions() }
         .onChange(of: model?.relation) { _, relation in
@@ -362,12 +370,16 @@ private struct PlayerBox: View {
     var body: some View {
         ZStack {
             Color.black
-            // Stays mounted across parts, so the host view and its picture in picture survive a switch.
-            PlayerSurface(player: model.controller?.player, fit: env.settings.fit, mirrored: model.mirrored,
+            // The page's one player and host view, so picture in picture stays on one layer across parts.
+            PlayerSurface(player: model.player, fit: env.settings.fit, mirrored: model.mirrored,
                           allowsLevelGestures: !inline,
-                          onGesture: { chrome.handle($0, page: model, size: size) },
+                          // Weak: the model holds the host view, which holds this closure.
+                          onGesture: { [weak model, chrome, size] event in
+                              if let model { chrome.handle(event, page: model, size: size) }
+                          },
                           // The end screens (26, 27) show no danmaku over the last frame.
                           danmaku: model.ended || shrunk ? nil : danmaku,
+                          host: model.host,
                           onHost: { [weak model] in model?.host = $0 })
                 .frame(height: surfaceHeight)
                 .frame(maxHeight: .infinity, alignment: .top)

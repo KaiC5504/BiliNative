@@ -96,8 +96,8 @@ final class IntroTabTests: XCTestCase {
         addTeardownBlock { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
         let model = VideoPageModel(route: route, client: client, settings: settings, account: { account },
-                                   makeController: { item in
-                                       let fake = FakePlayback(item: item)
+                                   makeController: { item, player in
+                                       let fake = FakePlayback(item: item, player: player)
                                        fakes.all.append(fake)
                                        return fake
                                    },

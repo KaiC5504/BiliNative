@@ -94,11 +94,69 @@ final class PlayerTransitionTests: XCTestCase {
 
     func testEndForgetsTheVerticalVideo() {
         let orientation = OrientationController.shared
-        orientation.videoIsVertical = true
+        let page = NSObject()
+        orientation.begin(owner: page, videoIsVertical: true)
         orientation.locked = true
-        orientation.end()
+        orientation.end(owner: page)
         XCTAssertFalse(orientation.videoIsVertical)
         XCTAssertFalse(orientation.locked)
+        XCTAssertNil(orientation.owner)
+    }
+
+    /// Pages stack: B's onAppear comes before covered A's onDisappear, and A comes back when B is popped.
+    func testCoveredPageKeepsOrientationOwnershipAndVerticalFlag() {
+        let orientation = OrientationController.shared
+        let pageA = NSObject()
+        let pageB = NSObject()
+        orientation.begin(owner: pageA, videoIsVertical: true)
+        XCTAssertTrue(orientation.videoIsVertical)
+
+        orientation.begin(owner: pageB, videoIsVertical: false)
+        orientation.locked = true
+        orientation.end(owner: pageA)
+        XCTAssertTrue(orientation.owner === pageB)
+        XCTAssertFalse(orientation.videoIsVertical)
+        XCTAssertTrue(orientation.locked, "the covered page's late end reset the top page")
+        orientation.setVideoIsVertical(true, owner: pageA)
+        XCTAssertFalse(orientation.videoIsVertical, "a covered page's detail set the top page's flag")
+
+        orientation.end(owner: pageB)
+        XCTAssertNil(orientation.owner)
+        XCTAssertFalse(orientation.locked)
+        orientation.begin(owner: pageA, videoIsVertical: true)
+        XCTAssertTrue(orientation.owner === pageA)
+        XCTAssertTrue(orientation.videoIsVertical, "the page shown again brings its vertical flag back")
+        orientation.end(owner: pageA)
+    }
+
+    func testPopInLandscapeReturnsToPortraitInEitherOrder() {
+        let orientation = OrientationController.shared
+        let original = orientation.requestGeometry
+        defer { orientation.requestGeometry = original }
+        orientation.requestGeometry = { _, _, _ in }
+        let pageA = NSObject()
+        let pageB = NSObject()
+
+        // The revealed page's onAppear first.
+        orientation.begin(owner: pageA, videoIsVertical: false)
+        orientation.begin(owner: pageB, videoIsVertical: false)
+        orientation.enterLandscape()
+        orientation.locked = true
+        orientation.begin(owner: pageA, videoIsVertical: false)
+        XCTAssertEqual(orientation.presentation, .inline)
+        XCTAssertFalse(orientation.locked)
+        orientation.end(owner: pageB)
+        XCTAssertEqual(orientation.presentation, .inline)
+        XCTAssertTrue(orientation.owner === pageA)
+
+        // The popped page's onDisappear first.
+        orientation.begin(owner: pageB, videoIsVertical: false)
+        orientation.enterLandscape()
+        orientation.end(owner: pageB)
+        XCTAssertEqual(orientation.presentation, .inline)
+        orientation.begin(owner: pageA, videoIsVertical: false)
+        XCTAssertEqual(orientation.presentation, .inline)
+        orientation.end(owner: pageA)
     }
 
     func testPictureInPictureControllerExistsAndStartsWhenSupported() async throws {
