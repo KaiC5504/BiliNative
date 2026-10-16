@@ -83,11 +83,12 @@ private struct PlayerBox: View {
     var body: some View {
         ZStack {
             Color.black
+            // Stays mounted across parts, so the host view and its picture in picture survive a switch.
+            PlayerSurface(player: model.controller?.player, fit: env.settings.fit, mirrored: model.mirrored,
+                          allowsLevelGestures: !inline,
+                          onGesture: { chrome.handle($0, page: model, size: size) },
+                          danmaku: danmaku)
             if let controller = model.controller {
-                PlayerSurface(player: controller.player, fit: env.settings.fit, mirrored: model.mirrored,
-                              allowsLevelGestures: !inline,
-                              onGesture: { chrome.handle($0, page: model, size: size) },
-                              danmaku: danmaku)
                 if env.settings.showOverlay {
                     StatsOverlay(stats: controller.overlay, mode: controller.mode, quality: qualityLine(controller))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

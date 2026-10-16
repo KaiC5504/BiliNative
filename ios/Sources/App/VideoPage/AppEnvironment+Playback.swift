@@ -4,7 +4,7 @@ import AppLogic
 extension AppEnvironment {
     func makeController(for item: PlayItem) -> PlaybackControlling {
         #if DEBUG
-        if UserDefaults.standard.bool(forKey: "DemoData") { return DemoPlayback() }
+        if DemoFixtures.isEnabled { return DemoPlayback() }
         #endif
         return PlaybackController(environment: playbackEnvironment(bvid: item.bvid, cid: item.cid), quality: settings.preferredQuality,
                                   codec: settings.preferredCodec, btrEnabled: settings.btrEnabled)

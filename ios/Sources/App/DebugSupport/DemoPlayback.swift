@@ -43,7 +43,7 @@ final class DemoPlayback: PlaybackControlling {
         self.media = media
     }
 
-    static var testMedia: URL? {
+    nonisolated static var testMedia: URL? {
         guard let directory = ProcessInfo.processInfo.environment["MEDIA_DIR"] else { return nil }
         let url = URL(fileURLWithPath: directory).appendingPathComponent("avc-video.mp4")
         return FileManager.default.fileExists(atPath: url.path) ? url : nil

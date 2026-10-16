@@ -17,28 +17,26 @@ enum VideoPageFixtures {
     /// What player/wbi/v2 names as the part last played, for a route without a cid.
     static let lastPlayCid = cidA2
 
-    /// nil for paths this file does not answer.
-    static func response(path: String, query: [String: String], method: String) -> (Int, Data)? {
-        switch path {
+    /// A `DemoFixtures` handler: nil for paths this file does not answer.
+    static func handle(_ url: URL, _ method: String) -> (Int, Data)? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
+        switch url.path {
         case "/x/web-interface/wbi/view", "/x/web-interface/view":
-            return ok(view(bvid: query["bvid"] ?? bvidA))
+            return DemoFixtures.ok(view(bvid: query["bvid"] ?? bvidA))
         case "/x/player/wbi/v2", "/x/player/v2":
-            return ok(playerV2)
+            return DemoFixtures.ok(playerV2)
         case "/x/web-interface/archive/related":
-            return ok(related)
+            return DemoFixtures.ok(related)
         case "/x/player/online/total":
-            return ok(#"{"total":"53","count":"41","show_switch":{"total":true,"count":true}}"#)
+            return DemoFixtures.ok(#"{"total":"53","count":"41","show_switch":{"total":true,"count":true}}"#)
         case "/x/click-interface/web/heartbeat":
             return (200, Data(#"{"code":0,"message":"0","ttl":1}"#.utf8))
         case "/x/player/wbi/playurl", "/x/player/playurl":
-            return ok(playURL(cid: Int64(query["cid"] ?? "") ?? cidA1))
+            return DemoFixtures.ok(playURL(cid: Int64(query["cid"] ?? "") ?? cidA1))
         default:
             return nil
         }
-    }
-
-    private static func ok(_ data: String) -> (Int, Data) {
-        (200, Data(#"{"code":0,"message":"0","ttl":1,"data":\#(data)}"#.utf8))
     }
 
     private static let cover = "https://example.invalid/demo/cover.jpg"

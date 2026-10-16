@@ -62,9 +62,9 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - Anything about building, signing or TestFlight: load the `ios-testflight` skill first.
 - Code that hands a view to a system controller (AVPlayerViewController's full screen and content overlay, PiP,
   rotation, sheets) needs a simulator test that performs that transition, not only the inline screen. Build 1
-  crashed on the full-screen button because AVKit moves its content overlay into another controller
-  (`ios/Tests/AppTests/FullScreenTests.swift`). Never make a hosting controller a child of a system controller
-  whose views that controller may move.
+  crashed on the full-screen button because AVKit moves its content overlay into another controller. M2 replaced
+  AVKit's player with our own layer, so full screen is the same page rotated (`ios/Tests/AppTests/PlayerTransitionTests.swift`).
+  Never make a hosting controller a child of a system controller whose views that controller may move.
 - Hurry mode (deferred in the spec) is built, justified by the phone logs (`docs/m1-results.md`); the rules and
   files are in `docs/background.md`, "Hurry mode". `RipperConfig.hurry` switches it off.
 

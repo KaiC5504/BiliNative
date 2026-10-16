@@ -102,6 +102,9 @@ jobs:
             test
 
       - name: Install, launch and screenshot
+        env:
+          # simctl hands SIMCTL_CHILD_-prefixed variables to the launched app without the prefix.
+          SIMCTL_CHILD_MEDIA_DIR: ${{ runner.temp }}/media
         run: |
           UDID="${{ steps.sim.outputs.udid }}"
           APP=com.kaichuan.bilifast
@@ -119,6 +122,7 @@ jobs:
           }
           shoot 02-settings 8 -DemoScreen settings
           shoot 00-demo-home 8 -DemoData YES
+          shoot 03-page 10 -DemoData YES -DemoScreen page
 
       - name: Release build (no tests)
         run: |

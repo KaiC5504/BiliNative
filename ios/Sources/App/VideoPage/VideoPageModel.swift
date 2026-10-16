@@ -46,12 +46,13 @@ final class VideoPageModel {
     @ObservationIgnored private var finishedSent = false
     @ObservationIgnored private var heartbeats: Task<Void, Never>?
     @ObservationIgnored private var onlineTask: Task<Void, Never>?
-    @ObservationIgnored private var sideTasks: [Task<Void, Never>] = []
+    @ObservationIgnored private var relatedTask: Task<Void, Never>?
+    @ObservationIgnored private var chaptersTask: Task<Void, Never>?
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
 
     init(route: VideoRoute, client: BiliClient, settings: AppSettings, account: @escaping @MainActor () -> Account,
          makeController: @escaping @MainActor (PlayItem) -> PlaybackControlling,
-         sleep: @escaping (Double) async -> Void = { try? await Task.sleep(nanoseconds: UInt64(max(0, $0) * 1_000_000_000)) },
+         sleep: @escaping (Double) async -> Void = { seconds in _ = try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000)) },
          onlineInterval: Double = 30) {
         self.route = route
         self.client = client
@@ -355,29 +356,35 @@ final class VideoPageModel {
 
     private func fetchRelated(bvid: String) {
         let client = self.client
-        sideTasks.append(Task { [weak self] in
+        relatedTask?.cancel()
+        relatedTask = Task { [weak self] in
             do {
                 let cards = try await client.related(bvid: bvid)
                 guard let self, self.detail?.bvid == bvid else { return }
                 self.related = cards
+            } catch is CancellationError {
+                return
             } catch {
                 Logger.shared.warn(.api, "related failed", ["error": .init(String(describing: error))])
             }
-        })
+        }
     }
 
     private func fetchChapters(bvid: String, cid: Int64) {
         let client = self.client
         chapters = []
-        sideTasks.append(Task { [weak self] in
+        chaptersTask?.cancel()
+        chaptersTask = Task { [weak self] in
             do {
                 let info = try await client.playerInfo(bvid: bvid, cid: cid)
                 guard let self, self.current?.cid == cid else { return }
                 self.chapters = info.chapters
+            } catch is CancellationError {
+                return
             } catch {
                 Logger.shared.warn(.api, "player info failed", ["error": .init(String(describing: error))])
             }
-        })
+        }
     }
 
     private func startOnlinePoll() {
