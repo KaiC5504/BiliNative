@@ -7,10 +7,14 @@ import FoundationNetworking
 public struct HTTPRequest: Sendable {
     public var url: URL
     public var headers: [String: String]
+    public var method: String
+    public var body: Data?
 
-    public init(url: URL, headers: [String: String] = [:]) {
+    public init(url: URL, headers: [String: String] = [:], method: String = "GET", body: Data? = nil) {
         self.url = url
         self.headers = headers
+        self.method = method
+        self.body = body
     }
 }
 
@@ -56,6 +60,8 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
 
     public func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         var urlRequest = URLRequest(url: request.url)
+        urlRequest.httpMethod = request.method
+        urlRequest.httpBody = request.body
         for (name, value) in request.headers { urlRequest.setValue(value, forHTTPHeaderField: name) }
         let pending = Locked<URLSessionDataTask?>(nil)
         return try await withTaskCancellationHandler {
