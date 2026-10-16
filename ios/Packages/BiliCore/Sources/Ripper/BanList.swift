@@ -50,10 +50,17 @@ public final class BanList: @unchecked Sendable {
         let address = NodeCatalog.address(of: url)
         guard !node.isEmpty else { return }
         let added = state.withLock { value -> [(String, Int)] in
-            if value.goodNodes.contains(node) && value.goodAddresses.contains(address) { return [] }
+            // Deviation from BTR: blip strikes heal on success, so a local network drop cannot ban the fastest nodes for good.
+            let silent = value.emptyReplies.keys.filter { $0.hasPrefix("\(node)\n") && $0.hasSuffix("\n") }
+            for key in silent { value.emptyReplies[key] = nil }
+            if silent.isEmpty && value.goodNodes.contains(node) && value.goodAddresses.contains(address) { return [] }
             value.goodNodes.insert(node)
             value.goodAddresses.insert(address)
-            return judge(&value)
+            let added = judge(&value)
+            if !silent.isEmpty {
+                value.reported = value.reported.filter { !$0.hasPrefix("node:") || value.banned.contains($0) }
+            }
+            return added
         }
         report(added, url: url)
     }

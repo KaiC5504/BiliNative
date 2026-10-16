@@ -42,6 +42,43 @@ final class BanListTests: XCTestCase {
         XCTAssertEqual(kinds, [.pair])
     }
 
+    func testSuccessLiftsABanCausedBySilentFailures() {
+        let bans = BanList()
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: nil)
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: nil)
+        XCTAssertFalse(bans.allowsNode(url("a", "f2")))
+        bans.success(url: url("a", "f2"))
+        XCTAssertTrue(bans.allowsNode(url("a", "f2")))
+        XCTAssertTrue(bans.allows(url("a", "f1")))
+        XCTAssertEqual(bans.bannedNodes(), [])
+    }
+
+    func testSuccessKeepsAnAddressBanFromRefusals() {
+        let bans = BanList()
+        bans.success(url: url("a", "f1"))
+        bans.record(url: url("a", "f2"), receivedBytes: 0, status: 403)
+        bans.record(url: url("a", "f2"), receivedBytes: 0, status: 403)
+        XCTAssertFalse(bans.allowsAddress(url("b", "f2")))
+        bans.success(url: url("a", "f3"))
+        XCTAssertFalse(bans.allowsAddress(url("b", "f2")))
+        XCTAssertFalse(bans.allows(url("a", "f2")))
+        XCTAssertTrue(bans.allows(url("a", "f3")))
+    }
+
+    func testRebanAfterHealingIsReportedAgain() {
+        let bans = BanList()
+        var reported: [String] = []
+        bans.onBan = { node, _, kind in if kind == .node { reported.append(node) } }
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: nil)
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: nil)
+        bans.success(url: url("a", "f1"))
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: nil)
+        XCTAssertTrue(bans.allowsNode(url("a", "f1")))
+        bans.record(url: url("a", "f1"), receivedBytes: 0, status: nil)
+        XCTAssertFalse(bans.allowsNode(url("a", "f1")))
+        XCTAssertEqual(reported, ["a.bilivideo.com", "a.bilivideo.com"])
+    }
+
     func testRefusalCountsAgainstNobodyUntilSomethingDelivers() {
         let bans = BanList()
         bans.record(url: url("a", "f1"), receivedBytes: 0, status: 403)

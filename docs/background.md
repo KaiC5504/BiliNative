@@ -80,6 +80,12 @@ crawling node's speed is lowered; piece size `clamp(fastest bps x 0.15 s, 64 KiB
 BTR 0.9.1.5, on `local/0.9.1.5-with-scheduler` (`24631bc`). Port it only if the milestone 1 phone logs show
 startup or seeks are slow.
 
+## Deviations from BTR
+
+- Blip strikes heal: a successful transfer clears a node's empty-reply strikes and lifts a node ban they
+  caused, so a local network blip doesn't ban the fastest nodes for the rest of the video (2026-10-16, after
+  the Task 18 review).
+
 ## Known environment limits
 
 - Bilibili's web API refused non-browser requests from KaiC's PC in 2026-09. The app sends Safari-like
