@@ -70,17 +70,26 @@ final class PlaybackPolicyTests: XCTestCase {
     }
 
     func testAFormatFailureInBTRModeTriesTheNextCodecThere() {
-        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .ripper, sourceEntry: "hev1"), .nextCodec(remember: true))
-        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .ripper, sourceEntry: nil), .nextCodec(remember: true))
-        XCTAssertEqual(PlaybackController.reaction(to: .network, in: .ripper, sourceEntry: nil), .fallBackToDirect)
-        XCTAssertEqual(PlaybackController.reaction(to: .unknown, in: .ripper, sourceEntry: nil), .fallBackToDirect)
+        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .ripper, sourceEntry: "hev1", played: false), .nextCodec(remember: true))
+        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .ripper, sourceEntry: nil, played: false), .nextCodec(remember: true))
+        XCTAssertEqual(PlaybackController.reaction(to: .network, in: .ripper, sourceEntry: nil, played: false), .fallBackToDirect)
+        XCTAssertEqual(PlaybackController.reaction(to: .unknown, in: .ripper, sourceEntry: nil, played: false), .fallBackToDirect)
     }
 
     func testDirectModeFailures() {
-        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .direct, sourceEntry: "hvc1"), .nextCodec(remember: true))
-        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .directFallback, sourceEntry: "hev1"), .nextCodec(remember: false))
-        XCTAssertEqual(PlaybackController.reaction(to: .network, in: .direct, sourceEntry: nil), .restart)
-        XCTAssertEqual(PlaybackController.reaction(to: .unknown, in: .directFallback, sourceEntry: nil), .restartOnceThenNextCodec)
+        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .direct, sourceEntry: "hvc1", played: false), .nextCodec(remember: true))
+        XCTAssertEqual(PlaybackController.reaction(to: .format, in: .directFallback, sourceEntry: "hev1", played: false), .nextCodec(remember: false))
+        XCTAssertEqual(PlaybackController.reaction(to: .network, in: .direct, sourceEntry: nil, played: false), .restart)
+        XCTAssertEqual(PlaybackController.reaction(to: .unknown, in: .directFallback, sourceEntry: nil, played: false), .restartOnceThenNextCodec)
+    }
+
+    func testAFormatFailureAfterPlayingIsNotRememberedAgainstTheCodec() {
+        for mode: PlaybackController.Mode in [.ripper, .direct, .directFallback] {
+            XCTAssertEqual(PlaybackController.reaction(to: .format, in: mode, sourceEntry: "hvc1", played: true), .nextCodec(remember: false),
+                           "\(mode)")
+        }
+        XCTAssertEqual(PlaybackController.reaction(to: .network, in: .ripper, sourceEntry: nil, played: true), .fallBackToDirect)
+        XCTAssertEqual(PlaybackController.reaction(to: .network, in: .direct, sourceEntry: nil, played: true), .restart)
     }
 
     func testDirectModePlaysAHEV1LabelOnlyOverHVC1Bytes() throws {

@@ -152,6 +152,11 @@ final class PlaybackController {
     /// Whether a load starts playback; reloading a player the user paused leaves it paused.
     @ObservationIgnored private var playWhenLoaded = true
     @ObservationIgnored private var lastServerRestart: Date?
+    /// The current item reached .playing; a format failure after that is not a codec refusal.
+    @ObservationIgnored private var itemPlayed = false
+    @ObservationIgnored private var sawFirstFrame = false
+    /// False when this playback's first frame waited on the user (loaded paused), so its time means nothing.
+    @ObservationIgnored private var firstFrameTimed = true
     @ObservationIgnored private var loggedPlayURL = false
 
     init(environment: PlaybackEnvironment, quality: Int, codec: VideoCodec, btrEnabled: Bool) {
@@ -185,6 +190,8 @@ final class PlaybackController {
         loggedPlayURL = false
         playWhenLoaded = autoplay
         seekTimer.cancel()
+        sawFirstFrame = false
+        firstFrameTimed = true
         startedAt = Date()
         overlay = OverlayStats()
         watchNetwork()
@@ -438,6 +445,9 @@ final class PlaybackController {
         let item = AVPlayerItem(asset: asset)
         item.preferredForwardBufferDuration = 30
         seekTimer.reloadBegan()
+        itemPlayed = false
+        // Loaded paused, the first frame waits on the user: that wait is not startup time.
+        if !playWhenLoaded, !sawFirstFrame { firstFrameTimed = false }
         attachObservers(item, epoch: current)
         player.replaceCurrentItem(with: item)
         if time > 0 {
@@ -531,8 +541,11 @@ final class PlaybackController {
 
     /// BTR mode serves an init AVPlayer can read (hev1 renamed to hvc1), so a format failure there is
     /// AVFoundation's verdict on the codec, and the same quality is tried in the next codec, still in BTR mode.
-    nonisolated static func reaction(to failure: ItemFailure, in mode: Mode, sourceEntry: String?) -> ItemFailureReaction {
+    /// A codec is refused at load; a format failure after the item played (-11821 after background or picture
+    /// in picture, or bad bytes from the engine) only moves this playback to the next codec.
+    nonisolated static func reaction(to failure: ItemFailure, in mode: Mode, sourceEntry: String?, played: Bool) -> ItemFailureReaction {
         switch (failure, mode) {
+        case (.format, _) where played: return .nextCodec(remember: false)
         case (.format, .ripper): return .nextCodec(remember: true)
         case (_, .ripper): return .fallBackToDirect
         case (.network, _): return .restart
@@ -548,7 +561,7 @@ final class PlaybackController {
                                                      "error": .init(detail)])
         let time = currentSeconds
         let kind = TrackSelector.codecKind(choice.video)
-        switch Self.reaction(to: failure, in: mode, sourceEntry: sourceEntry) {
+        switch Self.reaction(to: failure, in: mode, sourceEntry: sourceEntry, played: itemPlayed) {
         case .fallBackToDirect:
             await fallBackToDirect(reason: "item failed in btr mode", epoch: current)
         case .nextCodec(let remember):
@@ -801,10 +814,12 @@ final class PlaybackController {
         switch status {
         case .playing:
             playWhenLoaded = true
-            if overlay.firstFrameMs == nil {
+            itemPlayed = true
+            if !sawFirstFrame {
+                sawFirstFrame = true
                 let ms = Date().timeIntervalSince(startedAt) * 1000
-                overlay.firstFrameMs = ms
-                Logger.shared.info(.player, "first frame", ["ms": .init(ms.rounded()), "mode": .init(mode.label),
+                if firstFrameTimed { overlay.firstFrameMs = ms }
+                Logger.shared.info(.player, "first frame", ["ms": .init(ms.rounded()), "timed": .init(firstFrameTimed), "mode": .init(mode.label),
                                                             "quality": .init(choice?.video.id ?? 0), "codecs": .init(choice?.video.codecs ?? ""),
                                                             "kbps": .init((choice?.video.bandwidth ?? 0) / 1000),
                                                             "audioKbps": .init((choice?.audio.bandwidth ?? 0) / 1000)])
@@ -812,7 +827,7 @@ final class PlaybackController {
             if let ms = seekTimer.playing(at: Date()) { seekResumed(ms, via: "status") }
             phase = .playing
         case .waitingToPlayAtSpecifiedRate:
-            if reason == .toMinimizeStalls, overlay.firstFrameMs != nil, !seekTimer.isRunning {
+            if reason == .toMinimizeStalls, sawFirstFrame, !seekTimer.isRunning {
                 overlay.stalls += 1
                 session?.reportStall()
                 Logger.shared.warn(.player, "stall", ["at": .init(currentSeconds.rounded()), "mode": .init(mode.label)])
@@ -825,7 +840,7 @@ final class PlaybackController {
     }
 
     private func timeJumped() {
-        guard overlay.firstFrameMs != nil else { return }
+        guard sawFirstFrame else { return }
         let position = currentSeconds
         let timed = seekTimer.jumped(to: position, at: Date(), rate: player.rate)
         Logger.shared.info(.player, "seek", ["to": .init(position.rounded()), "mode": .init(mode.label), "timed": .init(timed)])
