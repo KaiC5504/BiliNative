@@ -7,7 +7,10 @@ import DevLog
 @testable import BiliAPI
 
 final class FakeHTTP: HTTPTransport, @unchecked Sendable {
+    /// Keyed by path, or by "POST /path" to answer one method only (the method-specific key wins).
     var routes: [String: (Int, String)] = [:]
+    /// Byte-exact bodies (protobuf, which is not valid UTF-8); checked before `routes`.
+    var dataRoutes: [String: (Int, Data)] = [:]
     var redirects: [String: URL] = [:]
     let requests = Locked<[HTTPRequest]>([])
 
@@ -17,7 +20,12 @@ final class FakeHTTP: HTTPTransport, @unchecked Sendable {
         if let final = redirects[key] {
             return HTTPResponse(status: 200, headers: [:], body: Data(), finalURL: final)
         }
-        guard let (status, body) = routes[request.url.path] else {
+        let path = request.url.path
+        let methodKey = "\(request.method) \(path)"
+        if let (status, body) = dataRoutes[methodKey] ?? dataRoutes[path] {
+            return HTTPResponse(status: status, headers: [:], body: body, finalURL: request.url)
+        }
+        guard let (status, body) = routes[methodKey] ?? routes[path] else {
             return HTTPResponse(status: 404, headers: [:], body: Data(), finalURL: request.url)
         }
         return HTTPResponse(status: status, headers: [:], body: Data(body.utf8), finalURL: request.url)
@@ -31,6 +39,16 @@ final class FakeHTTP: HTTPTransport, @unchecked Sendable {
         let items = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         return Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
     }
+
+    /// The request body as text, for asserting on form posts.
+    func bodyText(of request: HTTPRequest) -> String {
+        String(decoding: request.body ?? Data(), as: UTF8.self)
+    }
+}
+
+func makeTestClient(_ http: FakeHTTP, cookies: [String: String] = [:]) -> BiliClient {
+    BiliClient(transport: http, cookies: CookieJar(cookies),
+               now: { Date(timeIntervalSince1970: 1_702_204_169) }, logger: Logger(session: "test"))
 }
 
 final class BiliClientTests: XCTestCase {
@@ -40,8 +58,7 @@ final class BiliClientTests: XCTestCase {
     private let spiPath = "/x/frontend/finger/spi"
 
     private func makeClient(_ http: FakeHTTP, cookies: [String: String] = [:]) -> BiliClient {
-        BiliClient(transport: http, cookies: CookieJar(cookies),
-                   now: { Date(timeIntervalSince1970: 1_702_204_169) }, logger: Logger(session: "test"))
+        makeTestClient(http, cookies: cookies)
     }
 
     func testNavDecodesLoggedOutAndKeysAreCachedForSigning() async throws {
