@@ -18,6 +18,11 @@ final class PageLifecycle {
     fileprivate weak var probe: UIView?
     private weak var page: UIViewController?
     private weak var navigation: UINavigationController?
+    private var settling = 0
+    /// Bumped by every event; follow-up looks of an older event stop.
+    private var checks = 0
+    private var lastPlace: Place?
+    private var removed = false
 
     init() {
         keeper = .shared
@@ -42,15 +47,38 @@ final class PageLifecycle {
     /// Every event ends in the same check, and what it does is idempotent, so a missing or extra onAppear or
     /// onDisappear (SwiftUI sends an onAppear when a back swipe starts and none back if it is cancelled) cannot
     /// leave the page in the wrong state.
+    /// SwiftUI can also report before UIKit has begun the push or pop (the main thread is busy building the new
+    /// page), when the stack still shows the old place and no later event may follow. So each event is followed
+    /// by a few more looks until well after any transition it started.
     private func settleAndApply() {
-        guard shown, model != nil else { return }
-        settle { place in
-            guard let model = self.model else { return }
-            switch place {
-            case .top: self.show(model, opened: false)
-            case .covered: self.hide(model, removed: false)
-            case .removed: self.hide(model, removed: true)
+        guard shown, !removed, model != nil else { return }
+        checks += 1
+        let check = checks
+        settle(apply)
+        Task { @MainActor in
+            for delay in [300, 1000, 2500] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard self.checks == check else { return }
+                self.settle(self.apply)
             }
+        }
+    }
+
+    /// The navigator's path changed: the stack is about to change under this page.
+    func stackChanged() {
+        settleAndApply()
+    }
+
+    /// A page out of the stack never comes back: SwiftUI pushes a new page for the same model. Looks still
+    /// pending from earlier events must not show it again.
+    private func apply(_ place: Place) {
+        guard let model, !removed else { return }
+        switch place {
+        case .top: show(model, opened: false)
+        case .covered: hide(model, removed: false)
+        case .removed:
+            removed = true
+            hide(model, removed: true)
         }
     }
 
@@ -58,6 +86,7 @@ final class PageLifecycle {
     /// several pages) gets no onDisappear, so it closes here.
     fileprivate func dismantled() {
         guard let model else { return }
+        removed = true
         hide(model, removed: true)
     }
 
@@ -97,12 +126,16 @@ final class PageLifecycle {
     /// page out of `viewControllers`, and puts it back if the swipe is cancelled. The first look is on the next
     /// turn of the main queue, since SwiftUI can report before UIKit has started the transition.
     private func settle(attempt: Int = 0, _ body: @escaping @MainActor (Place) -> Void) {
+        if attempt == 0 { settling += 1 }
         Task { @MainActor in
             if attempt > 0 { try? await Task.sleep(for: .milliseconds(50)) }
             self.locate()
             // About 10 s of retries; a transition never lasts that long.
             guard attempt < 200, let coordinator = self.navigation?.transitionCoordinator ?? self.page?.transitionCoordinator else {
-                body(self.place)
+                self.settling -= 1
+                let place = self.place
+                self.lastPlace = place
+                body(place)
                 return
             }
             var retried = false
@@ -111,14 +144,32 @@ final class PageLifecycle {
                 retried = true
                 self.settle(attempt: attempt + 1, body)
             }
+            // A coordinator caught as its transition ends can accept the completion and never call it, so the
+            // look is repeated on a timer as well.
             let queued = coordinator.animate(alongsideTransition: nil) { _ in
                 MainActor.assumeIsolated { retry() }
             }
-            if !queued { retry() }
+            if queued {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            retry()
         }
     }
 
+    /// For test failure messages.
+    var diagnostics: String {
+        let inStack = page.flatMap { page in navigation.map { $0.viewControllers.contains(page) } }
+        let pageIsTop = navigation.map { $0.topViewController === page } ?? false
+        return "shown \(shown), removed \(removed), settling \(settling), last place \(String(describing: lastPlace)), "
+            + "page \(page.map { String(describing: type(of: $0)) } ?? "nil"), navigation \(navigation != nil), "
+            + "stack \(navigation?.viewControllers.count ?? -1), in stack \(String(describing: inStack)), page is top \(pageIsTop), "
+            + "probe in window \(probe?.window != nil), place now \(place)"
+    }
+
+    /// Finds the page's controller once and keeps it. After a pop SwiftUI can leave the probe where its responder
+    /// chain reaches the page now on top, which a fresh look would take for this page.
     private func locate() {
+        guard page == nil else { return }
         var responder: UIResponder? = probe
         while let current = responder {
             if let controller = current as? UIViewController, let navigation = controller.parent as? UINavigationController {

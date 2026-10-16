@@ -10,7 +10,7 @@ final class PiPKeeper {
     static let shared = PiPKeeper()
 
     private(set) var kept: VideoPageModel?
-    /// The kept page the restore button asked for; `videoPageDestinations()` appends it to the navigator's path.
+    /// The kept page the restore button asked for, until its page shows.
     private(set) var restoring: VideoPageModel?
     /// The page whose video is in the small window, kept or still on its page.
     @ObservationIgnored private(set) weak var inPiP: VideoPageModel?
@@ -53,10 +53,12 @@ final class PiPKeeper {
         release()
     }
 
-    /// The restore button of the kept page's window; false when nothing will show the page again.
+    /// The restore button of the kept page's window: the page goes back on top of the stack it was on. False when
+    /// nothing will show the page again.
     func restore(_ model: VideoPageModel) -> Bool {
-        guard kept === model else { return false }
+        guard kept === model, let navigator = model.navigator else { return false }
         restoring = model
+        navigator.show(model)
         return true
     }
 

@@ -98,6 +98,7 @@ struct VideoPageView: View {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
             if sender == nil { sender = makeSender(for: page) }
+            page.navigator = env.navigator
             lifecycle.appeared(page)
             #if DEBUG
             ChromeDemo.stage(page: page, chrome: chrome)
@@ -116,6 +117,7 @@ struct VideoPageView: View {
             composer = nil
             lifecycle.disappeared()
         }
+        .onChange(of: env.navigator.path) { lifecycle.stackChanged() }
         .onChange(of: sender?.needsLogin) { _, needsLogin in
             if needsLogin == true { presentLogin() }
         }

@@ -21,21 +21,14 @@ enum AppPage: Hashable {
 @MainActor
 @Observable
 final class AppNavigator {
-    var path: [AppPage] = [] {
-        didSet {
-            let live = Set(path.compactMap { page -> UUID? in
-                if case .video(let route) = page { return route.id }
-                return nil
-            })
-            if models.keys.contains(where: { !live.contains($0) }) {
-                models = models.filter { live.contains($0.key) }
-            }
-        }
-    }
-    /// Pages pushed with a model that already exists, by route id.
+    var path: [AppPage] = []
+    /// Pages pushed with a model that already exists, by route id. An entry outlives its page's removal from the
+    /// path: SwiftUI builds the destination again while the pop animates, and without the entry it would build a
+    /// fresh page that loads the video anew. Entries go once their page is off the path and its model closed.
     @ObservationIgnored private var models: [UUID: VideoPageModel] = [:]
 
     func open(_ page: AppPage) {
+        dropModelsOfClosedPages()
         path.append(page)
     }
 
@@ -47,13 +40,27 @@ final class AppNavigator {
     func show(_ model: VideoPageModel) {
         var route = model.route
         route.id = UUID()
+        dropModelsOfClosedPages()
         models[route.id] = model
-        open(.video(route))
+        path.append(.video(route))
+    }
+
+    private func dropModelsOfClosedPages() {
+        let live = Set(path.compactMap { page -> UUID? in
+            if case .video(let route) = page { return route.id }
+            return nil
+        })
+        // A page still animating out has not closed its model yet.
+        models = models.filter { live.contains($0.key) || !$0.value.closed }
+    }
+
+    func existingModel(for route: VideoRoute) -> VideoPageModel? {
+        models[route.id]
     }
 
     @ViewBuilder
     func page(for route: VideoRoute) -> some View {
-        if let model = models[route.id] {
+        if let model = existingModel(for: route) {
             VideoPageView(model: model).id(route.id)
         } else {
             VideoPageView(route: route).id(route.id)
@@ -62,7 +69,7 @@ final class AppNavigator {
 }
 
 extension View {
-    /// The destinations of the navigator's path, and the restore button of a page kept for picture in picture.
+    /// The destinations of the navigator's path.
     /// Goes on the root view inside the NavigationStack bound to `AppNavigator.path`; the home screen supplies
     /// the 历史记录 and 最近打开 pages.
     func videoPageDestinations<History: View, Recents: View>(@ViewBuilder history: @escaping () -> History,
@@ -83,7 +90,6 @@ private struct AppPageDestinations<History: View, Recents: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         let navigator = env.navigator
-        let keeper = PiPKeeper.shared
         return content
             .navigationDestination(for: AppPage.self) { page in
                 switch page {
@@ -91,10 +97,6 @@ private struct AppPageDestinations<History: View, Recents: View>: ViewModifier {
                 case .history: history()
                 case .recents: recents()
                 }
-            }
-            .onChange(of: keeper.restoring.map { ObjectIdentifier($0) }) { _, requested in
-                guard requested != nil, let model = keeper.restoring else { return }
-                navigator.show(model)
             }
     }
 }

@@ -259,6 +259,10 @@ final class VideoPageModelTests: XCTestCase {
         let keeper = PiPKeeper()
         let (page, fake) = try await playingPage(keeper: keeper)
         let other = makePage(VideoRoute(bvid: F.bvidC, startSeconds: 0), keeper: keeper)
+        let navigator = AppNavigator()
+        let elsewhere = AppNavigator()
+        page.model.navigator = navigator
+        other.model.navigator = elsewhere
         XCTAssertFalse(keeper.restore(page.model), "nothing to restore before it is kept")
         page.model.pipChanged(true)
         keeper.pageRemoved(page.model)
@@ -266,6 +270,8 @@ final class VideoPageModelTests: XCTestCase {
 
         XCTAssertTrue(keeper.restore(page.model))
         XCTAssertTrue(keeper.restoring === page.model)
+        XCTAssertEqual(navigator.path.count, 1, "the page goes back on the stack it was on")
+        XCTAssertTrue(elsewhere.path.isEmpty)
         XCTAssertTrue(keeper.pageShown(page.model, opened: true))
         XCTAssertNil(keeper.kept)
         XCTAssertNil(keeper.restoring)
@@ -326,6 +332,8 @@ final class VideoPageModelTests: XCTestCase {
     func testRestoreThatNeverShowsThePageReleasesIt() async throws {
         let keeper = PiPKeeper()
         let (page, fake) = try await playingPage(keeper: keeper)
+        let navigator = AppNavigator()
+        page.model.navigator = navigator
         page.model.pipChanged(true)
         keeper.pageRemoved(page.model)
         XCTAssertTrue(keeper.restore(page.model))
