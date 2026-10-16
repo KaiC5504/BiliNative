@@ -6,11 +6,13 @@ public enum Redactor {
         "dedeuserid__ckmd5",
     ]
     private static let idNames: Set<String> = ["mid", "dedeuserid"]
+    // Too short to match as a fragment ("design", "assign"), so it only counts as a whole name.
+    private static let exactSecretKeys: Set<String> = ["sign"]
 
     // Prefixes are bounded so matching stays linear on long input.
     private static let secretName =
         #"(?:[\w-]{0,40}(?:sessdata|bili_jct|access_key|access_token|refresh_token|token|password|passwd|pwd|dedeuserid__ckmd5)"#
-        + #"|[\w-]{0,40}csrf[\w-]{0,40})"#
+        + #"|[\w-]{0,40}csrf[\w-]{0,40}|sign)"#
     private static let quote = #"(?:\\?["'])"#
     private static let separator = #"(?:\\?["'])?\s*[=:]\s*"#
     // Group 1 is the opening quote of a quoted value, so the quote survives the replacement.
@@ -34,7 +36,7 @@ public enum Redactor {
         var result: [String: LogValue] = [:]
         for (key, value) in fields {
             let lowered = key.lowercased()
-            if secretKeyFragments.contains(where: { lowered.contains($0) }) {
+            if exactSecretKeys.contains(lowered) || secretKeyFragments.contains(where: { lowered.contains($0) }) {
                 result[key] = .string("[redacted]")
             } else if idNames.contains(lowered) {
                 result[key] = .string(hashedID(value))
