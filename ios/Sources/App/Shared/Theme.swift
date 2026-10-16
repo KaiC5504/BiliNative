@@ -14,7 +14,8 @@ enum Theme {
 
     static let toastFill = Color.black.opacity(0.92)
     /// How dark the layer behind a panel is once it is fully in, as a share of black.
-    static let panelShade = Color.black.opacity(0.86)
+    static let panelShadeOpacity = 0.86
+    static let panelShade = Color.black.opacity(panelShadeOpacity)
     /// Share of black at 0, 35, 70 and 100 per cent of the ramp that leads into a panel; the official app's frames
     /// give a slow start and about 0.74 where the cards begin.
     static let panelFade: [(location: CGFloat, black: Double)] = [(0, 0), (0.35, 0.2), (0.7, 0.55), (1, 0.74)]

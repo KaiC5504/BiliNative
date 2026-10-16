@@ -211,18 +211,22 @@ struct PanelBackdrop: View {
         GeometryReader { geometry in
             let length = vertical ? geometry.size.height : geometry.size.width
             Rectangle()
-                .fill(LinearGradient(stops: Self.stops(reach: soft ? reach : 0, in: length),
+                .fill(LinearGradient(stops: Self.stops(reach: soft ? reach : 0, in: length, fullShade: vertical),
                                      startPoint: vertical ? .top : .leading, endPoint: vertical ? .bottom : .trailing))
         }
         .allowsHitTesting(false)
     }
 
-    static func stops(reach: CGFloat, in length: CGFloat) -> [Gradient.Stop] {
+    /// The sheet ramps all the way to full shade before its content starts: behind it is the light page, whose text
+    /// would ghost through the heading at the landscape ramp's end.
+    static func stops(reach: CGFloat, in length: CGFloat, fullShade: Bool = false) -> [Gradient.Stop] {
         guard reach > 0, length > reach else {
             return [Gradient.Stop(color: Theme.panelShade, location: 0), Gradient.Stop(color: Theme.panelShade, location: 1)]
         }
         let ramp = reach / length
-        var stops = Theme.panelFade.map { Gradient.Stop(color: Color.black.opacity($0.black), location: $0.location * ramp) }
+        let end = Theme.panelFade.last?.black ?? 1
+        let scale = fullShade ? Theme.panelShadeOpacity / end : 1
+        var stops = Theme.panelFade.map { Gradient.Stop(color: Color.black.opacity($0.black * scale), location: $0.location * ramp) }
         stops.append(Gradient.Stop(color: Theme.panelShade, location: ramp + (1 - ramp) * 0.2))
         stops.append(Gradient.Stop(color: Theme.panelShade, location: 1))
         return stops
