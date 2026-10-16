@@ -25,19 +25,29 @@ final class ActionsModel {
     private(set) var favCount: Int64
     private(set) var shareCount: Int64
     var prompt: Prompt?
+    /// Set when 不喜欢 needs the one-time TV-login confirmation; the page opens the sheet and clears it.
+    var needsAppToken = false
 
     let detail: VideoDetail
     @ObservationIgnored private let client: BiliClient
     @ObservationIgnored private let isLoggedIn: () -> Bool
     @ObservationIgnored private let requestLogin: () -> Void
     @ObservationIgnored private let toast: (String) -> Void
+    @ObservationIgnored private let signer: AppSigner?
+    @ObservationIgnored private let loadAppToken: () -> String?
+    @ObservationIgnored private let clearAppToken: () -> Void
     /// Once the user has acted, a late relation answer must not overwrite what they did.
     @ObservationIgnored private var touched = false
     @ObservationIgnored private var busy: Set<String> = []
 
     init(client: BiliClient, detail: VideoDetail, relation: VideoRelation?, uploader: UploaderCard?,
-         isLoggedIn: @escaping () -> Bool, requestLogin: @escaping () -> Void, toast: @escaping (String) -> Void) {
+         isLoggedIn: @escaping () -> Bool, requestLogin: @escaping () -> Void, toast: @escaping (String) -> Void,
+         signer: AppSigner? = .tv, loadAppToken: @escaping () -> String? = AppTokenStore.load,
+         clearAppToken: @escaping () -> Void = AppTokenStore.delete) {
         self.client = client
+        self.signer = signer
+        self.loadAppToken = loadAppToken
+        self.clearAppToken = clearAppToken
         self.detail = detail
         self.isLoggedIn = isLoggedIn
         self.requestLogin = requestLogin
@@ -97,6 +107,31 @@ final class ActionsModel {
             $0.setLiked(on)
         }, call: { client, detail in
             try await client.like(aid: detail.aid, bvid: detail.bvid, on: on)
+        })
+    }
+
+    /// A build without the app keys cannot sign the call at all, so 不喜欢 stays grey there.
+    var dislikeAvailable: Bool { signer != nil }
+
+    /// Goes through the app API with the token the TV-login sheet fetched (spec 4.14). No token, or one the server
+    /// no longer accepts, sends the user to the sheet instead of failing.
+    func toggleDislike() async {
+        guard let signer else { return toast("此版本不支持不喜欢") }
+        guard isLoggedIn() else { return requestLogin() }
+        guard let token = loadAppToken() else {
+            needsAppToken = true
+            return
+        }
+        let on = !disliked
+        await perform("dislike", change: {
+            $0.setDisliked(on)
+        }, call: { client, detail in
+            try await client.dislike(aid: detail.aid, on: on, accessToken: token, signer: signer)
+        }, intercept: { [weak self] error in
+            guard case .api(let code, _) = error as? BiliError, code == -101 || code == -2 else { return false }
+            self?.clearAppToken()
+            self?.needsAppToken = true
+            return true
         })
     }
 
@@ -215,6 +250,12 @@ final class ActionsModel {
         if on { disliked = false }
     }
 
+    /// Dislike takes the like back, as on the server.
+    private func setDisliked(_ on: Bool) {
+        disliked = on
+        if on { setLiked(false) }
+    }
+
     private func setFavorited(_ on: Bool) {
         guard on != favorited else { return }
         favorited = on
@@ -235,7 +276,8 @@ final class ActionsModel {
     }
 
     private func perform(_ name: String, change: (ActionsModel) -> Void,
-                         call: @escaping (BiliClient, VideoDetail) async throws -> Void) async {
+                         call: @escaping (BiliClient, VideoDetail) async throws -> Void,
+                         intercept: ((Error) -> Bool)? = nil) async {
         guard isLoggedIn() else { return requestLogin() }
         guard !busy.contains(name) else { return }
         busy.insert(name)
@@ -250,6 +292,7 @@ final class ActionsModel {
         } catch {
             restore(saved)
             Logger.shared.warn(.api, "\(name) failed", ["error": .init(String(describing: error))])
+            if intercept?(error) == true { return }
             if let error = error as? BiliError {
                 toast(Self.message(for: error))
                 if error.needsLogin { requestLogin() }

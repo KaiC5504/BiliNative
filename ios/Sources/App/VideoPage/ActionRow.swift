@@ -16,13 +16,13 @@ extension Theme {
         static let ringWidth: CGFloat = 2.5
         static let topPadding: CGFloat = 19
         static let bottomPadding: CGFloat = 2
+        static let unavailableOpacity = 0.4
     }
 }
 
 /// 点赞, 不喜欢, 投币, 收藏 and 分享 (03). Holding 点赞 fills rings around 点赞, 投币 and 收藏 and then gives all three.
 struct ActionRow: View {
     let actions: ActionsModel
-    /// 不喜欢 shows and does nothing until Task 23 brings the app token it needs.
     var onDislike: () -> Void = {}
 
     @State private var ring: Double = 0
@@ -38,7 +38,8 @@ struct ActionRow: View {
                                     perform: completeTriple, onPressingChanged: pressing)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction(named: "一键三连") { Task { await actions.triple() } }
-            ActionCell(systemName: "hand.thumbsdown.fill", active: actions.disliked, label: "不喜欢", count: nil)
+            ActionCell(systemName: "hand.thumbsdown.fill", active: actions.disliked, label: "不喜欢", count: nil,
+                       dimmed: !actions.dislikeAvailable)
                 .onTapGesture(perform: onDislike)
                 .accessibilityAddTraits(.isButton)
             ActionCell(coin: true, active: actions.coins > 0, label: "投币", count: actions.coinCount)
@@ -89,6 +90,7 @@ private struct ActionCell: View {
     let active: Bool
     let label: String
     let count: Int64?
+    var dimmed = false
 
     var body: some View {
         VStack(spacing: Theme.Actions.countSpacing) {
@@ -110,6 +112,7 @@ private struct ActionCell: View {
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
+        .opacity(dimmed ? Theme.Actions.unavailableOpacity : 1)
         .animation(.spring(duration: 0.25), value: active)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
