@@ -19,12 +19,15 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   from BTR"), direct mode falls back to backup URLs, and the overlay shows the codec and bitrate actually playing.
 - PC speed test (2026-10-16, KaiC's playurl, overseas): 1080P+ HEVC 8.55 MB/s with BTR vs 0.98 MB/s on one
   connection.
-- Next: Task 29, the first TestFlight build and KaiC's run of `docs/m1-phone-checklist.md`. Results go in
-  `docs/m1-results.md`.
 - 2026-10-16: build 1 on the phone: full screen crashed, the first BTR video after a long background fell back
   to direct (iOS took the server's socket silently), and 卡顿 counted the wait after a drag. All three fixed for
   build 2. First phone impression: BTR starts almost instantly and never stalled while playing untouched; direct
   stalled for 18 s on the same video.
+- 2026-10-16: milestone 1 verdict **go** (`docs/m1-results.md`). On 4 videos tried in both modes BTR started
+  faster and stalled far less; KaiC calls it way better than the official app. Weak spots: a cold 4K start took
+  8.7 s, and the first seconds after a jump into unloaded 4K can stall. That is the trigger for hurry mode.
+- Next: hurry mode in the engine (if KaiC approves), then milestone 2 (official-style player chrome and gestures,
+  danmaku, like/coin/fav, Now Playing, PiP polish).
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.
@@ -48,7 +51,7 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   crashed on the full-screen button because AVKit moves its content overlay into another controller
   (`ios/Tests/AppTests/FullScreenTests.swift`). Never make a hosting controller a child of a system controller
   whose views that controller may move.
-- Do not build the spec's deferred "hurry mode" unless the milestone 1 phone logs show startup or seeks are slow.
+- Hurry mode (deferred in the spec) is now justified by the phone logs (`docs/m1-results.md`); build it only from an approved plan.
 
 ## How to test
 
