@@ -184,7 +184,10 @@ final class PageLifecycleTests: XCTestCase {
         // The window finishes closing once it is back in the page.
         top.model.pipChanged(false)
         navigator.path.removeLast()
-        try await waitUntil { top.model.closed && !below.model.covered }
+        try await waitUntil { top.model.closed }
+        XCTAssertTrue(top.model.closed, "kept \(PiPKeeper.shared.kept === top.model), covered \(top.model.covered), "
+                      + "PiP \(top.model.pipActive), presenter \(String(describing: top.model.presenter))")
+        try await waitUntil { !below.model.covered }
         XCTAssertTrue(topFake.stopped)
         XCTAssertFalse(below.model.closed)
     }
@@ -202,6 +205,23 @@ final class PageLifecycleTests: XCTestCase {
         XCTAssertNil(PiPKeeper.shared.kept)
         XCTAssertTrue(fake.stopped)
         XCTAssertTrue(page.model.closed)
+    }
+
+    func testNavigatorAppendsVideoAndListPages() {
+        let navigator = AppNavigator()
+        let route = VideoRoute(bvid: F.bvidA)
+        navigator.open(route)
+        navigator.open(.history)
+        let page = makePage(VideoRoute(bvid: F.bvidC))
+        navigator.show(page.model)
+        navigator.open(.recents)
+        XCTAssertEqual(navigator.path.count, 4)
+        XCTAssertEqual(navigator.path[0], .video(route))
+        XCTAssertEqual(navigator.path[1], .history)
+        guard case .video(let shown) = navigator.path[2] else { return XCTFail("\(navigator.path[2])") }
+        XCTAssertEqual(shown.bvid, F.bvidC)
+        XCTAssertNotEqual(shown.id, page.model.route.id, "a restored page gets a route of its own")
+        XCTAssertEqual(navigator.path[3], .recents)
     }
 
     // MARK: helpers

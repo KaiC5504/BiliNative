@@ -36,7 +36,7 @@ struct HomeView: View {
             .background(Theme.pageGrey)
             .overlay(alignment: .topLeading) { menu }
             .toolbar(.hidden, for: .navigationBar)
-            .videoPageDestinations()
+            .videoPageDestinations(history: { HistoryView() }, recents: { RecentsView() })
             .sheet(isPresented: $showLogin) { LoginView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),
