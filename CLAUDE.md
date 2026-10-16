@@ -14,9 +14,13 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 ## Status
 
 - 2026-10-16: spec approved, plan written and committed.
-- 2026-10-16: Task 1 done: `BiliShared` module in `ios/Packages/BiliCore`, "Core tests" CI workflow, public repo
-  `KaiC5504/BiliNative`.
-- Next: the plan is running subagent-driven (KaiC chose it on 2026-10-16), task by task from Task 2.
+- 2026-10-16: milestone 1 built (Tasks 1-28, subagent-driven, every task reviewed, then a whole-branch review).
+  Beyond the plan: ban scoping and damaged-span avoidance for Akamai (see `docs/background.md`, "Deviations
+  from BTR"), direct mode falls back to backup URLs, and the overlay shows the codec and bitrate actually playing.
+- PC speed test (2026-10-16, KaiC's playurl, overseas): 1080P+ HEVC 8.55 MB/s with BTR vs 0.98 MB/s on one
+  connection.
+- Next: Task 29, the first TestFlight build and KaiC's run of `docs/m1-phone-checklist.md`. Results go in
+  `docs/m1-results.md`.
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.
