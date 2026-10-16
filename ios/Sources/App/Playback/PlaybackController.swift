@@ -133,6 +133,7 @@ final class PlaybackController {
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var startedAt = Date()
     @ObservationIgnored private var seekTimer = SeekTimer()
+    @ObservationIgnored private var stallFilter = StallFilter()
     @ObservationIgnored private var refreshedAfterFatal = false
     @ObservationIgnored private var refreshingAfterFatal = false
     @ObservationIgnored private var lastDelivered: Int64?
@@ -832,9 +833,20 @@ final class PlaybackController {
             phase = .playing
         case .waitingToPlayAtSpecifiedRate:
             if reason == .toMinimizeStalls, sawFirstFrame, !seekTimer.isRunning {
-                overlay.stalls += 1
                 session?.reportStall()
-                Logger.shared.warn(.player, "stall", ["at": .init(currentSeconds.rounded()), "mode": .init(mode.label)])
+                let stalledAt = Date()
+                let position = currentSeconds
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(StallFilter.after * 1_000_000_000))
+                    guard let self, current == self.epoch else { return }
+                    let fields: [String: LogValue] = ["at": .init(position.rounded()), "mode": .init(self.mode.label)]
+                    if self.stallFilter.isSeekWait(stalledAt: stalledAt) {
+                        Logger.shared.info(.player, "seek wait", fields)
+                    } else {
+                        self.overlay.stalls += 1
+                        Logger.shared.warn(.player, "stall", fields)
+                    }
+                }
             }
         case .paused:
             seekTimer.paused()
@@ -844,6 +856,7 @@ final class PlaybackController {
     }
 
     private func timeJumped() {
+        stallFilter.jumped(at: Date())
         guard sawFirstFrame else { return }
         let position = currentSeconds
         let timed = seekTimer.jumped(to: position, at: Date(), rate: player.rate)

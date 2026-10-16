@@ -154,4 +154,15 @@ final class PlaybackPolicyTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(timer.ticked(position: 30.5, rate: 1, playing: true, at: start.addingTimeInterval(0.75))), 250, accuracy: 0.1)
         XCTAssertFalse(timer.isRunning)
     }
+
+    func testStallsRightAroundADragAreSeekWaits() {
+        let start = Date(timeIntervalSince1970: 1000)
+        var filter = StallFilter()
+        XCTAssertFalse(filter.isSeekWait(stalledAt: start), "no drag yet")
+        filter.jumped(at: start)
+        XCTAssertTrue(filter.isSeekWait(stalledAt: start.addingTimeInterval(0.7)), "the wait after a drag")
+        XCTAssertTrue(filter.isSeekWait(stalledAt: start.addingTimeInterval(-0.1)), "reported just before its jump")
+        XCTAssertFalse(filter.isSeekWait(stalledAt: start.addingTimeInterval(-0.4)), "a drag 0.4 s into a stall is the user reacting")
+        XCTAssertFalse(filter.isSeekWait(stalledAt: start.addingTimeInterval(17)), "a stall well after the drag")
+    }
 }
