@@ -21,6 +21,10 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   connection.
 - Next: Task 29, the first TestFlight build and KaiC's run of `docs/m1-phone-checklist.md`. Results go in
   `docs/m1-results.md`.
+- 2026-10-16: build 1 on the phone: full screen crashed, the first BTR video after a long background fell back
+  to direct (iOS took the server's socket silently), and 卡顿 counted the wait after a drag. All three fixed for
+  build 2. First phone impression: BTR starts almost instantly and never stalled while playing untouched; direct
+  stalled for 18 s on the same video.
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.
@@ -39,6 +43,11 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - The app target is Swift 5 language mode, SwiftUI, no third-party dependencies, iOS 26 deployment target,
   built on GitHub's `macos-26` runners (newest Xcode on the image).
 - Anything about building, signing or TestFlight: load the `ios-testflight` skill first.
+- Code that hands a view to a system controller (AVPlayerViewController's full screen and content overlay, PiP,
+  rotation, sheets) needs a simulator test that performs that transition, not only the inline screen. Build 1
+  crashed on the full-screen button because AVKit moves its content overlay into another controller
+  (`ios/Tests/AppTests/FullScreenTests.swift`). Never make a hosting controller a child of a system controller
+  whose views that controller may move.
 - Do not build the spec's deferred "hurry mode" unless the milestone 1 phone logs show startup or seeks are slow.
 
 ## How to test
