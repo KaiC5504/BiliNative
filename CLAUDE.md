@@ -90,7 +90,7 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   (Swift 6.4) while CI uses Xcode 26.6 (Swift 6.3), so CI stays the gate. Warnings show only for files
   recompiled in that run. Setup and the manifest it compiles with: `tools/app-check/README.md`.
 - App code, everything else: only in CI ("iOS compile check" workflow: simulator build, unit and integration
-  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac. On `main` and `m2` it also runs
+  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac. On `main` it also runs
   the BiliCore tests and a Release build; other branches skip both, since the PC already runs `swift test`.
   Debug builds take `-DemoData YES` (invented fixtures, no network or account) and `-DemoScreen <name>` to open
   any screen for screenshots; the `shoot` list in `.github/workflows/ios-compile.yml` names them all.

@@ -21,9 +21,9 @@ jobs:
   build:
     runs-on: macos-26
     env:
-      # main and m2 get everything. Task branches skip what the PC already checks (the BiliCore tests) and the
+      # main gets everything. Task branches skip what the PC already checks (the BiliCore tests) and the
       # Release build, which main checks before every TestFlight build.
-      FULL_RUN: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/m2' }}
+      FULL_RUN: ${{ github.ref == 'refs/heads/main' }}
       # Homebrew's self-update took over two minutes before installing XcodeGen.
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
