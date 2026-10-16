@@ -9,40 +9,6 @@ private final class ReleasePath {
     var pages: [Int] = []
 }
 
-private final class StateBox {
-    nonisolated(unsafe) static weak var last: StateBox?
-    init() { StateBox.last = self }
-}
-
-private struct StateHolder: View {
-    @State private var box = StateBox()
-
-    var body: some View {
-        Color.white.overlay { Text(String(describing: ObjectIdentifier(box))) }
-    }
-}
-
-/// Diagnostic: the same stack with the page's own prompts, or a plain state holder.
-private struct DiagHarness: View {
-    @Bindable var path: ReleasePath
-    let plain: Bool
-
-    var body: some View {
-        NavigationStack(path: $path.pages) {
-            Color.clear
-                .navigationDestination(for: Int.self) { page in
-                    if page == 1, !plain {
-                        VideoPageView(route: VideoRoute(bvid: VideoPageFixtures.bvidA))
-                    } else if page == 1 {
-                        StateHolder()
-                    } else {
-                        Color.white
-                    }
-                }
-        }
-    }
-}
-
 private struct ReleaseHarness: View {
     @Bindable var path: ReleasePath
     let prompts: ActionPrompts
@@ -112,49 +78,21 @@ final class PageReleaseTests: XCTestCase {
         XCTAssertNil(comments, "the popped page's CommentsModel is still alive")
     }
 
-    func testDiagPlainStateIsFreedOnPop() async throws {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let path = ReleasePath()
-        let window = UIWindow(windowScene: scene)
-        window.rootViewController = UIHostingController(rootView: DiagHarness(path: path, plain: true))
-        window.makeKeyAndVisible()
-        self.window = window
-        try await waitUntil { (window.rootViewController?.view.bounds.width ?? 0) > 0 }
-        path.pages = [1]
-        try await waitUntil { StateBox.last != nil }
-        path.pages = []
-        try await Task.sleep(for: .milliseconds(1500))
-        let afterPop = StateBox.last != nil
-        path.pages = [2]
-        try await Task.sleep(for: .milliseconds(800))
-        path.pages = []
-        try await Task.sleep(for: .milliseconds(1500))
-        XCTAssertNil(StateBox.last, "DIAG plain state alive after pop: \(afterPop), after a second push: true")
+    func testDiagBisect() async throws {
+        let parts: [Set<String>] = [[], ["layout"], ["tabs"], ["player"], ["panels"], ["toasts"], ["gates"], ["alert"],
+                                    ["changes"], ["layout", "panels", "toasts", "gates", "alert", "changes"]]
+        var lines: [String] = []
+        for omit in parts {
+            LeakProbe.omit = omit
+            let result = try await hostAndDrop()
+            lines.append("omit \(omit.sorted()): \(result)")
+            print("LEAKPROBE omit \(omit.sorted()): \(result)")
+        }
+        LeakProbe.omit = []
+        XCTFail("DIAG " + lines.joined(separator: " | "))
     }
 
-    func testDiagPageWithItsOwnPromptsIsFreedOnPop() async throws {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let path = ReleasePath()
-        let window = UIWindow(windowScene: scene)
-        window.rootViewController = UIHostingController(rootView: DiagHarness(path: path, plain: false)
-            .environment(AppEnvironment(http: FixtureHTTP())))
-        window.makeKeyAndVisible()
-        self.window = window
-        try await waitUntil { (window.rootViewController?.view.bounds.width ?? 0) > 0 }
-        path.pages = [1]
-        try await waitUntil { (OrientationController.shared.owner as? VideoPageModel)?.detail != nil }
-        weak var page = OrientationController.shared.owner as? VideoPageModel
-        try await Task.sleep(for: .milliseconds(1000))
-        path.pages = []
-        try await waitUntil { page?.closed ?? true }
-        path.pages = [2]
-        try await Task.sleep(for: .milliseconds(800))
-        path.pages = []
-        try await waitUntil(10) { page == nil }
-        XCTAssertNil(page, "DIAG page with own prompts alive after pop")
-    }
-
-    func testDiagDirectlyHostedPageIsFreed() async throws {
+    private func hostAndDrop() async throws -> String {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let prompts = ActionPrompts()
         let window = UIWindow(windowScene: scene)
@@ -162,16 +100,38 @@ final class PageReleaseTests: XCTestCase {
             .environment(AppEnvironment(http: FixtureHTTP())))
         window.makeKeyAndVisible()
         self.window = window
-        try await waitUntil { prompts.actions != nil && prompts.comments != nil && OrientationController.shared.owner is VideoPageModel }
+        let made = await wait(8) { prompts.actions != nil && prompts.comments != nil && OrientationController.shared.owner is VideoPageModel }
+        guard made else { return "never made" }
         weak var page = OrientationController.shared.owner as? VideoPageModel
         weak var actions = prompts.actions
         weak var comments = prompts.comments
-        try await Task.sleep(for: .milliseconds(1000))
+        try await Task.sleep(for: .milliseconds(800))
         window.rootViewController = UIViewController()
-        try await waitUntil { page?.closed ?? true }
+        window.isHidden = true
+        self.window = nil
+        _ = await wait(5) { page?.closed ?? true }
         prompts.actions = nil
-        try await waitUntil(10) { page == nil && actions == nil && comments == nil }
-        XCTAssertNil(page, "DIAG direct: page alive (actions \(actions != nil), comments \(comments != nil))")
+        _ = await wait(5) { page == nil && actions == nil && comments == nil }
+        var result = "page \(page != nil), actions \(actions != nil), comments \(comments != nil)"
+        if page != nil || actions != nil || comments != nil {
+            let orientation = OrientationController.shared
+            orientation.enterLandscape()
+            try await Task.sleep(for: .milliseconds(800))
+            orientation.exitToInline()
+            _ = await wait(5) { page == nil && actions == nil && comments == nil }
+            result += "; after a turn: page \(page != nil), actions \(actions != nil), comments \(comments != nil)"
+            try await Task.sleep(for: .milliseconds(800))
+        }
+        return result
+    }
+
+    private func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return condition()
     }
 
     private static func hostView(in view: UIView) -> PlayerHostView? {
