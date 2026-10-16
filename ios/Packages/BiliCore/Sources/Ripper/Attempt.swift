@@ -132,15 +132,18 @@ struct AttemptRunner: Sendable {
             if cancelled {
                 // A copy that lost the race still measured its node; without this a slow node is never measured.
                 if received >= Meter.sampleMinBytes { resolver.sample(url, bps: Double(received) * 1000 / elapsed) }
+                ctx.logger.debug(.engine, "attempt cancelled", ["node": .init(node), "range": .init(part.description),
+                                                                "bytes": .init(received), "ms": .init(elapsed.rounded())])
             } else {
                 let ripperError = error as? RipperError
                 resolver.failure(url, status: ripperError?.status, receivedBytes: received)
                 if let status = ripperError?.status, status == 412 || status == 429 {
                     ctx.auto?.pushback(status: status)
-                } else if ripperError == .firstByteTimeout && received == 0 {
+                } else if ripperError?.isTimeout == true && received == 0 {
                     ctx.auto?.slow()
                 }
-                ctx.logger.debug(.engine, "attempt failed", ["node": .init(node), "error": .init(String(describing: error)),
+                ctx.logger.debug(.engine, "attempt failed", ["node": .init(node), "range": .init(part.description),
+                                                             "error": .init(String(describing: error)),
                                                              "bytes": .init(received), "ms": .init(elapsed.rounded())])
             }
             ctx.stats.failed(node: node, wastedBytes: received, cancelled: cancelled)

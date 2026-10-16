@@ -14,6 +14,12 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         var truncateAfter: Int64?
         var stallAfter: Int64?
         var wrongRange = false
+        /// A 206 without a Content-Range header.
+        var omitContentRange = false
+        /// Send this many bytes past the requested end while still claiming the requested range.
+        var extraBytes: Int64 = 0
+        /// The total the Content-Range advertises, when it should differ from the content size.
+        var totalSize: Int64? = nil
     }
 
     struct ConnectionLost: Error {}
@@ -45,17 +51,18 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
         guard range.end < Int64(content.count) else { return TransportResponse(status: 416, headers: [:], body: empty) }
         let served = behavior.wrongRange ? (ByteRange(start: range.start + 1, end: range.end) ?? range) : range
         let content = self.content
+        let bodyEnd = min(Int64(content.count) - 1, served.end + behavior.extraBytes)
         let body = AsyncThrowingStream<[UInt8], Error> { continuation in
             let task = Task {
                 var offset = served.start
-                while offset <= served.end, !Task.isCancelled {
+                while offset <= bodyEnd, !Task.isCancelled {
                     let sent = offset - served.start
                     if let limit = behavior.truncateAfter, sent >= limit { break }
                     if let limit = behavior.stallAfter, sent >= limit {
                         try? await Task.sleep(nanoseconds: 60_000_000_000)
                         break
                     }
-                    var end = min(served.end, offset + 16 * 1024 - 1)
+                    var end = min(bodyEnd, offset + 16 * 1024 - 1)
                     // Cut chunks exactly at the truncation and stall points.
                     if let limit = behavior.truncateAfter { end = min(end, served.start + limit - 1) }
                     if let limit = behavior.stallAfter { end = min(end, served.start + limit - 1) }
@@ -68,7 +75,9 @@ final class SimCDN: RangeTransport, @unchecked Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
-        return TransportResponse(status: 206, headers: ["content-range": "bytes \(served.start)-\(served.end)/\(content.count)"], body: body)
+        let total = behavior.totalSize ?? Int64(content.count)
+        let headers = behavior.omitContentRange ? [:] : ["content-range": "bytes \(served.start)-\(served.end)/\(total)"]
+        return TransportResponse(status: 206, headers: headers, body: body)
     }
 }
 
@@ -87,6 +96,13 @@ enum TestEngine {
         config.hedgeDelayMs = 100
         config.retryWindowMs = 5_000
         config.fixedConcurrency = 8
+        return config
+    }
+
+    /// Slow simulated nodes pause between chunks; leave room for that on a loaded runner.
+    static var slowConfig: RipperConfig {
+        var config = TestEngine.config
+        config.stallTimeoutMs = 2_000
         return config
     }
 
