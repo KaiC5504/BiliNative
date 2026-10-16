@@ -66,6 +66,16 @@ final class SidxParserTests: XCTestCase {
         XCTAssertNil(SidxParser.parse(MP4Builder.box("sidx", payload), absoluteStart: 0))
     }
 
+    func testLargeIndexesParseUpToTheSixteenBitReferenceLimit() throws {
+        for count in [10_001, Int(UInt16.max)] {
+            let refs = [(UInt32, UInt32)](repeating: (100, 10), count: count)
+            let bytes = MP4Builder.sidx(version: 0, timescale: 1000, earliest: 0, firstOffset: 0, refs: refs)
+            let segments = try XCTUnwrap(SidxParser.parse(bytes, absoluteStart: 0), "\(count) references")
+            XCTAssertEqual(segments.count, count)
+            XCTAssertEqual(segments.last?.range.end, Int64(bytes.count) + Int64(count) * 100 - 1)
+        }
+    }
+
     func testHugeOffsetsAndSizesDoNotTrap() {
         let hugeOffset = MP4Builder.sidx(version: 1, timescale: 1000, earliest: UInt64.max, firstOffset: UInt64.max, refs: [(10, 10)])
         XCTAssertNil(SidxParser.parse(hugeOffset, absoluteStart: 0))

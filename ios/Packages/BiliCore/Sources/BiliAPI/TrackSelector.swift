@@ -31,15 +31,11 @@ public struct TrackChoice: Sendable, Equatable {
 public enum TrackSelector {
     /// The highest quality not above `quality` (or the lowest offered), then the first codec of
     /// `codecOrder` that quality has, else whatever it has.
-    public static func choose(_ dash: Dash, quality: Int, codecOrder: [VideoCodec], excludeDolbyVision: Bool = false) -> TrackChoice? {
+    public static func choose(_ dash: Dash, quality: Int, codecOrder: [VideoCodec]) -> TrackChoice? {
         guard let audio = bestAudio(dash.audio) else { return nil }
-        var videos = dash.video
-        if excludeDolbyVision {
-            videos.removeAll { codecKind($0) == "dolby" }
-        }
-        let qualities = Set(videos.map(\.id)).sorted(by: >)
+        let qualities = Set(dash.video.map(\.id)).sorted(by: >)
         guard let picked = qualities.first(where: { $0 <= quality }) ?? qualities.last else { return nil }
-        let candidates = videos.filter { $0.id == picked }
+        let candidates = dash.video.filter { $0.id == picked }
         for codec in codecOrder {
             if let video = candidates.first(where: { $0.codecid == codec.codecid }) {
                 return TrackChoice(video: video, audio: audio)

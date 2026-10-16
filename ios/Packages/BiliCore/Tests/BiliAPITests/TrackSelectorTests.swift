@@ -20,9 +20,8 @@ final class TrackSelectorTests: XCTestCase {
         XCTAssertEqual(choice?.video.codecid, 13)
     }
 
-    func testDolbyVisionCanBeExcluded() {
+    func testDolbyVisionIsChosenWhenItIsTheRequestedQuality() {
         XCTAssertEqual(TrackSelector.choose(dash, quality: 127, codecOrder: [.hevc])?.video.id, 126)
-        XCTAssertEqual(TrackSelector.choose(dash, quality: 127, codecOrder: [.hevc], excludeDolbyVision: true)?.video.id, 120)
     }
 
     func testQualityBelowEverythingPicksLowest() {

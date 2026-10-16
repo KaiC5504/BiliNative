@@ -31,7 +31,7 @@ public enum SidxParser {
         guard cursor + 2 <= box.end else { return nil }
         let count = Int(BoxReader.uint16(bytes, cursor))
         cursor += 2
-        guard count >= 1, count <= 10_000, cursor + count * 12 <= box.end else { return nil }
+        guard count >= 1, count <= Int(UInt16.max), cursor + count * 12 <= box.end else { return nil }
 
         // Version 1 offsets are 64-bit; anything beyond Int64 is hostile, and so is a sum that overflows.
         guard firstOffset <= UInt64(Int64.max) else { return nil }
