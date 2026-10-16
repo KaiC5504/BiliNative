@@ -66,23 +66,32 @@ final class PanelPresentationTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(300))
 
             let probe = try XCTUnwrap(Self.find(panel.identifier, in: window), "\(panel) is not on screen")
-            let catcher = try XCTUnwrap(Self.find(TapCatcherView.identifier, in: window) as? TapCatcherView,
-                                        "\(panel) has no dismiss layer")
+            let catchers = Self.findAll(TapCatcherView.identifier, in: window)
+            XCTAssertEqual(catchers.count, 1, "\(panel) should have one dismiss layer: \(catchers.map(Self.describe))")
             let frame = probe.convert(probe.bounds, to: window)
             let size = window.bounds.size
 
             let outside = landscape ? CGPoint(x: size.width * 0.12, y: size.height / 2) : CGPoint(x: size.width / 2, y: size.height * 0.12)
             XCTAssertFalse(frame.contains(outside), "\(panel) covers the point meant to be outside it: \(frame)")
-            XCTAssertTrue(Self.isWithin(window.hitTest(outside, with: nil), catcher), "a tap outside \(panel) does not reach its dismiss layer")
+            let hit = window.hitTest(outside, with: nil)
+            guard let catcher = hit as? TapCatcherView else {
+                XCTFail("a tap outside \(panel) reaches \(Self.describe(hit)); dismiss layers: \(catchers.map(Self.describe))")
+                driver.panel = nil
+                _ = await waitUntil(3) { Self.find(panel.identifier, in: window) == nil }
+                continue
+            }
 
             let inside = CGPoint(x: frame.midX, y: frame.midY)
-            XCTAssertFalse(Self.isWithin(window.hitTest(inside, with: nil), catcher), "a tap inside \(panel) would dismiss it")
+            let insideHit = window.hitTest(inside, with: nil)
+            XCTAssertFalse(insideHit is TapCatcherView, "a tap inside \(panel) would dismiss it: \(Self.describe(insideHit))")
 
             _ = catcher.accessibilityActivate()
             let gone = await waitUntil(3) { Self.find(panel.identifier, in: window) == nil }
             XCTAssertTrue(gone, "\(panel) did not close")
             XCTAssertNil(driver.panel)
         }
+        let clean = await waitUntil(3) { Self.findAll(TapCatcherView.identifier, in: window).isEmpty }
+        XCTAssertTrue(clean, "dismiss layers left behind: \(Self.findAll(TapCatcherView.identifier, in: window).map(Self.describe))")
     }
 
     private func showPage() async throws -> UIWindow {
@@ -117,9 +126,19 @@ final class PanelPresentationTests: XCTestCase {
         return nil
     }
 
-    private static func isWithin(_ hit: UIView?, _ ancestor: UIView) -> Bool {
-        guard let hit else { return false }
-        return hit === ancestor || hit.isDescendant(of: ancestor)
+    private static func findAll(_ identifier: String, in view: UIView) -> [UIView] {
+        (view.accessibilityIdentifier == identifier ? [view] : []) + view.subviews.flatMap { findAll(identifier, in: $0) }
+    }
+
+    /// The view and its superviews up to the window, for a failure message.
+    private static func describe(_ view: UIView?) -> String {
+        var parts: [String] = []
+        var current = view
+        while let view = current {
+            parts.append("\(type(of: view)) \(view.frame.integral) alpha \(view.alpha) hidden \(view.isHidden)")
+            current = view.superview
+        }
+        return parts.isEmpty ? "nothing" : parts.joined(separator: " <- ")
     }
 }
 

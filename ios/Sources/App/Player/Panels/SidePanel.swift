@@ -70,6 +70,7 @@ struct SidePanel<Content: View>: View {
             let insets = PanelInsets.window
             ZStack(alignment: landscape ? .trailing : .bottom) {
                 TapCatcher(onTap: dismiss)
+                    .transition(.identity)
                 if landscape {
                     switch style {
                     case .side(let fraction):
