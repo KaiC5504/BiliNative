@@ -135,6 +135,22 @@ final class RedactorTests: XCTestCase {
         XCTAssertEqual(Redactor.text("https://api.bilibili.com/x?csrf=abc&access_key=zzz#f"), "https://api.bilibili.com/x")
     }
 
+    func testSignIsRedactedButWordsContainingSignAreNot() {
+        let line = Redactor.text("appkey=k&sign=abc123&design=ok")
+        XCTAssertFalse(line.contains("abc123"))
+        XCTAssertTrue(line.contains("design=ok"))
+        XCTAssertEqual(Redactor.text("Sign: abc"), "Sign: [redacted]")
+        XCTAssertEqual(Redactor.text("resign=1 assign=2"), "resign=1 assign=2")
+        let out = Redactor.fields(["sign": "abc", "Sign": "abc", "design": "keep"])
+        XCTAssertEqual(out["sign"], .string("[redacted]"))
+        XCTAssertEqual(out["Sign"], .string("[redacted]"))
+        XCTAssertEqual(out["design"], .string("keep"))
+    }
+
+    func testSignedURLQueryIsDroppedWholesale() {
+        XCTAssertEqual(Redactor.text("https://app.bilibili.com/x?appkey=k&sign=abc123&design=ok"), "https://app.bilibili.com/x")
+    }
+
     func testMidHash() {
         XCTAssertEqual(Redactor.mid(12345), Redactor.mid(12345))
         XCTAssertFalse(Redactor.mid(12345).contains("12345"))
