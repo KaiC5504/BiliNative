@@ -117,6 +117,23 @@ final class PlaybackController {
     private(set) var codec: VideoCodec
     private(set) var btrEnabled: Bool
     private(set) var overlay = OverlayStats()
+    /// Bilibili's saved position for this video, from the first playurl answer of a start.
+    private(set) var resume: (timeMs: Int64, cid: Int64)?
+    private(set) var position: Double = 0
+    private(set) var duration: Double = 0
+    /// End of the loaded range that holds the playhead, in seconds.
+    private(set) var buffered: Double = 0
+    /// Playing or waiting to play; false only when paused or stopped.
+    private(set) var isPlaying = false
+    private(set) var videoSize: CGSize?
+    var rate: Float = 1 {
+        didSet {
+            player.defaultRate = rate
+            if player.rate > 0 { player.rate = rate }
+        }
+    }
+    @ObservationIgnored var onEnd: (@MainActor () -> Void)?
+    @ObservationIgnored var onPosition: (@MainActor (Double) -> Void)?
 
     @ObservationIgnored private let environment: PlaybackEnvironment
     @ObservationIgnored private var session: RipperSession?
@@ -159,6 +176,7 @@ final class PlaybackController {
     /// False when this playback's first frame waited on the user (loaded paused), so its time means nothing.
     @ObservationIgnored private var firstFrameTimed = true
     @ObservationIgnored private var loggedPlayURL = false
+    @ObservationIgnored private var loadedAt: Date?
 
     init(environment: PlaybackEnvironment, quality: Int, codec: VideoCodec, btrEnabled: Bool) {
         self.environment = environment
@@ -182,6 +200,35 @@ final class PlaybackController {
         await startPlayback(at: time, autoplay: true)
     }
 
+    func start(at time: Double, autoplay: Bool) async {
+        await startPlayback(at: time, autoplay: autoplay)
+    }
+
+    func play() {
+        playWhenLoaded = true
+        // The page loads paused, seeks to the resume point and plays at once: that is still startup time.
+        if !sawFirstFrame, let loadedAt, Date().timeIntervalSince(loadedAt) < 2 { firstFrameTimed = true }
+        guard player.currentItem != nil else { return }
+        player.play()
+        isPlaying = true
+    }
+
+    func pause() {
+        playWhenLoaded = false
+        player.pause()
+        isPlaying = false
+    }
+
+    func seek(to seconds: Double) async {
+        let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
+        position = target
+        guard player.currentItem != nil else {
+            heldPosition = target
+            return
+        }
+        _ = await player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
     private func startPlayback(at time: Double, autoplay: Bool) async {
         rejectedHere = []
         unknownRetried = []
@@ -189,7 +236,9 @@ final class PlaybackController {
         lastServerRestart = nil
         forcedDirect = false
         loggedPlayURL = false
+        resume = nil
         playWhenLoaded = autoplay
+        isPlaying = autoplay
         seekTimer.cancel()
         sawFirstFrame = false
         firstFrameTimed = true
@@ -224,6 +273,7 @@ final class PlaybackController {
         pathMonitor?.cancel()
         pathMonitor = nil
         playing = nil
+        isPlaying = false
         phase = .idle
     }
 
@@ -253,6 +303,7 @@ final class PlaybackController {
             qualities = info.qualityOptions
             if !loggedPlayURL {
                 loggedPlayURL = true
+                resume = (info.lastPlayTimeMs, info.lastPlayCid)
                 Logger.shared.info(.player, "playurl", Self.playURLSummary(info).mapValues { LogValue($0) })
             }
             guard let dash = info.dash else { throw BiliError.notDash }
@@ -260,6 +311,9 @@ final class PlaybackController {
             let choice = try pickTracks(dash, skipHEV1: !ripper && environment.codecMemory.hev1LabelsHoldHEV1)
             self.choice = choice
             playing = PlayingStream(choice.video)
+            if choice.video.width > 0, choice.video.height > 0 {
+                videoSize = CGSize(width: choice.video.width, height: choice.video.height)
+            }
             Logger.shared.info(.player, "choice", ["quality": .init(choice.video.id), "codecs": .init(choice.video.codecs),
                                                    "kbps": .init(choice.video.bandwidth / 1000), "audio": .init(choice.audio.id),
                                                    "node": .init(NodeCatalog.nodeKey(of: choice.video.baseURL)), "btr": .init(ripper)])
@@ -455,10 +509,14 @@ final class PlaybackController {
         if !playWhenLoaded, !sawFirstFrame { firstFrameTimed = false }
         attachObservers(item, epoch: current)
         player.replaceCurrentItem(with: item)
+        loadedAt = Date()
+        position = time
+        player.defaultRate = rate
         if time > 0 {
             _ = await player.seek(to: CMTime(seconds: time, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             try ensureCurrent(current)
         }
+        isPlaying = playWhenLoaded
         if playWhenLoaded {
             player.play()
         } else {
@@ -622,6 +680,7 @@ final class PlaybackController {
         advance()
         teardownPlayback()
         playing = nil
+        isPlaying = false
         phase = .failed(Self.userMessage(error))
         Logger.shared.error(.player, "failed", ["error": .init(String(describing: error))])
     }
@@ -768,6 +827,13 @@ final class PlaybackController {
             let detail = String(describing: error)
             Task { @MainActor in await self?.launch { await $0.itemFailed(failure, detail: detail, epoch: current) } }
         })
+        notificationTokens.append(center.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, current == self.epoch else { return }
+                self.isPlaying = false
+                self.onEnd?()
+            }
+        })
         notificationTokens.append(center.addObserver(forName: .localServerStopped, object: environment.server, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.launch { await $0.serverStopped(epoch: current) } }
         })
@@ -803,6 +869,8 @@ final class PlaybackController {
     private func tick(_ time: CMTime) {
         guard let item = player.currentItem else { return }
         let seconds = time.seconds.isFinite ? time.seconds : 0
+        updateTimes(item, at: seconds)
+        onPosition?(seconds)
         if let ms = seekTimer.ticked(position: seconds, rate: player.rate, playing: player.timeControlStatus == .playing, at: Date()) {
             seekResumed(ms, via: "playhead")
         }
@@ -814,12 +882,26 @@ final class PlaybackController {
         session.reportBuffer(aheadSeconds: ahead, playing: player.timeControlStatus == .playing)
     }
 
+    /// Assigned only on change: every observed write redraws the views reading it, four times a second.
+    private func updateTimes(_ item: AVPlayerItem, at seconds: Double) {
+        if position != seconds { position = seconds }
+        let total = item.duration.seconds
+        if total.isFinite, total > 0, duration != total { duration = total }
+        let loaded = item.loadedTimeRanges.map(\.timeRangeValue)
+            .first { $0.start.seconds <= seconds + 0.5 && $0.end.seconds >= seconds }
+            .map(\.end.seconds) ?? seconds
+        if abs(buffered - loaded) >= 0.25 { buffered = loaded }
+        let playing = player.timeControlStatus != .paused
+        if isPlaying != playing { isPlaying = playing }
+    }
+
     private func timeControlChanged(_ status: AVPlayer.TimeControlStatus, reason: AVPlayer.WaitingReason?, epoch current: Int) {
         guard current == epoch else { return }
         switch status {
         case .playing:
             playWhenLoaded = true
             itemPlayed = true
+            isPlaying = true
             if !sawFirstFrame {
                 sawFirstFrame = true
                 let ms = Date().timeIntervalSince(startedAt) * 1000
@@ -832,6 +914,7 @@ final class PlaybackController {
             if let ms = seekTimer.playing(at: Date()) { seekResumed(ms, via: "status") }
             phase = .playing
         case .waitingToPlayAtSpecifiedRate:
+            isPlaying = true
             if reason == .toMinimizeStalls, sawFirstFrame, !seekTimer.isRunning {
                 session?.reportStall()
                 let stalledAt = Date()
@@ -850,6 +933,7 @@ final class PlaybackController {
             }
         case .paused:
             seekTimer.paused()
+            isPlaying = false
         default:
             break
         }

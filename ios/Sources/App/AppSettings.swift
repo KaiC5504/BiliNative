@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import BiliAPI
 import Ripper
+import AppLogic
 
 @MainActor
 @Observable
@@ -23,6 +24,9 @@ final class AppSettings {
         static let logEnabled = "settings.log.enabled"
         static let logManual = "settings.log.manual"
         static let logService = "settings.log.service"
+        static let autoplay = "player.autoplay"
+        static let loop = "player.loop"
+        static let fit = "player.fit"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -38,6 +42,10 @@ final class AppSettings {
     var logServerManual: String { didSet { defaults.set(logServerManual, forKey: Keys.logManual) } }
     /// Name of the chosen Bonjour service, or "" for the manual address.
     var logServerService: String { didSet { defaults.set(logServerService, forKey: Keys.logService) } }
+    /// 自动连播: the next part or 合集 episode plays when a video ends.
+    var autoplay: Bool { didSet { defaults.set(autoplay, forKey: Keys.autoplay) } }
+    var loop: LoopMode { didSet { defaults.set(loop.rawValue, forKey: Keys.loop) } }
+    var fit: FitMode { didSet { defaults.set(fit.rawValue, forKey: Keys.fit) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -49,5 +57,8 @@ final class AppSettings {
         logServerEnabled = defaults.object(forKey: Keys.logEnabled) as? Bool ?? false
         logServerManual = defaults.string(forKey: Keys.logManual) ?? ""
         logServerService = defaults.string(forKey: Keys.logService) ?? ""
+        autoplay = defaults.object(forKey: Keys.autoplay) as? Bool ?? true
+        loop = LoopMode(rawValue: defaults.string(forKey: Keys.loop) ?? "") ?? LoopMode.none
+        fit = FitMode(rawValue: defaults.string(forKey: Keys.fit) ?? "") ?? FitMode.fit
     }
 }
