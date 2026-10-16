@@ -63,13 +63,25 @@ public final class FileSink: LogSink, @unchecked Sendable {
     /// Concatenates every session file into one file for the share sheet.
     public func exportFile() throws -> URL {
         flush()
-        let output = directory.deletingLastPathComponent().appendingPathComponent("BiliNative-logs.jsonl")
+        let output = exportURL
         var data = Data()
         for file in sessionFiles() {
             data.append((try? Data(contentsOf: file)) ?? Data())
         }
         try data.write(to: output)
         return output
+    }
+
+    /// Deletes every session file, the live one included, and the export; logging carries on into a fresh live file.
+    public func removeAllFiles() {
+        queue.sync {
+            try? handle?.close()
+            handle = nil
+            for file in sessionFiles() + [exportURL] {
+                try? FileManager.default.removeItem(at: file)
+            }
+            openLive()
+        }
     }
 
     public static func readEvents(_ url: URL) -> [LogEvent] {
@@ -85,6 +97,8 @@ public final class FileSink: LogSink, @unchecked Sendable {
     }
 
     private var rollBytes: Int { max(maxTotalBytes / 4, 1) }
+
+    private var exportURL: URL { directory.deletingLastPathComponent().appendingPathComponent("BiliNative-logs.jsonl") }
 
     // A logger must never take the app down: write errors drop the line and the file is reopened next time.
     private func append(_ line: Data) {

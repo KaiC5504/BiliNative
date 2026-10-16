@@ -88,6 +88,28 @@ final class FileSinkTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("new.jsonl").path))
     }
 
+    func testRemoveAllFilesDeletesEverySessionAndKeepsLogging() throws {
+        let dir = tempDir()
+        try Data("{}\n".utf8).write(to: dir.appendingPathComponent("older.jsonl"))
+        let sink = try FileSink(directory: dir, session: "rm", maxTotalBytes: 4000)
+        let logger = Logger(session: "rm")
+        logger.add(sink)
+        for index in 0..<100 {
+            logger.info(.app, "before-\(index)", ["pad": "xxxxxxxxxxxxxxxxxxxxxxxx"])
+        }
+        let exported = try sink.exportFile()
+        XCTAssertGreaterThan(sink.sessionFiles().count, 2)
+
+        sink.removeAllFiles()
+        XCTAssertEqual(sink.sessionFiles().map(\.lastPathComponent), ["rm.jsonl"])
+        XCTAssertTrue(FileSink.readEvents(sink.fileURL).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: exported.path))
+
+        logger.info(.app, "after")
+        sink.flush()
+        XCTAssertEqual(FileSink.readEvents(sink.fileURL).map(\.msg), ["after"])
+    }
+
     func testReplaySkipsAcknowledgedEventsAndTheCurrentSession() throws {
         let dir = tempDir()
         let oldSink = try FileSink(directory: dir, session: "s1")

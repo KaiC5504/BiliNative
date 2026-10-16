@@ -93,6 +93,13 @@ struct HomeView: View {
             }
             .animation(.spring(duration: 0.3), value: opening)
             .task {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-DemoScreen"),
+                   let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-DemoScreen"),
+                   ProcessInfo.processInfo.arguments.dropFirst(index + 1).first == "settings" {
+                    showSettings = true
+                }
+                #endif
                 if env.account == .unknown { await env.refreshAccount() }
             }
         }

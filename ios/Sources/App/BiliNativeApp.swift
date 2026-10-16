@@ -7,6 +7,7 @@ struct BiliNativeApp: App {
     @State private var env = AppEnvironment()
 
     init() {
+        DevLogSetup.install()
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         } catch {
@@ -19,6 +20,7 @@ struct BiliNativeApp: App {
             RootView()
                 .environment(env)
                 .task { await env.startServices() }
+                .task { DevLogSetup.apply(env.settings) }
         }
     }
 }

@@ -96,6 +96,7 @@ jobs:
             sleep "$wait"
             xcrun simctl io "$UDID" screenshot "shots/$name.png"
           }
+          shoot 02-settings 8 -DemoScreen settings
 
       - name: Collect crash reports
         if: always()
