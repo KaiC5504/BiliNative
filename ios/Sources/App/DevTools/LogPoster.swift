@@ -57,7 +57,7 @@ final class LogPoster: @unchecked Sendable {
     private func ready(_ connection: NWConnection) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let resumed = Locked(false)
-            func finish(_ result: Result<Void, Error>) {
+            @Sendable func finish(_ result: Result<Void, Error>) {
                 let first = resumed.withLock { value -> Bool in
                     defer { value = true }
                     return !value
