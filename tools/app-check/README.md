@@ -13,6 +13,8 @@ in `project.yml`, change it here too. CI and TestFlight never read this folder.
 
 - Running tests, the simulator, screenshots, launching the app: CI only.
 - Asset catalogs, `Localizable.xcstrings`, Info.plist, signing, entitlements: not built at all.
+- `Generated/AppKeys.swift` (the TV-client key pair CI writes from a secret): the script stages the nil version
+  from `tools/write_app_keys.py`, never your real keys.
 - The SDK and compiler differ from CI's: Xcode 27.1 (iOS 27 SDK, Swift 6.4) here, Xcode 26.6
   (iOS 26.5 SDK, Swift 6.3) on CI until the runner image gets Xcode 27. A clean local run is a strong
   hint, not proof; the CI compile check stays the gate.
