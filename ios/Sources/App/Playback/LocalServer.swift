@@ -53,7 +53,7 @@ final class LocalServer: @unchecked Sendable {
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let resumed = Locked(false)
-            func resumeOnce(_ body: () -> Void) -> Bool {
+            @Sendable func resumeOnce(_ body: () -> Void) -> Bool {
                 let first = resumed.withLock { value -> Bool in
                     defer { value = true }
                     return !value
