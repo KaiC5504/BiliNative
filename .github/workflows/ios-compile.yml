@@ -83,7 +83,7 @@ jobs:
       - name: Install, launch and screenshot
         run: |
           UDID="${{ steps.sim.outputs.udid }}"
-          APP=com.kaichuan.bilinative
+          APP=com.kaichuan.bilifast
           xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/BiliNative.app
           mkdir -p shots
           xcrun simctl launch "$UDID" $APP

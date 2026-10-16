@@ -2,7 +2,7 @@
 
 A native Swift iOS client for Bilibili that looks and feels like the official app, with a Swift port of the
 Bilibili Thread Ripper (BTR) multi-node download engine underneath. Built screen by screen in milestones.
-Working name; the display name and icon are picked in plan Task 2.
+Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026-10-16; the repo, folder and Xcode target keep the working name BiliNative.
 
 ## Read before working
 
@@ -75,7 +75,7 @@ uploads when `scripts/testflight.py start` dispatches it. The full playbook, inc
 every manual step and known failures, is the global `ios-testflight` skill. Load it
 before touching signing, `testflight.yml`, `ios/project.yml` or the compile workflow.
 
-Identity: app `BiliNative`, scheme `BiliNative`, bundle id `com.kaichuan.bilinative`
+Identity: display name `BiliFast`, app target and scheme `BiliNative`, bundle id `com.kaichuan.bilifast`
 (extensions: none). Repo `KaiC5504/BiliNative` (public). App Store Connect name:
 `BiliNative`, Apple ID: not created yet (`ASC_APP_ID` in `testflight.yml` is a placeholder
 until then).

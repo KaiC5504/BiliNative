@@ -42,7 +42,7 @@ env:
   # cli-tools otherwise caches an App Store Connect token in $TMPDIR, where the build's
   # third-party code could read it.
   APP_STORE_CONNECT_DISABLE_JWT_CACHE: "1"
-  BUNDLE_ID: com.kaichuan.bilinative
+  BUNDLE_ID: com.kaichuan.bilifast
   # App Store Connect → the app → App Information → Apple ID. Placeholder until KaiC
   # creates the app record (manual-steps §3); builds fail at "Pick the build number" until
   # it is filled in.

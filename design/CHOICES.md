@@ -14,4 +14,4 @@ Name ideas (shown under the icon; avoid "Bili"/"哔哩" for the public release):
 - 疾影 (Jiying)
 
 Chosen icon: 2 (Bolt), picked by KaiC on 2026-10-16
-Chosen name: (KaiC fills in)
+Chosen name: BiliFast (bundle id com.kaichuan.bilifast), picked by KaiC on 2026-10-16
