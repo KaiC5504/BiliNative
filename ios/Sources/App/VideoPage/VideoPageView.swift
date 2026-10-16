@@ -15,14 +15,17 @@ struct VideoPageView: View {
     @State private var danmakuSlot = DanmakuSlot()
     @State private var sender: DanmakuSendModel?
     @State private var sendBarOpen = false
+    @State private var tabs = PageTabsState()
     @State private var showLogin = false
     #if DEBUG
     @State private var sendDemo: DanmakuSendBar.Demo?
     #endif
 
-    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil) {
+    /// Tests may hand in the model, to drive the page from outside.
+    init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil, model: VideoPageModel? = nil) {
         self.route = route
         panelOverride = panel
+        _model = State(initialValue: model)
     }
 
     private var panel: Binding<PlayerPanel?> { panelOverride ?? $ownPanel }
@@ -30,9 +33,10 @@ struct VideoPageView: View {
     var body: some View {
         ZStack {
             if let model {
-                PageLayout(model: model, chrome: chrome, panel: panel, danmaku: danmakuView(for: model),
-                           danmakuEnabled: env.settings.danmaku.enabled,
-                           onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar)
+                PageLayout(model: model, chrome: chrome, panel: panel, tabs: tabs, danmaku: danmakuView(for: model),
+                           danmakuEnabled: env.settings.danmaku.enabled, ignoresKeyboard: sendBarOpen,
+                           onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar,
+                           onNeedLogin: presentLogin)
                 PanelLayer(panel: panel, model: model, onNeedLogin: presentLogin)
                     .ignoresSafeArea()
             } else {
@@ -152,38 +156,131 @@ struct VideoPageView: View {
 }
 
 private struct PageLayout: View {
-    let model: VideoPageModel
+    @Bindable var model: VideoPageModel
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
+    let tabs: PageTabsState
     let danmaku: UIView?
     let danmakuEnabled: Bool
+    /// While the danmaku bar is open the keyboard must not squeeze the page under it.
+    let ignoresKeyboard: Bool
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
+    let onNeedLogin: () -> Void
 
     var body: some View {
         let presentation = OrientationController.shared.presentation
         let inline = presentation == .inline
         GeometryReader { geometry in
-            let box = CGSize(width: geometry.size.width, height: inline ? geometry.size.width * 9 / 16 : geometry.size.height)
-            VStack(spacing: 0) {
-                // Full screen ignores the safe area, so the chrome keeps clear of it itself.
-                PlayerBox(model: model, chrome: chrome, panel: $panel, danmaku: danmaku, size: box, presentation: presentation,
-                          insets: ScreenInsets.current(merging: geometry.safeAreaInsets), danmakuEnabled: danmakuEnabled,
-                          onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
-                    .frame(width: box.width, height: box.height)
-                    .background(Color.black.ignoresSafeArea(edges: .top))
+            let collapsing = CollapsingPlayer(fullHeight: inline ? geometry.size.width * 9 / 16 : geometry.size.height)
+            ZStack(alignment: .top) {
                 if inline {
-                    InfoSection(model: model)
+                    // Laid out as if the player were already the bar; each tab leaves the rest of its height free.
+                    PageTabs(state: tabs, reserve: collapsing.reserve) {
+                        IntroTab(model: model, state: tabs, onNeedLogin: onNeedLogin) { EmptyView() }
+                    } comments: {
+                        CommentsSlot(state: tabs)
+                    }
+                    .padding(.top, CollapsingPlayer.barHeight + Theme.Page.tabRowHeight)
+                    .ignoresSafeArea(.container, edges: .bottom)
                 }
-                Spacer(minLength: 0)
+                PlayerArea(model: model, chrome: chrome, panel: $panel, tabs: tabs, danmaku: danmaku, width: geometry.size.width,
+                           collapsing: collapsing, presentation: presentation,
+                           insets: ScreenInsets.current(merging: geometry.safeAreaInsets), danmakuEnabled: danmakuEnabled,
+                           onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
             }
         }
-        .ignoresSafeArea(edges: inline ? [] : .all)
-        .background((inline ? Color(uiColor: .systemBackground) : Color.black).ignoresSafeArea())
+        .ignoresSafeArea(inline ? .keyboard : .all, edges: inline && !ignoresKeyboard ? [] : .all)
+        .background((inline ? Theme.Page.background : Color.black).ignoresSafeArea())
         // 09 keeps the status bar, light on black; landscape hides it (04).
         .statusBarHidden(presentation == .landscape)
         .preferredColorScheme(presentation == .vertical ? .dark : nil)
         .persistentSystemOverlays(inline ? .automatic : .hidden)
+        .navigationDestination(item: $model.pushedRoute) { VideoPageView(route: $0).id($0.id) }
+        #if DEBUG
+        .task { IntroDemo.stage(page: model, tabs: tabs) }
+        #endif
+    }
+}
+
+/// The player and, inline, the tab row under it. It alone follows the tabs' scrolling, so the tab content is not
+/// rebuilt on every frame of a scroll.
+private struct PlayerArea: View {
+    let model: VideoPageModel
+    let chrome: ChromeState
+    @Binding var panel: PlayerPanel?
+    let tabs: PageTabsState
+    let danmaku: UIView?
+    let width: CGFloat
+    let collapsing: CollapsingPlayer
+    let presentation: OrientationController.Presentation
+    let insets: EdgeInsets
+    let danmakuEnabled: Bool
+    let onToggleDanmaku: () -> Void
+    let onSendDanmaku: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private var inline: Bool { presentation == .inline }
+
+    /// Loaded and not playing, or at the end: only then does scrolling shrink the player.
+    private var paused: Bool {
+        guard let controller = model.controller else { return false }
+        return model.ended || (controller.phase == .playing && !controller.isPlaying)
+    }
+
+    var body: some View {
+        let height = inline ? collapsing.height(forOffset: tabs.offset, paused: paused) : collapsing.fullHeight
+        let progress = inline ? collapsing.progress(height: height) : 0
+        let box = CGSize(width: width, height: height)
+        ZStack(alignment: .top) {
+            VStack(spacing: 0) {
+                // Full screen ignores the safe area, so the chrome keeps clear of it itself.
+                PlayerBox(model: model, chrome: chrome, panel: $panel, danmaku: danmaku, size: box, presentation: presentation,
+                          insets: insets, shrunk: progress > 0, danmakuEnabled: danmakuEnabled,
+                          onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
+                    .frame(width: box.width, height: box.height)
+                    .background(Color.black.ignoresSafeArea(edges: .top))
+                    .overlay {
+                        if progress > 0 {
+                            CollapsedPlayerBar(progress: progress, onResume: resume, onBack: { dismiss() },
+                                               onMore: { panel = .more })
+                        }
+                    }
+                if inline {
+                    PageTabRow(state: tabs, replyCount: model.detail?.stat.reply, danmakuEnabled: danmakuEnabled,
+                               danmakuClosed: model.danmaku.closed, onToggleDanmaku: onToggleDanmaku,
+                               onSendDanmaku: onSendDanmaku)
+                }
+            }
+            if inline, let sheet = tabs.sheet, let detail = model.detail {
+                sheetView(sheet, detail: detail)
+                    .padding(.top, height)
+            }
+        }
+        .animation(.smooth(duration: 0.3), value: paused)
+        .animation(.smooth(duration: 0.3), value: tabs.selection)
+    }
+
+    @ViewBuilder
+    private func sheetView(_ sheet: PageSheet, detail: VideoDetail) -> some View {
+        switch sheet {
+        case .collection:
+            if let season = detail.season {
+                CollectionSheet(season: season, current: model.current, onChoose: { episode in
+                    Task { await model.switchTo(PlayItem(bvid: episode.bvid, cid: episode.cid)) }
+                }, onClose: { tabs.sheet = nil })
+            }
+        case .parts:
+            PartList(detail: detail, current: model.current, onChoose: { page in
+                Task { await model.play(PlayItem(bvid: detail.bvid, cid: page.cid), at: nil) }
+            }, onClose: { tabs.sheet = nil })
+        }
+    }
+
+    /// 继续播放: back to the top, where the player has its full height again.
+    private func resume() {
+        withAnimation(.smooth(duration: 0.3)) { tabs.scrollToTop() }
+        model.play()
     }
 }
 
@@ -195,6 +292,9 @@ private struct PlayerBox: View {
     let size: CGSize
     let presentation: OrientationController.Presentation
     let insets: EdgeInsets
+    /// Shrunk by the page's scrolling: no controls and no danmaku under the 继续播放 shade. The controls are hidden,
+    /// not removed, so they keep their state for when it grows back.
+    let shrunk: Bool
     let danmakuEnabled: Bool
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
@@ -216,7 +316,7 @@ private struct PlayerBox: View {
                           allowsLevelGestures: !inline,
                           onGesture: { chrome.handle($0, page: model, size: size) },
                           // The end screens (26, 27) show no danmaku over the last frame.
-                          danmaku: model.ended ? nil : danmaku,
+                          danmaku: model.ended || shrunk ? nil : danmaku,
                           onHost: { [weak model] in model?.host = $0 })
                 .frame(height: surfaceHeight)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -230,6 +330,8 @@ private struct PlayerBox: View {
             }
             ChromeLayer(model: model, chrome: chrome, panel: $panel, insets: insets, danmakuEnabled: danmakuEnabled,
                         onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku)
+                .opacity(shrunk ? 0 : 1)
+                .allowsHitTesting(!shrunk)
             status
         }
         .clipped()
@@ -277,54 +379,18 @@ private struct PlayerBox: View {
     }
 }
 
-/// Build A shows only the title and the 分P strip under the player; build B brings the full 简介.
-private struct InfoSection: View {
-    let model: VideoPageModel
+/// The 评论 tab's place until the comments arrive (Task 24).
+private struct CommentsSlot: View {
+    let state: PageTabsState
 
     var body: some View {
-        if let detail = model.detail {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(detail.title)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(2)
-                    .padding(.horizontal, Theme.Metrics.gutter)
-                if detail.pages.count > 1 {
-                    PartStrip(model: model, detail: detail)
-                }
-            }
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        ScrollView {
+            Text("评论即将上线")
+                .font(Theme.Page.metaFont)
+                .foregroundStyle(Theme.secondaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 48)
         }
-    }
-}
-
-private struct PartStrip: View {
-    let model: VideoPageModel
-    let detail: VideoDetail
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(detail.pages, id: \.cid) { page in
-                    let selected = model.current?.cid == page.cid
-                    Button {
-                        guard !selected else { return }
-                        Task { await model.play(PlayItem(bvid: detail.bvid, cid: page.cid), at: nil) }
-                    } label: {
-                        Text("P\(page.page) \(page.part)")
-                            .font(.system(size: 14))
-                            .lineLimit(1)
-                            .foregroundStyle(selected ? Theme.pink : Theme.text)
-                            .padding(.horizontal, 14)
-                            .frame(height: Theme.Metrics.pillHeight)
-                            .background(selected ? Theme.pinkTint : Theme.pageGrey,
-                                        in: RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, Theme.Metrics.gutter)
-        }
+        .collapsingPlayerScroll(state, tab: .comments)
     }
 }

@@ -61,9 +61,15 @@ struct ChromeLayer: View {
         }
     }
 
-    /// Build A switches in place; build B's related list pushes a page instead (spec 4.1).
+    /// A related video opens on a page of its own (spec 4.1). Nothing pushes from full screen, so it goes inline first.
     private func open(_ card: VideoCard) {
-        Task { await model.switchTo(PlayItem(bvid: card.bvid, cid: card.cid)) }
+        let orientation = OrientationController.shared
+        guard orientation.presentation != .inline else { return model.openRelated(card) }
+        orientation.exitToInline()
+        Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            model.openRelated(card)
+        }
     }
 
     private func back() {
