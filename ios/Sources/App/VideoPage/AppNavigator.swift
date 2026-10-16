@@ -69,7 +69,7 @@ final class AppNavigator {
 }
 
 extension View {
-    /// The destinations of the navigator's path, and the restore button of a page kept for picture in picture.
+    /// The destinations of the navigator's path.
     /// Goes on the root view inside the NavigationStack bound to `AppNavigator.path`; the home screen supplies
     /// the 历史记录 and 最近打开 pages.
     func videoPageDestinations<History: View, Recents: View>(@ViewBuilder history: @escaping () -> History,
@@ -90,7 +90,6 @@ private struct AppPageDestinations<History: View, Recents: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         let navigator = env.navigator
-        let keeper = PiPKeeper.shared
         return content
             .navigationDestination(for: AppPage.self) { page in
                 switch page {
@@ -98,10 +97,6 @@ private struct AppPageDestinations<History: View, Recents: View>: ViewModifier {
                 case .history: history()
                 case .recents: recents()
                 }
-            }
-            .onChange(of: keeper.restoring.map { ObjectIdentifier($0) }) { _, requested in
-                guard requested != nil, let model = keeper.takeRestore() else { return }
-                navigator.show(model)
             }
     }
 }

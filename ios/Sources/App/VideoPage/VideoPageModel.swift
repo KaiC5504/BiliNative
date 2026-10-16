@@ -57,6 +57,8 @@ final class VideoPageModel {
     @ObservationIgnored private(set) var pipActive = false
     /// The lifecycle of the page view showing this model; an earlier page's late teardown checks it.
     @ObservationIgnored weak var presenter: AnyObject?
+    /// The stack the page was shown on; picture in picture's restore button puts the page back there.
+    @ObservationIgnored weak var navigator: AppNavigator?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var followingRules = false
     @ObservationIgnored private var appeared = false

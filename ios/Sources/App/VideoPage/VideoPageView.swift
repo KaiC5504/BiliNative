@@ -57,6 +57,7 @@ struct VideoPageView: View {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
             if sender == nil { sender = makeSender(for: page) }
+            page.navigator = env.navigator
             lifecycle.appeared(page)
             #if DEBUG
             ChromeDemo.stage(page: page, chrome: chrome)
