@@ -110,6 +110,7 @@ struct Bench {
         var singleStatus = 0
         var singleSeconds = 0.0
         var singleSource = "no URL answered 206"
+        var singleCut: String?
         if let chosen = await baselineURL(video) {
             singleSource = "\(chosen.label) on \(NodeCatalog.nodeKey(of: chosen.url))"
             // Each run gets its own URLSession so neither starts with the other's warm connections.
@@ -118,7 +119,12 @@ struct Bench {
                 .fetch(URL(string: chosen.url)!, range: singleRange)
             singleStatus = response.status
             if response.status == 206 {
-                for try await chunk in response.body { singleBytes += Int64(chunk.count) }
+                // Some nodes close a long single response early; report that and still run Ripper.
+                do {
+                    for try await chunk in response.body { singleBytes += Int64(chunk.count) }
+                } catch {
+                    singleCut = Redactor.text(String(describing: error))
+                }
             }
             singleSeconds = Date().timeIntervalSince(singleStart)
         }
@@ -141,12 +147,17 @@ struct Bench {
         func rate(_ bytes: Int64, _ seconds: Double) -> String {
             String(format: "%.2f MB/s", Double(bytes) / 1_048_576 / max(seconds, 0.001))
         }
-        print("one connection: \(singleBytes) bytes in \(String(format: "%.2f", singleSeconds)) s = \(rate(singleBytes, singleSeconds)) (HTTP \(singleStatus), \(singleSource))")
+        print("one connection: \(singleBytes) bytes in \(String(format: "%.2f", singleSeconds)) s = \(rate(singleBytes, singleSeconds)) (HTTP \(singleStatus), \(singleSource))"
+              + (singleCut.map { " (truncated after \(singleBytes) bytes: \($0.prefix(160)); rate is up to the cut, not comparable)" } ?? ""))
         print("ripper:         \(rippedBytes) bytes in \(String(format: "%.2f", rippedSeconds)) s = \(rate(rippedBytes, rippedSeconds))")
         print("connections \(stats.concurrency), requests \(stats.requests), failures \(stats.failures), duplicate \(String(format: "%.1f", stats.duplicateShare * 100))%")
+        let rank = ["healthy": 0, "untested": 1, "blocked": 2, "banned": 3]
         for node in stats.nodes {
-            let state = stats.nodeStates.first { $0.node == node.node }
-            print("  \(node.node): \(node.requests) req, \(node.failures) failed, first byte \(Int(node.firstByteMs)) ms, \(state.map { rate(Int64($0.bps), 1) } ?? "-") per connection, \(state?.state ?? "-")")
+            // One entry per address on the node (e.g. a refused os=cosovbv next to a serving os=akam): show the best.
+            let states = stats.nodeStates.filter { $0.node == node.node }
+            let best = states.min { (rank[$0.state] ?? 9, -$0.bps) < (rank[$1.state] ?? 9, -$1.bps) }
+            let all = states.count > 1 ? " (addresses: \(states.map(\.state).joined(separator: ", ")))" : ""
+            print("  \(node.node): \(node.requests) req, \(node.failures) failed, first byte \(Int(node.firstByteMs)) ms, \(best.map { rate(Int64($0.bps), 1) } ?? "-") per connection, \(best?.state ?? "-")\(all)")
         }
     }
 }
