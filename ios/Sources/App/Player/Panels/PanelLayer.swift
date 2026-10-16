@@ -49,7 +49,7 @@ struct PanelLayer: View {
                 SpeedPanel(model: model, close: close)
             }
         case .more:
-            SidePanel(identifier: panel.identifier, dismiss: close) {
+            SidePanel(identifier: panel.identifier, portraitHeight: 0.8, dismiss: close) {
                 MorePanel(model: model, toast: show, requestLogin: { loginPresented = true }, close: close)
             }
         case .episodes:
