@@ -34,6 +34,8 @@ final class AppEnvironment {
     private(set) var account: Account = .unknown
     /// The logged-in account's uid; its hash marks one's own danmaku.
     private(set) var mid: Int64?
+    /// The logged-in account's avatar URL, for the home avatar.
+    private(set) var face: String?
     /// The last nav call failed (network, not a verdict), so `account` is still `.unknown`.
     private(set) var accountCheckFailed = false
 
@@ -117,10 +119,12 @@ final class AppEnvironment {
             if nav.isLogin {
                 account = .loggedIn(name: nav.uname ?? "", vip: nav.isVip)
                 mid = nav.mid
+                face = nav.face
                 Logger.shared.info(.app, "account", ["user": .init(nav.mid.map(Redactor.mid) ?? "?"), "vip": .init(nav.isVip)])
             } else {
                 account = cookies.value("SESSDATA") == nil ? .loggedOut : .expired
                 mid = nil
+                face = nil
             }
             return true
         } catch is CancellationError {
@@ -163,6 +167,7 @@ final class AppEnvironment {
         accountCheckFailed = false
         account = .loggedOut
         mid = nil
+        face = nil
     }
 
     private func retryBlockedKeychainLoad() {

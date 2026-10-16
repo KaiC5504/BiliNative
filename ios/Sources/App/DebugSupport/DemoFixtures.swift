@@ -9,7 +9,8 @@ enum DemoFixtures {
     static var isEnabled: Bool { UserDefaults.standard.bool(forKey: "DemoData") }
 
     /// Tried in order; a task that adds an endpoint adds a handler in its own file and lists it here.
-    static let handlers: [Handler] = [DemoFixtures.launch, VideoPageFixtures.handle, DanmakuFixtures.handle, DemoFixtures.danmakuPost, DemoFixtures.blockRules]
+    static let handlers: [Handler] = [DemoFixtures.launch, VideoPageFixtures.handle, DanmakuFixtures.handle, DemoFixtures.danmakuPost, DemoFixtures.blockRules,
+                                       HomeFixtures.handle]
 
     static func response(for url: URL, method: String) -> (Int, Data) {
         for handler in handlers {
@@ -31,7 +32,7 @@ enum DemoFixtures {
             return ok(#"{"b_3":"DEMO0000-0000-0000-0000-000000000000infoc","b_4":"DEMO0000-0000-0000-0000-000000000000-00000000-demo"}"#)
         case "/x/web-interface/nav":
             return ok("""
-            {"isLogin":true,"mid":10001,"uname":"演示用户","vipStatus":1,"vipType":2,
+            {"isLogin":true,"mid":10001,"uname":"演示用户","face":"https://example.invalid/demo/me.jpg","vipStatus":1,"vipType":2,
              "wbi_img":{"img_url":"https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
                         "sub_url":"https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"}}
             """)
