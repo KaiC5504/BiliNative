@@ -10,6 +10,7 @@ struct VideoPageView: View {
     @State private var model: VideoPageModel?
     @State private var chrome = ChromeState()
     @State private var panel: PlayerPanel?
+    @State private var danmakuSlot = DanmakuSlot()
 
     var body: some View {
         ZStack {
@@ -38,9 +39,8 @@ struct VideoPageView: View {
         }
     }
 
-    /// The danmaku renderer goes into the player here (Task 12); nil draws none.
     private func danmakuView(for model: VideoPageModel) -> UIView? {
-        nil
+        danmakuSlot.view(for: model, settings: env.settings)
     }
 }
 

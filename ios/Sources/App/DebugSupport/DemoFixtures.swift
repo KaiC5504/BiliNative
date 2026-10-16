@@ -9,7 +9,7 @@ enum DemoFixtures {
     static var isEnabled: Bool { UserDefaults.standard.bool(forKey: "DemoData") }
 
     /// Tried in order; a task that adds an endpoint adds a handler in its own file and lists it here.
-    static let handlers: [Handler] = [DemoFixtures.launch, VideoPageFixtures.handle, DemoFixtures.blockRules]
+    static let handlers: [Handler] = [DemoFixtures.launch, VideoPageFixtures.handle, DanmakuFixtures.handle, DemoFixtures.blockRules]
 
     static func response(for url: URL, method: String) -> (Int, Data) {
         for handler in handlers {

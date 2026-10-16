@@ -38,6 +38,8 @@ final class DemoPlayback: PlaybackControlling {
     @ObservationIgnored private let media: URL?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
+    @ObservationIgnored private var pauseAt: Double? = UserDefaults.standard.object(forKey: "DemoPauseAt") != nil
+        ? UserDefaults.standard.double(forKey: "DemoPauseAt") : nil
 
     init(media: URL? = DemoPlayback.testMedia) {
         self.media = media
@@ -116,6 +118,11 @@ final class DemoPlayback: PlaybackControlling {
 
     private func tick(_ time: CMTime, item: AVPlayerItem) {
         let seconds = time.seconds.isFinite ? time.seconds : 0
+        // `-DemoPauseAt <seconds>` freezes a screenshot mid-playback.
+        if let pauseAt, isPlaying, seconds >= pauseAt {
+            self.pauseAt = nil
+            pause()
+        }
         position = seconds
         let total = item.duration.seconds
         if total.isFinite, total > 0 { duration = total }

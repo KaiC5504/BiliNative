@@ -12,7 +12,6 @@ struct HomeView: View {
     @State private var showLogin = false
     @State private var showSettings = false
     @State private var confirmClear = false
-    @State private var stubPanel = false // TEMP
 
     var body: some View {
         NavigationStack {
@@ -74,14 +73,6 @@ struct HomeView: View {
             }
             .navigationDestination(item: $route) { VideoPageView(route: $0).id($0.id) }
             .sheet(isPresented: $showLogin) { LoginView() }
-            // TEMP: shows the 弹幕设置 panel until the real page wiring lands.
-            .fullScreenCover(isPresented: $stubPanel) {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    DanmakuSettingsPanel().padding(.horizontal, 20)
-                }
-                .environment(env)
-            }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .confirmationDialog("选择分P", isPresented: Binding(get: { partChoice != nil }, set: { if !$0 { partChoice = nil } }),
                                 titleVisibility: .visible, presenting: partChoice) { view in
@@ -106,7 +97,14 @@ struct HomeView: View {
                 switch UserDefaults.standard.string(forKey: "DemoScreen") {
                 case "settings": showSettings = true
                 case "page": route = VideoRoute(bvid: VideoPageFixtures.bvidA)
-                case "danmaku-panel-stub", "panel-danmaku-more", "block-words": stubPanel = true
+                case "danmaku-portrait":
+                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+                case "danmaku-landscape":
+                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        OrientationController.shared.enterLandscape()
+                    }
                 default: break
                 }
                 #endif

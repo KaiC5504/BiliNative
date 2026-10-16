@@ -32,6 +32,8 @@ final class AppEnvironment {
     /// Shared by every video page; `logout()` empties it.
     let blockRules: BlockRuleStore
     private(set) var account: Account = .unknown
+    /// The logged-in account's uid; its hash marks one's own danmaku.
+    private(set) var mid: Int64?
     /// The last nav call failed (network, not a verdict), so `account` is still `.unknown`.
     private(set) var accountCheckFailed = false
 
@@ -104,9 +106,11 @@ final class AppEnvironment {
             accountCheckFailed = false
             if nav.isLogin {
                 account = .loggedIn(name: nav.uname ?? "", vip: nav.isVip)
+                mid = nav.mid
                 Logger.shared.info(.app, "account", ["user": .init(nav.mid.map(Redactor.mid) ?? "?"), "vip": .init(nav.isVip)])
             } else {
                 account = cookies.value("SESSDATA") == nil ? .loggedOut : .expired
+                mid = nil
             }
             return true
         } catch is CancellationError {
@@ -145,6 +149,7 @@ final class AppEnvironment {
         await WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         accountCheckFailed = false
         account = .loggedOut
+        mid = nil
     }
 
     private func retryBlockedKeychainLoad() {
