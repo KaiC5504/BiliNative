@@ -84,8 +84,13 @@ final class LocalServer: @unchecked Sendable {
                 let isCurrent = self.listenerBox.withLock { $0 == nil || $0 === listener }
                 switch state {
                 case .ready:
+                    // A listener stop() already let go of may still report ready; it must not mark the server running.
+                    guard self.listenerBox.withLock({ $0 === listener }) else {
+                        _ = resumeOnce { continuation.resume(throwing: CancellationError()) }
+                        return
+                    }
                     let port = listener.port?.rawValue ?? 0
-                    if isCurrent { self.stateBox.withLock { $0 = .ready(port) } }
+                    self.stateBox.withLock { $0 = .ready(port) }
                     Logger.shared.info(.server, "listening", ["port": .init(Int(port))])
                     _ = resumeOnce { continuation.resume() }
                 // A waiting listener may never become ready, which would leave start() hanging.
@@ -113,10 +118,13 @@ final class LocalServer: @unchecked Sendable {
     func stop() {
         // The cancel below ends a start in progress; a later start() must begin a new listener, not join that one.
         startTask.withLock { $0 = nil }
-        listenerBox.withLock { listener in
+        let stopped = listenerBox.withLock { listener -> Bool in
+            defer { listener = nil }
             listener?.cancel()
-            listener = nil
+            return listener != nil
         }
+        // Set now, not when the cancel is reported, so a start() right after this one opens a new listener.
+        if stopped { stateBox.withLock { $0 = .stopped } }
         let open = connections.withLock { value -> [NWConnection] in
             defer { value.removeAll() }
             return Array(value.values)
