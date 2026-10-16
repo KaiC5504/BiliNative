@@ -70,7 +70,13 @@ final class PageLifecycle {
     }
 
     private func show(_ model: VideoPageModel, opened: Bool) {
-        model.presenter = self
+        // Only a page's first appearance claims the model. The page a restored model left keeps its own
+        // lifecycle until SwiftUI tears it down, and must not take the model back.
+        if opened {
+            model.presenter = self
+        } else if model.presenter !== self {
+            return
+        }
         let resume = keeper.pageShown(model, opened: opened)
         orientation.begin(owner: model, videoIsVertical: model.detail?.isVertical ?? false)
         model.appear(resuming: resume)
