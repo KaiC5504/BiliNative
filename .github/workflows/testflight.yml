@@ -163,7 +163,7 @@ jobs:
         run: |
           # A brand-new app has no builds yet; anything else non-numeric is an error.
           if ! latest=$(app-store-connect get-latest-testflight-build-number "$ASC_APP_ID" --all-versions 2>&1); then
-            if echo "$latest" | grep -qi "no build"; then latest=0; else echo "$latest"; exit 1; fi
+            if echo "$latest" | grep -qiE "no build|did not find latest build"; then latest=0; else echo "$latest"; exit 1; fi
           fi
           case "$latest" in
             ''|*[!0-9]*) echo "App Store Connect gave no build number: '$latest'"; exit 1 ;;
