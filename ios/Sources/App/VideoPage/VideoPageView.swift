@@ -12,6 +12,7 @@ struct VideoPageView: View {
     @State private var model: VideoPageModel?
     @State private var chrome = ChromeState()
     @State private var ownPanel: PlayerPanel?
+    @State private var danmakuSlot = DanmakuSlot()
 
     init(route: VideoRoute, panel: Binding<PlayerPanel?>? = nil) {
         self.route = route
@@ -62,9 +63,8 @@ struct VideoPageView: View {
         #endif
     }
 
-    /// The danmaku renderer goes into the player here (Task 12); nil draws none.
     private func danmakuView(for model: VideoPageModel) -> UIView? {
-        nil
+        danmakuSlot.view(for: model, settings: env.settings)
     }
 }
 
