@@ -28,8 +28,11 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - 2026-10-16: milestone 1 verdict **go** (`docs/m1-results.md`). On 4 videos tried in both modes BTR started
   faster and stalled far less; KaiC calls it way better than the official app. Weak spots: a cold 4K start took
   8.7 s, and the first seconds after a jump into unloaded 4K can stall. That is the trigger for hurry mode.
-- Next: hurry mode in the engine (if KaiC approves), then milestone 2 (official-style player chrome and gestures,
-  danmaku, like/coin/fav, Now Playing, PiP polish).
+- 2026-10-16: hurry mode built in the engine (node stats, placement by expected finish, small pieces, faster
+  second and third copies, busy nodes not struck, adopted prefetches kept; `docs/background.md`, "Hurry mode"),
+  with the 卡顿 window widened to 0.75 s. Phone retest pending.
+- Next: phone retest of hurry mode, then milestone 2 (official-style player chrome and gestures, danmaku,
+  like/coin/fav, Now Playing, PiP polish).
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.
@@ -53,7 +56,8 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   crashed on the full-screen button because AVKit moves its content overlay into another controller
   (`ios/Tests/AppTests/FullScreenTests.swift`). Never make a hosting controller a child of a system controller
   whose views that controller may move.
-- Hurry mode (deferred in the spec) is now justified by the phone logs (`docs/m1-results.md`); build it only from an approved plan.
+- Hurry mode (deferred in the spec) is built, justified by the phone logs (`docs/m1-results.md`); the rules and
+  files are in `docs/background.md`, "Hurry mode". `RipperConfig.hurry` switches it off.
 
 ## How to test
 
