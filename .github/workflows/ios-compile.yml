@@ -123,6 +123,10 @@ jobs:
           shoot 02-settings 8 -DemoScreen settings
           shoot 00-demo-home 8 -DemoData YES
           shoot 03-page 10 -DemoData YES -DemoScreen page
+          shoot 11-panel-quality 16 -DemoData YES -DemoScreen page -DemoPanel quality
+          shoot 11-panel-speed 16 -DemoData YES -DemoScreen page -DemoPanel speed
+          shoot 11-panel-more 16 -DemoData YES -DemoScreen page -DemoPanel more
+          shoot 11-panel-more-portrait 12 -DemoData YES -DemoScreen page -DemoPanel more -DemoPortrait YES
 
       - name: Release build (no tests)
         run: |

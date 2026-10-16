@@ -11,12 +11,11 @@ final class PanelDriver {
 }
 
 private struct PageHarness: View {
-    let driver: PanelDriver
+    @Bindable var driver: PanelDriver
 
     var body: some View {
         NavigationStack {
-            VideoPageView(route: VideoRoute(bvid: VideoPageFixtures.bvidA),
-                          panel: Binding(get: { driver.panel }, set: { driver.panel = $0 }))
+            VideoPageView(route: VideoRoute(bvid: VideoPageFixtures.bvidA), panel: $driver.panel)
         }
     }
 }

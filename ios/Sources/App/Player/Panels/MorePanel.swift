@@ -37,7 +37,9 @@ struct MorePanel: View {
     }
 
     private var root: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        @Bindable var settings = model.settings
+        @Bindable var pageModel = model
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 36) {
                 PanelActionButton(icon: "clock", title: "稍后再看", action: watchLater)
                 PanelActionButton(icon: "pip.enter", title: "小窗播放", action: startPiP)
@@ -53,13 +55,11 @@ struct MorePanel: View {
             .padding(.top, 15)
 
             PanelGroup {
-                PanelToggleRow(icon: "forward.end", title: "自动连播",
-                               isOn: Binding(get: { settings.autoplay }, set: { settings.autoplay = $0 }))
+                PanelToggleRow(icon: "forward.end", title: "自动连播", isOn: $settings.autoplay)
                 PanelRowFrame(icon: "repeat", title: "循环播放") {
                     PanelSegments(items: loopItems, selection: settings.loop, select: { settings.loop = $0 })
                 }
-                PanelToggleRow(icon: "flip.horizontal", title: "镜像翻转",
-                               isOn: Binding(get: { model.mirrored }, set: { model.mirrored = $0 }))
+                PanelToggleRow(icon: "flip.horizontal", title: "镜像翻转", isOn: $pageModel.mirrored)
                 Button {
                     page = .fit
                 } label: {
@@ -81,14 +81,16 @@ struct MorePanel: View {
             PanelTitle("测试")
                 .padding(.top, 36)
             PanelGroup {
-                PanelToggleRow(icon: "bolt", title: "BTR 加速",
-                               isOn: Binding(get: { settings.btrEnabled }, set: setBTR))
-                PanelToggleRow(icon: "chart.bar", title: "显示统计", showsDivider: false,
-                               isOn: Binding(get: { settings.showOverlay }, set: { settings.showOverlay = $0 }))
+                PanelToggleRow(icon: "bolt", title: "BTR 加速", isOn: $settings.btrEnabled)
+                PanelToggleRow(icon: "chart.bar", title: "显示统计", showsDivider: false, isOn: $settings.showOverlay)
             }
             .padding(.top, 15)
         }
         .padding(.top, 16)
+        .onChange(of: settings.btrEnabled) { _, enabled in
+            guard let controller = model.controller else { return }
+            Task { await controller.setBTR(enabled) }
+        }
     }
 
     private var timer: some View {
@@ -152,13 +154,6 @@ struct MorePanel: View {
         case .custom:
             customMinutes = model.sleepMinutes ?? customMinutes
             page = .timer
-        }
-    }
-
-    private func setBTR(_ enabled: Bool) {
-        settings.btrEnabled = enabled
-        if let controller = model.controller {
-            Task { await controller.setBTR(enabled) }
         }
     }
 
