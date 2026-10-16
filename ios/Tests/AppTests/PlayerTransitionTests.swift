@@ -196,6 +196,28 @@ final class PlayerTransitionTests: XCTestCase {
         XCTAssertTrue(host.window === window, "the surface left its window during picture in picture")
     }
 
+    /// 分享 in full screen hands UIKit's share sheet the rotated page; the page must stay in its window and in landscape.
+    func testShareSheetComesUpOverLandscapeAndGoesAway() async throws {
+        let scene = try XCTUnwrap(Self.scene)
+        let host = try await showSurface(player: AVPlayer())
+        let window = try XCTUnwrap(self.window)
+        let orientation = OrientationController.shared
+        orientation.enterLandscape()
+        let turned = await waitUntil(5) { scene.effectiveGeometry.interfaceOrientation.isLandscape }
+        XCTAssertTrue(turned, "the scene never turned to landscape")
+
+        SharePresenter.present(title: "演示", url: ShareLinks.video("BV1Dm4y1A7aa", part: 2), in: window) { _ in }
+        let shown = await waitUntil(5) { window.rootViewController?.presentedViewController is UIActivityViewController }
+        XCTAssertTrue(shown, "the share sheet never came up")
+        XCTAssertEqual(orientation.presentation, .landscape)
+
+        window.rootViewController?.dismiss(animated: false)
+        let gone = await waitUntil(5) { window.rootViewController?.presentedViewController == nil }
+        XCTAssertTrue(gone, "the share sheet did not go away")
+        XCTAssertTrue(host.window === window, "the surface left its window behind the share sheet")
+        XCTAssertTrue(scene.effectiveGeometry.interfaceOrientation.isLandscape)
+    }
+
     func testVerticalPansAreRefusedInlineAndAcceptedInFullScreen() {
         let pan = SyntheticPan(target: nil, action: nil)
         let view = PlayerGestureView(pan: pan)

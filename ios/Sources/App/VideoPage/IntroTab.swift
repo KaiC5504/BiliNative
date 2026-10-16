@@ -7,7 +7,7 @@ import BiliAPI
 struct IntroTab<Actions: View>: View {
     let model: VideoPageModel
     let state: PageTabsState
-    /// 关注 belongs to the actions (Task 21). Until they are wired the pill shows the uploader card's state.
+    /// 关注 belongs to the actions; before they exist the pill shows the uploader card's state.
     var following: Bool?
     var onFollow: () -> Void = {}
     let onNeedLogin: () -> Void
