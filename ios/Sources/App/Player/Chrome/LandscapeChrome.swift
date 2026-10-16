@@ -306,24 +306,6 @@ enum QualityLabel {
     static func short(_ controller: PlaybackControlling?) -> String {
         guard let controller else { return "清晰度" }
         let id = controller.playingQuality ?? controller.selectedQuality
-        return short(qn: id, name: controller.qualities.first { $0.id == id }?.name)
-    }
-
-    static func short(qn: Int, name: String?) -> String {
-        switch qn {
-        case 127: return "8K"
-        case 126: return "杜比视界"
-        case 125: return "HDR"
-        case 120: return "4K"
-        case 116: return "1080P60"
-        case 112: return "1080P+"
-        case 80: return "1080P"
-        case 74: return "720P60"
-        case 64: return "720P"
-        case 32: return "480P"
-        case 16: return "360P"
-        case 6: return "240P"
-        default: return name?.split(separator: " ").last.map(String.init) ?? "清晰度"
-        }
+        return QualityNames.short(qn: id, serverText: controller.qualities.first { $0.id == id }?.name)
     }
 }
