@@ -44,7 +44,9 @@ struct PlayerScreen: View {
 
     private func overlay(_ controller: PlaybackController) -> AnyView {
         let show = env.settings.showOverlay
-        let quality = controller.playingQuality.flatMap { id in controller.qualities.first { $0.id == id }?.name }
+        let quality = controller.playing.map { playing in
+            playing.line(qualityName: controller.qualities.first { $0.id == playing.quality }?.name)
+        }
         return AnyView(
             ZStack(alignment: .topLeading) {
                 Color.clear

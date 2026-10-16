@@ -69,6 +69,36 @@ final class LocalServerTests: XCTestCase {
         XCTAssertTrue(master.contains("URI=\"bilinative://playlist/t/a.m3u8\""))
     }
 
+    func testPrepareFetchesBothTracksAtOnce() async throws {
+        let fixture = DebugSupport.headerFixture(withMoov: true)
+        let started = Date()
+        _ = try await PlaybackBuilder.prepare(choice: fixture.choice) { _, _ in
+            try await Task.sleep(nanoseconds: 600_000_000)
+            return (fixture.bytes, fixture.total)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.1, "video and audio headers load concurrently")
+    }
+
+    func testHEV1LabelOverHVC1BytesIsDeclaredHVC1() async throws {
+        let fixture = DebugSupport.headerFixture(withMoov: true, videoEntry: "hvc1", videoCodecs: "hev1.1.6.L120.90")
+        let prepared = try await PlaybackBuilder.prepare(choice: fixture.choice) { _, _ in (fixture.bytes, fixture.total) }
+        XCTAssertFalse(prepared.rewroteHEV1)
+        XCTAssertEqual(prepared.sourceEntry, "hvc1")
+        let master = try XCTUnwrap(PlaybackBuilder.directPlaylists(prepared, token: "t")["master.m3u8"])
+        XCTAssertTrue(master.contains("CODECS=\"hvc1.1.6.L120.90,"), master)
+        XCTAssertTrue(PlaybackController.directCanPlay(fixture.choice.video, sourceEntry: prepared.sourceEntry))
+    }
+
+    func testRealHEV1BytesAreRewrittenAndKeptOutOfDirectMode() async throws {
+        let fixture = DebugSupport.headerFixture(withMoov: true, videoEntry: "hev1", videoCodecs: "hev1.1.6.L120.90")
+        let prepared = try await PlaybackBuilder.prepare(choice: fixture.choice) { _, _ in (fixture.bytes, fixture.total) }
+        XCTAssertTrue(prepared.rewroteHEV1)
+        XCTAssertEqual(prepared.sourceEntry, "hev1")
+        let master = try XCTUnwrap(PlaybackBuilder.directPlaylists(prepared, token: "t")["master.m3u8"])
+        XCTAssertTrue(master.contains("CODECS=\"hev1.1.6.L120.90,"), master)
+        XCTAssertFalse(PlaybackController.directCanPlay(fixture.choice.video, sourceEntry: prepared.sourceEntry))
+    }
+
     func testPrepareRejectsHeadersWithoutACompleteMoov() async {
         let fixture = DebugSupport.headerFixture(withMoov: false)
         do {

@@ -101,6 +101,27 @@ final class PlaybackIntegrationTests: XCTestCase {
         controller.stop()
     }
 
+    /// iOS reclaims a suspended app's socket; a paused BTR player comes back paused, in BTR mode.
+    func testAServerStopRestartsItAndKeepsBTRAndThePause() async throws {
+        let (controller, _) = try makeController(variant: "avc", codecid: 7, btr: true)
+        await controller.start()
+        try await waitUntil(60) { controller.currentSeconds >= 3 }
+        controller.player.pause()
+        let pausedAt = controller.currentSeconds
+        controller.debugKillServer(restartable: true)
+        XCTAssertFalse(server.isRunning)
+        try await waitUntil(30) { self.server.isRunning && controller.phase == .playing }
+        XCTAssertEqual(controller.mode, .ripper)
+        XCTAssertEqual(controller.player.rate, 0, "the pause survives the reload")
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        XCTAssertEqual(controller.currentSeconds, pausedAt, accuracy: 0.5)
+        controller.player.play()
+        try await waitUntil(60) { controller.currentSeconds >= pausedAt + 3 }
+        XCTAssertEqual(controller.mode, .ripper)
+        XCTAssertTrue(playerRequests.isEmpty)
+        controller.stop()
+    }
+
     func testDirectModePlays() async throws {
         let (controller, _) = try makeController(variant: "avc", codecid: 7, btr: false)
         await controller.start()

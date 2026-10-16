@@ -151,11 +151,10 @@ struct Bench {
               + (singleCut.map { " (truncated after \(singleBytes) bytes: \($0.prefix(160)); rate is up to the cut, not comparable)" } ?? ""))
         print("ripper:         \(rippedBytes) bytes in \(String(format: "%.2f", rippedSeconds)) s = \(rate(rippedBytes, rippedSeconds))")
         print("connections \(stats.concurrency), requests \(stats.requests), failures \(stats.failures), duplicate \(String(format: "%.1f", stats.duplicateShare * 100))%")
-        let rank = ["healthy": 0, "untested": 1, "blocked": 2, "banned": 3]
         for node in stats.nodes {
             // One entry per address on the node (e.g. a refused os=cosovbv next to a serving os=akam): show the best.
             let states = stats.nodeStates.filter { $0.node == node.node }
-            let best = states.min { (rank[$0.state] ?? 9, -$0.bps) < (rank[$1.state] ?? 9, -$1.bps) }
+            let best = Resolver.NodeStatus.best(of: node.node, in: states)
             let all = states.count > 1 ? " (addresses: \(states.map(\.state).joined(separator: ", ")))" : ""
             print("  \(node.node): \(node.requests) req, \(node.failures) failed, first byte \(Int(node.firstByteMs)) ms, \(best.map { rate(Int64($0.bps), 1) } ?? "-") per connection, \(best?.state ?? "-")\(all)")
         }

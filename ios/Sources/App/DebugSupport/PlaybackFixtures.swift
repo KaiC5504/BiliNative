@@ -16,6 +16,10 @@ extension DebugSupport {
                     audio: [stream(30280, 0, "mp4a.40.2")])
     }
 
+    static func codecPlayURL(_ streams: [(id: Int, codecid: Int, codecs: String)]) -> PlayURLInfo {
+        PlayURLInfo(quality: 80, acceptQuality: [80, 64], acceptDescription: ["1080P 高清", "720P 高清"], dash: codecDash(streams), hasDurl: false)
+    }
+
     /// Requests to `hangingHosts` never answer until cancelled; the rest go to `inner`.
     struct HangingTransport: RangeTransport {
         let inner: RangeTransport

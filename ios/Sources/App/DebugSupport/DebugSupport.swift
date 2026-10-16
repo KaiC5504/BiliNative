@@ -41,14 +41,22 @@ enum DebugSupport {
         return server.router.register(PlaybackAssets(playlists: [:], media: ["hang.mp4": media]))
     }
 
-    /// ftyp, optionally an empty moov, then a version 0 sidx with one 1000-byte, 2-second
-    /// reference. Both tracks of the choice point at the same layout, each with a primary address on
-    /// primary.invalid and one backup per host in `backupHosts`.
-    static func headerFixture(withMoov: Bool, backupHosts: [String] = ["backup.invalid"]) -> (choice: TrackChoice, bytes: [UInt8], total: Int64) {
+    /// ftyp, optionally a moov, then a version 0 sidx with one 1000-byte, 2-second reference. The moov is
+    /// empty, or holds one HEVC sample entry of type `videoEntry` with VPS, SPS and PPS. Both tracks of the
+    /// choice point at the same layout, each with a primary address on primary.invalid and one backup per
+    /// host in `backupHosts`.
+    static func headerFixture(withMoov: Bool, backupHosts: [String] = ["backup.invalid"], videoEntry: String? = nil,
+                              videoCodecs: String = "avc1.640032") -> (choice: TrackChoice, bytes: [UInt8], total: Int64) {
         func uint32(_ value: Int) -> [UInt8] { (0..<4).map { UInt8(truncatingIfNeeded: value >> (24 - 8 * $0)) } }
         func box(_ type: String, _ payload: [UInt8]) -> [UInt8] { uint32(8 + payload.count) + Array(type.utf8) + payload }
+        func sampleEntry(_ type: String) -> [UInt8] {
+            let parameterSets = [UInt8(32), 33, 34].flatMap { nal -> [UInt8] in [nal, 0, 1, 0, 2, 0xAA, 0xBB] }
+            let hvcC = box("hvcC", [UInt8](repeating: 0, count: 22) + [3] + parameterSets)
+            let stsd = box("stsd", uint32(0) + uint32(1) + box(type, [UInt8](repeating: 0, count: 78) + hvcC))
+            return box("trak", box("mdia", box("minf", box("stbl", stsd))))
+        }
         let ftyp = box("ftyp", Array("isom".utf8) + uint32(0))
-        let moov = withMoov ? box("moov", []) : []
+        let moov = withMoov ? box("moov", videoEntry.map(sampleEntry) ?? []) : []
         let sidx = box("sidx", uint32(0) + uint32(1) + uint32(1000) + uint32(0) + uint32(0) + [0, 0, 0, 1]
                                 + uint32(1000) + uint32(2000) + uint32(0))
         let initEnd = Int64(ftyp.count + moov.count) - 1
@@ -61,7 +69,7 @@ enum DebugSupport {
                        initialization: ByteRange(start: 0, end: initEnd)!,
                        indexRange: ByteRange(start: initEnd + 1, end: Int64(bytes.count) - 1)!)
         }
-        return (TrackChoice(video: stream(80, "avc1.640032"), audio: stream(30280, "mp4a.40.2")), bytes, total)
+        return (TrackChoice(video: stream(80, videoCodecs), audio: stream(30280, "mp4a.40.2")), bytes, total)
     }
 
     enum FixtureAnswer: Sendable {
@@ -344,6 +352,7 @@ enum FixturePlayback {
         config.fixedConcurrency = 8
         return PlaybackEnvironment(provider: FixtureProvider(info: info), router: router, server: server, directLoader: loader,
                                    transport: URLSessionRangeTransport(headers: [FakeCDNServer.clientHeader: "engine"]),
+                                   directTransport: URLSessionRangeTransport(headers: [FakeCDNServer.clientHeader: "engine"]),
                                    auto: AutoConcurrency(), nodeMode: .custom(ports.map { NodeAddress(host: "127.0.0.1", port: Int($0)) }),
                                    policy: loopbackPolicy(ports: ports), ripperConfig: config,
                                    codecMemory: CodecMemory(defaults: UserDefaults(suiteName: "fixture-\(UUID().uuidString)")!),

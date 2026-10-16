@@ -30,6 +30,8 @@ struct PlaybackEnvironment {
     let server: LocalServer
     let directLoader: DirectPlaylistLoader
     let transport: RangeTransport
+    /// Direct mode's header requests: not the engine's warm connections, which would favour direct mode.
+    let directTransport: RangeTransport
     let auto: AutoConcurrency
     let nodeMode: NodeMode
     let policy: MediaURLPolicy
@@ -99,14 +101,19 @@ final class PlaybackController {
     private static let directPrepareSeconds = 20.0
     /// A network failure in direct mode restarts with fresh URLs at most this often.
     private static let networkRestartSeconds = 60.0
+    /// Signed URLs are refreshed this long before their deadline, and count as stale within it.
+    nonisolated private static let urlMarginSeconds = 300.0
+    private static let refreshRetrySeconds = 30.0
+    /// A local server that stops again this soon after being restarted is left for direct mode.
+    private static let serverRestartSeconds = 30.0
 
     let player = AVPlayer()
     private(set) var mode: Mode = .ripper
     private(set) var phase: Phase = .idle
     private(set) var qualities: [QualityOption] = []
     private(set) var selectedQuality: Int
-    /// The quality of the stream actually chosen; selectedQuality is only the ceiling asked for.
-    private(set) var playingQuality: Int?
+    /// The stream actually chosen; selectedQuality is only the ceiling asked for.
+    private(set) var playing: PlayingStream?
     private(set) var codec: VideoCodec
     private(set) var btrEnabled: Bool
     private(set) var overlay = OverlayStats()
@@ -125,13 +132,13 @@ final class PlaybackController {
     @ObservationIgnored private var workCount = 0
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var startedAt = Date()
-    @ObservationIgnored private var seekStartedAt: Date?
+    @ObservationIgnored private var seekTimer = SeekTimer()
     @ObservationIgnored private var refreshedAfterFatal = false
     @ObservationIgnored private var refreshingAfterFatal = false
     @ObservationIgnored private var lastDelivered: Int64?
     /// Bumped by every stop, restart, switch and failure; async work and callbacks of an older epoch do nothing.
     @ObservationIgnored private var epoch = 0
-    /// Codec kinds that failed in this playback only: not AVFoundation's verdict on the phone, or hev1 in direct mode.
+    /// Codec kinds that failed in this playback only: not AVFoundation's verdict on the phone.
     @ObservationIgnored private var rejectedHere: Set<String> = []
     /// Codec kinds whose unexplained failure already got one retry with fresh URLs.
     @ObservationIgnored private var unknownRetried: Set<String> = []
@@ -140,6 +147,12 @@ final class PlaybackController {
     @ObservationIgnored private var forcedDirect = false
     /// The position to report while no item is loaded, so a retry resumes where playback stopped.
     @ObservationIgnored private var heldPosition = 0.0
+    /// The video sample entry in Bilibili's bytes of the current choice, once its headers were read.
+    @ObservationIgnored private var sourceEntry: String?
+    /// Whether a load starts playback; reloading a player the user paused leaves it paused.
+    @ObservationIgnored private var playWhenLoaded = true
+    @ObservationIgnored private var lastServerRestart: Date?
+    @ObservationIgnored private var loggedPlayURL = false
 
     init(environment: PlaybackEnvironment, quality: Int, codec: VideoCodec, btrEnabled: Bool) {
         self.environment = environment
@@ -148,6 +161,8 @@ final class PlaybackController {
         self.btrEnabled = btrEnabled
         player.automaticallyWaitsToMinimizeStalling = true
     }
+
+    var playingQuality: Int? { playing?.quality }
 
     var currentSeconds: Double {
         guard player.currentItem != nil else { return heldPosition }
@@ -158,10 +173,18 @@ final class PlaybackController {
     // MARK: public actions
 
     func start(at time: Double = 0) async {
+        await startPlayback(at: time, autoplay: true)
+    }
+
+    private func startPlayback(at time: Double, autoplay: Bool) async {
         rejectedHere = []
         unknownRetried = []
         lastNetworkRestart = nil
+        lastServerRestart = nil
         forcedDirect = false
+        loggedPlayURL = false
+        playWhenLoaded = autoplay
+        seekTimer.cancel()
         startedAt = Date()
         overlay = OverlayStats()
         watchNetwork()
@@ -192,14 +215,16 @@ final class PlaybackController {
         teardownPlayback()
         pathMonitor?.cancel()
         pathMonitor = nil
+        playing = nil
         phase = .idle
     }
 
     #if DEBUG
-    func debugKillServer() {
+    /// Without `restartable` the server counts as one iOS will not let listen again.
+    func debugKillServer(restartable: Bool = false) {
         environment.server.stop()
         let current = epoch
-        Task { await launch { await $0.serverStopped(epoch: current) } }
+        Task { await launch { await $0.serverStopped(epoch: current, mayRestart: restartable) } }
     }
     #endif
 
@@ -212,18 +237,24 @@ final class PlaybackController {
         heldPosition = time
         refreshedAfterFatal = false
         refreshingAfterFatal = false
+        playing = nil
+        sourceEntry = nil
         do {
             let info = try await environment.provider.playURL(quality: selectedQuality)
             try ensureCurrent(current)
             qualities = info.qualityOptions
+            if !loggedPlayURL {
+                loggedPlayURL = true
+                Logger.shared.info(.player, "playurl", Self.playURLSummary(info).mapValues { LogValue($0) })
+            }
             guard let dash = info.dash else { throw BiliError.notDash }
             let ripper = try await ripperAvailable(epoch: current)
-            let choice = try pickTracks(dash, skipHEV1: !ripper)
+            let choice = try pickTracks(dash, skipHEV1: !ripper && environment.codecMemory.hev1LabelsHoldHEV1)
             self.choice = choice
-            playingQuality = choice.video.id
+            playing = PlayingStream(choice.video)
             Logger.shared.info(.player, "choice", ["quality": .init(choice.video.id), "codecs": .init(choice.video.codecs),
-                                                   "audio": .init(choice.audio.id), "node": .init(NodeCatalog.nodeKey(of: choice.video.baseURL)),
-                                                   "btr": .init(ripper)])
+                                                   "kbps": .init(choice.video.bandwidth / 1000), "audio": .init(choice.audio.id),
+                                                   "node": .init(NodeCatalog.nodeKey(of: choice.video.baseURL)), "btr": .init(ripper)])
             if ripper {
                 try await startRipper(choice, at: time, epoch: current)
             } else {
@@ -271,7 +302,8 @@ final class PlaybackController {
 
     /// TrackSelector falls back to any codec the quality has, so rejected kinds are removed from the
     /// streams first. Once anything was rejected, codecs of unknown kind are left out too. Direct mode
-    /// cannot rename hev1 to hvc1, and AVPlayer refuses hev1, so those streams can be skipped up front.
+    /// cannot rename hev1 to hvc1, and AVPlayer refuses hev1, so once hev1 labels proved to hold hev1
+    /// those streams are skipped up front.
     nonisolated static func choose(_ dash: Dash, quality: Int, codecOrder: [VideoCodec], excluded: Set<String>,
                                    skipHEV1: Bool = false) -> TrackChoice? {
         var banned = excluded
@@ -286,8 +318,38 @@ final class PlaybackController {
         stream.codecs.hasPrefix("hev1")
     }
 
+    /// Direct mode serves Bilibili's bytes unchanged: a hev1 label plays only when the bytes hold hvc1.
+    nonisolated static func directCanPlay(_ stream: DashStream, sourceEntry: String?) -> Bool {
+        !isHEV1(stream) || sourceEntry == "hvc1"
+    }
+
+    nonisolated static func urlDeadline(_ stream: DashStream) -> Double? {
+        URLComponents(string: stream.baseURL)?.queryItems?.first { $0.name == "deadline" }?.value.flatMap(Double.init)
+    }
+
+    nonisolated static func urlsNearExpiry(_ choice: TrackChoice, now: Date) -> Bool {
+        guard let deadline = urlDeadline(choice.video) else { return false }
+        return deadline - now.timeIntervalSince1970 < urlMarginSeconds
+    }
+
+    /// What the playurl answer offered, for the log: qualities, codecs and hosts, never a URL.
+    nonisolated static func playURLSummary(_ info: PlayURLInfo) -> [String: String] {
+        func hosts(_ streams: [DashStream]) -> String {
+            let all = streams.flatMap { [$0.baseURL] + $0.backupURLs }.compactMap { URL(string: $0)?.host }
+            return Set(all).sorted().joined(separator: ",")
+        }
+        let video = info.dash?.video ?? []
+        return [
+            "accept": info.acceptQuality.map(String.init).joined(separator: ","),
+            "streams": video.map { "\($0.id):\($0.codecs)" }.joined(separator: ","),
+            "videoHosts": hosts(video),
+            "audioHosts": hosts(info.dash?.audio ?? []),
+            "durl": String(info.hasDurl),
+        ]
+    }
+
     private enum Reroute: Error {
-        /// BTR mode failed on a hev1 stream, which direct mode cannot play: choose again for direct mode.
+        /// Direct mode got a stream whose hev1 label holds a real hev1 entry: choose again without one.
         case directWithoutHEV1
     }
 
@@ -305,6 +367,7 @@ final class PlaybackController {
                 return (headers.bytes, headers.totalSize)
             }
             try ensureCurrent(current)
+            noteSourceEntry(prepared, of: choice)
             session.setSegments(.video, prepared.video.segments)
             session.setSegments(.audio, prepared.audio.segments)
             let token = environment.router.register(PlaybackBuilder.ripperAssets(prepared, session: session))
@@ -323,13 +386,13 @@ final class PlaybackController {
             if case .codecUnplayable? = error as? PlaybackError { throw error }
             Logger.shared.warn(.player, "btr start failed, going direct", ["error": .init(String(describing: error))])
             forcedDirect = true
-            if Self.isHEV1(choice.video) { throw Reroute.directWithoutHEV1 }
+            if !Self.directCanPlay(choice.video, sourceEntry: sourceEntry) { throw Reroute.directWithoutHEV1 }
             try await startDirect(choice, at: time, fallback: true, epoch: current)
         }
     }
 
     private func startDirect(_ choice: TrackChoice, at time: Double, fallback: Bool, epoch current: Int) async throws {
-        let transport = environment.transport
+        let transport = environment.directTransport
         let prepared: PreparedPlayback
         do {
             prepared = try await PlaybackBuilder.within(Self.directPrepareSeconds) {
@@ -340,6 +403,11 @@ final class PlaybackController {
             throw PlaybackError.noSource
         }
         try ensureCurrent(current)
+        noteSourceEntry(prepared, of: choice)
+        if !Self.directCanPlay(choice.video, sourceEntry: prepared.sourceEntry) {
+            Logger.shared.info(.player, "hev1 label holds hev1, choosing again for direct mode")
+            throw Reroute.directWithoutHEV1
+        }
         teardownSession()
         if let directToken { environment.directLoader.unregister(directToken) }
         let token = PlaybackRouter.makeToken()
@@ -347,6 +415,13 @@ final class PlaybackController {
         let url = environment.directLoader.register(token: token, playlists: PlaybackBuilder.directPlaylists(prepared, token: token))
         mode = fallback ? .directFallback : .direct
         try await load(url: url, viaLoader: true, at: time, epoch: current)
+    }
+
+    private func noteSourceEntry(_ prepared: PreparedPlayback, of choice: TrackChoice) {
+        sourceEntry = prepared.sourceEntry
+        guard Self.isHEV1(choice.video) else { return }
+        if prepared.sourceEntry == "hev1" { environment.codecMemory.noteHEV1Entry() }
+        Logger.shared.info(.player, "hev1 label", ["entry": .init(prepared.sourceEntry ?? "none"), "rewritten": .init(prepared.rewroteHEV1)])
     }
 
     private func load(url: URL, viaLoader: Bool, at time: Double, epoch current: Int) async throws {
@@ -362,15 +437,20 @@ final class PlaybackController {
         if viaLoader { asset.resourceLoader.setDelegate(environment.directLoader, queue: environment.directLoader.queue) }
         let item = AVPlayerItem(asset: asset)
         item.preferredForwardBufferDuration = 30
+        seekTimer.reloadBegan()
         attachObservers(item, epoch: current)
         player.replaceCurrentItem(with: item)
         if time > 0 {
             _ = await player.seek(to: CMTime(seconds: time, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             try ensureCurrent(current)
         }
-        player.play()
+        if playWhenLoaded {
+            player.play()
+        } else {
+            phase = .playing
+        }
         startStatsLoop()
-        Logger.shared.info(.player, "load", ["mode": .init(mode.label), "at": .init(time)])
+        Logger.shared.info(.player, "load", ["mode": .init(mode.label), "at": .init(time), "play": .init(playWhenLoaded)])
     }
 
     // MARK: failures
@@ -390,12 +470,34 @@ final class PlaybackController {
             if current == epoch { refreshingAfterFatal = false }
             return
         }
+        rememberPause()
         await fallBackToDirect(reason: "btr failed again", epoch: current)
     }
 
-    private func serverStopped(epoch current: Int) async {
+    /// iOS reclaims a suspended app's listening socket. The server is started again and BTR playback
+    /// reloaded; direct mode is for a server that does not come back.
+    private func serverStopped(epoch current: Int, mayRestart: Bool = true) async {
         guard current == epoch, mode == .ripper else { return }
+        rememberPause()
+        if mayRestart, claimServerRestart() {
+            let time = currentSeconds
+            Logger.shared.warn(.player, "local server stopped, reloading btr", ["at": .init(time)])
+            // begin starts the server again, and plays direct (fallback) when that fails.
+            await begin(at: time)
+            return
+        }
         await fallBackToDirect(reason: "local server stopped", epoch: current)
+    }
+
+    private func claimServerRestart() -> Bool {
+        if let last = lastServerRestart, Date().timeIntervalSince(last) < Self.serverRestartSeconds { return false }
+        lastServerRestart = Date()
+        return true
+    }
+
+    /// Reloads keep a user's pause. Not used for failed items: AVPlayer stops for those by itself.
+    private func rememberPause() {
+        if player.currentItem != nil, phase == .playing { playWhenLoaded = player.rate > 0 }
     }
 
     private func fallBackToDirect(reason: String, epoch current: Int) async {
@@ -405,8 +507,9 @@ final class PlaybackController {
         forcedDirect = true
         phase = .loading
         let time = currentSeconds
-        Logger.shared.warn(.player, "fallback to direct", ["reason": .init(reason), "at": .init(time)])
-        if Self.isHEV1(choice.video) {
+        let expiring = Self.urlsNearExpiry(choice, now: Date())
+        Logger.shared.warn(.player, "fallback to direct", ["reason": .init(reason), "at": .init(time), "urlsExpiring": .init(expiring)])
+        if expiring || !Self.directCanPlay(choice.video, sourceEntry: sourceEntry) {
             await begin(at: time)
             return
         }
@@ -417,22 +520,44 @@ final class PlaybackController {
         }
     }
 
+    enum ItemFailureReaction: Equatable {
+        case fallBackToDirect
+        case nextCodec(remember: Bool)
+        /// Fresh URLs, unless a restart happened recently.
+        case restart
+        /// Fresh URLs once per codec, then the next codec.
+        case restartOnceThenNextCodec
+    }
+
+    /// BTR mode serves an init AVPlayer can read (hev1 renamed to hvc1), so a format failure there is
+    /// AVFoundation's verdict on the codec, and the same quality is tried in the next codec, still in BTR mode.
+    nonisolated static func reaction(to failure: ItemFailure, in mode: Mode, sourceEntry: String?) -> ItemFailureReaction {
+        switch (failure, mode) {
+        case (.format, .ripper): return .nextCodec(remember: true)
+        case (_, .ripper): return .fallBackToDirect
+        case (.network, _): return .restart
+        case (.unknown, _): return .restartOnceThenNextCodec
+        // A hev1 entry served unpatched says nothing about what this phone can decode.
+        case (.format, _): return .nextCodec(remember: sourceEntry != "hev1")
+        }
+    }
+
     private func itemFailed(_ failure: ItemFailure, detail: String, epoch current: Int) async {
         guard current == epoch, let choice else { return }
         Logger.shared.error(.player, "item failed", ["mode": .init(mode.label), "kind": .init(String(describing: failure)),
                                                      "error": .init(detail)])
-        if mode == .ripper {
-            await fallBackToDirect(reason: "item failed in btr mode", epoch: current)
-            return
-        }
         let time = currentSeconds
         let kind = TrackSelector.codecKind(choice.video)
-        switch failure {
-        case .network:
+        switch Self.reaction(to: failure, in: mode, sourceEntry: sourceEntry) {
+        case .fallBackToDirect:
+            await fallBackToDirect(reason: "item failed in btr mode", epoch: current)
+        case .nextCodec(let remember):
+            await nextCodec(rejecting: kind, remember: remember, at: time)
+        case .restart:
             guard claimNetworkRestart() else { return fail(PlaybackFailure.network) }
             Logger.shared.warn(.player, "restarting with fresh urls", ["at": .init(time)])
             await begin(at: time)
-        case .unknown:
+        case .restartOnceThenNextCodec:
             // Unexplained failures are often expired URLs: one fresh start before the codec is blamed.
             if !unknownRetried.contains(kind), claimNetworkRestart() {
                 unknownRetried.insert(kind)
@@ -441,9 +566,6 @@ final class PlaybackController {
             } else {
                 await nextCodec(rejecting: kind, remember: false, at: time)
             }
-        case .format:
-            // Direct mode serves hev1 unpatched, so its refusal says nothing about what this phone can decode.
-            await nextCodec(rejecting: kind, remember: !Self.isHEV1(choice.video), at: time)
         }
     }
 
@@ -459,7 +581,7 @@ final class PlaybackController {
         } else {
             rejectedHere.insert(kind)
         }
-        Logger.shared.warn(.player, "codec failed", ["kind": .init(kind), "remembered": .init(remember)])
+        Logger.shared.warn(.player, "codec failed", ["kind": .init(kind), "remembered": .init(remember), "mode": .init(mode.label)])
         await begin(at: time)
     }
 
@@ -481,6 +603,7 @@ final class PlaybackController {
         heldPosition = currentSeconds
         advance()
         teardownPlayback()
+        playing = nil
         phase = .failed(Self.userMessage(error))
         Logger.shared.error(.player, "failed", ["error": .init(String(describing: error))])
     }
@@ -559,11 +682,15 @@ final class PlaybackController {
 
     // MARK: signed URL refresh
 
-    private func scheduleRefresh(for choice: TrackChoice, epoch current: Int) {
+    private func scheduleRefresh(for choice: TrackChoice, epoch current: Int, retry: Bool = false) {
         refreshTask?.cancel()
-        guard let deadline = URLComponents(string: choice.video.baseURL)?.queryItems?.first(where: { $0.name == "deadline" })?.value
-            .flatMap(Double.init) else { return }
-        let wait = max(30, deadline - Date().timeIntervalSince1970 - 300)
+        let wait: Double
+        if retry {
+            wait = Self.refreshRetrySeconds
+        } else {
+            guard let deadline = Self.urlDeadline(choice.video) else { return }
+            wait = max(30, deadline - Date().timeIntervalSince1970 - Self.urlMarginSeconds)
+        }
         refreshTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             guard !Task.isCancelled, let self, let choice = self.choice else { return }
@@ -589,7 +716,9 @@ final class PlaybackController {
             self.choice = refreshed
             scheduleRefresh(for: refreshed, epoch: current)
         } catch {
-            Logger.shared.warn(.player, "url refresh failed", ["error": .init(String(describing: error))])
+            Logger.shared.warn(.player, "url refresh failed, retrying", ["error": .init(String(describing: error)),
+                                                                          "seconds": .init(Self.refreshRetrySeconds)])
+            if current == epoch, session === self.session { scheduleRefresh(for: choice, epoch: current, retry: true) }
         }
     }
 
@@ -654,8 +783,12 @@ final class PlaybackController {
     }
 
     private func tick(_ time: CMTime) {
-        guard let session, let item = player.currentItem else { return }
+        guard let item = player.currentItem else { return }
         let seconds = time.seconds.isFinite ? time.seconds : 0
+        if let ms = seekTimer.ticked(position: seconds, rate: player.rate, playing: player.timeControlStatus == .playing, at: Date()) {
+            seekResumed(ms, via: "playhead")
+        }
+        guard let session else { return }
         session.updatePlayhead(seconds: seconds, rate: Double(player.rate))
         let ahead = item.loadedTimeRanges.map(\.timeRangeValue)
             .first { $0.start.seconds <= seconds + 0.5 && $0.end.seconds >= seconds }
@@ -667,22 +800,25 @@ final class PlaybackController {
         guard current == epoch else { return }
         switch status {
         case .playing:
+            playWhenLoaded = true
             if overlay.firstFrameMs == nil {
-                overlay.firstFrameMs = Date().timeIntervalSince(startedAt) * 1000
-                Logger.shared.info(.player, "first frame", ["ms": .init(overlay.firstFrameMs!.rounded()), "mode": .init(mode.label)])
+                let ms = Date().timeIntervalSince(startedAt) * 1000
+                overlay.firstFrameMs = ms
+                Logger.shared.info(.player, "first frame", ["ms": .init(ms.rounded()), "mode": .init(mode.label),
+                                                            "quality": .init(choice?.video.id ?? 0), "codecs": .init(choice?.video.codecs ?? ""),
+                                                            "kbps": .init((choice?.video.bandwidth ?? 0) / 1000),
+                                                            "audioKbps": .init((choice?.audio.bandwidth ?? 0) / 1000)])
             }
-            if let seekStartedAt {
-                overlay.lastSeekMs = Date().timeIntervalSince(seekStartedAt) * 1000
-                Logger.shared.info(.player, "seek resumed", ["ms": .init(overlay.lastSeekMs!.rounded())])
-                self.seekStartedAt = nil
-            }
+            if let ms = seekTimer.playing(at: Date()) { seekResumed(ms, via: "status") }
             phase = .playing
         case .waitingToPlayAtSpecifiedRate:
-            if reason == .toMinimizeStalls, overlay.firstFrameMs != nil, seekStartedAt == nil {
+            if reason == .toMinimizeStalls, overlay.firstFrameMs != nil, !seekTimer.isRunning {
                 overlay.stalls += 1
                 session?.reportStall()
                 Logger.shared.warn(.player, "stall", ["at": .init(currentSeconds.rounded()), "mode": .init(mode.label)])
             }
+        case .paused:
+            seekTimer.paused()
         default:
             break
         }
@@ -690,8 +826,14 @@ final class PlaybackController {
 
     private func timeJumped() {
         guard overlay.firstFrameMs != nil else { return }
-        seekStartedAt = Date()
-        Logger.shared.info(.player, "seek", ["to": .init(currentSeconds.rounded())])
+        let position = currentSeconds
+        let timed = seekTimer.jumped(to: position, at: Date(), rate: player.rate)
+        Logger.shared.info(.player, "seek", ["to": .init(position.rounded()), "mode": .init(mode.label), "timed": .init(timed)])
+    }
+
+    private func seekResumed(_ ms: Double, via: String) {
+        overlay.lastSeekMs = ms
+        Logger.shared.info(.player, "seek resumed", ["ms": .init(ms.rounded()), "mode": .init(mode.label), "via": .init(via)])
     }
 
     private func startStatsLoop() {
@@ -726,10 +868,12 @@ final class PlaybackController {
 
     // MARK: helpers
 
+    /// A user's pause survives a quality, codec or BTR change.
     private func restart() async {
         let time = currentSeconds
+        let autoplay = phase == .playing ? player.rate > 0 : true
         stop()
-        await start(at: time)
+        await startPlayback(at: time, autoplay: autoplay)
     }
 
     /// Runs playback work as a task that stop() and fail() can cancel.
@@ -755,6 +899,7 @@ final class PlaybackController {
     private func teardownPlayback() {
         refreshTask?.cancel()
         statsTask?.cancel()
+        seekTimer.cancel()
         work.values.forEach { $0.cancel() }
         player.pause()
         detachObservers()

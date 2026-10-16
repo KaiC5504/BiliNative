@@ -4,16 +4,17 @@ import BiliShared
 
 final class PlaylistBuilderTests: XCTestCase {
     func testCodecMapping() {
-        XCTAssertEqual(CodecMapper.video(codecs: "hev1.1.6.L153.90", qualityID: 120, rewriteHEV1: true),
+        XCTAssertEqual(CodecMapper.video(codecs: "hev1.1.6.L153.90", qualityID: 120, sampleEntry: "hvc1"),
                        HLSVideoCodec(codecs: "hvc1.1.6.L153.90", supplemental: nil, videoRange: "SDR"))
-        XCTAssertEqual(CodecMapper.video(codecs: "hev1.1.6.L153.90", qualityID: 120, rewriteHEV1: false).codecs, "hev1.1.6.L153.90")
-        XCTAssertEqual(CodecMapper.video(codecs: "hev1.2.4.L153.90", qualityID: 125, rewriteHEV1: true).videoRange, "PQ")
-        XCTAssertEqual(CodecMapper.video(codecs: "dvh1.08.07", qualityID: 126, rewriteHEV1: true),
+        XCTAssertEqual(CodecMapper.video(codecs: "hev1.1.6.L153.90", qualityID: 120, sampleEntry: "hev1").codecs, "hev1.1.6.L153.90")
+        XCTAssertEqual(CodecMapper.video(codecs: "hev1.1.6.L153.90", qualityID: 120, sampleEntry: nil).codecs, "hev1.1.6.L153.90")
+        XCTAssertEqual(CodecMapper.video(codecs: "hev1.2.4.L153.90", qualityID: 125, sampleEntry: "hvc1").videoRange, "PQ")
+        XCTAssertEqual(CodecMapper.video(codecs: "dvh1.08.07", qualityID: 126, sampleEntry: "hvc1"),
                        HLSVideoCodec(codecs: "hvc1.2.4.L153.b0", supplemental: "dvh1.08.07/db4h", videoRange: "HLG"))
-        XCTAssertEqual(CodecMapper.video(codecs: "dvh1.08.06", qualityID: 126, rewriteHEV1: true),
+        XCTAssertEqual(CodecMapper.video(codecs: "dvh1.08.06", qualityID: 126, sampleEntry: "hvc1"),
                        HLSVideoCodec(codecs: "hvc1.2.4.L150", supplemental: "dvh1.08.06/db1p", videoRange: "PQ"))
-        XCTAssertEqual(CodecMapper.video(codecs: "dvh1.05.06", qualityID: 126, rewriteHEV1: true).videoRange, "PQ")
-        XCTAssertEqual(CodecMapper.video(codecs: "avc1.640034", qualityID: 80, rewriteHEV1: true).codecs, "avc1.640034")
+        XCTAssertEqual(CodecMapper.video(codecs: "dvh1.05.06", qualityID: 126, sampleEntry: "dvh1").videoRange, "PQ")
+        XCTAssertEqual(CodecMapper.video(codecs: "avc1.640034", qualityID: 80, sampleEntry: "avc1").codecs, "avc1.640034")
     }
 
     func testFrameRateFormatting() {

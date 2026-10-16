@@ -160,4 +160,17 @@ final class ResolverTests: XCTestCase {
         XCTAssertEqual(resolver.status().first { $0.node == NodeCatalog.nodeKey(of: a) }?.state, "banned")
         XCTAssertFalse(resolver.urls().contains(a))
     }
+
+    func testBestStatusPrefersHealthyThenFasterAddresses() {
+        let states = [
+            Resolver.NodeStatus(node: "a", state: "banned", bps: 9_000_000),
+            Resolver.NodeStatus(node: "a", state: "healthy", bps: 1_000_000),
+            Resolver.NodeStatus(node: "a", state: "healthy", bps: 2_000_000),
+            Resolver.NodeStatus(node: "b", state: "blocked", bps: 0),
+            Resolver.NodeStatus(node: "b", state: "untested", bps: 0),
+        ]
+        XCTAssertEqual(Resolver.NodeStatus.best(of: "a", in: states), states[2])
+        XCTAssertEqual(Resolver.NodeStatus.best(of: "b", in: states)?.state, "untested")
+        XCTAssertNil(Resolver.NodeStatus.best(of: "c", in: states))
+    }
 }

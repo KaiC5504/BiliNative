@@ -27,6 +27,7 @@ final class AppEnvironment {
     @ObservationIgnored let server: LocalServer
     @ObservationIgnored let directLoader = DirectPlaylistLoader()
     @ObservationIgnored let transport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
+    @ObservationIgnored let directTransport = URLSessionRangeTransport(headers: BiliClient.mediaHeaders)
     @ObservationIgnored let codecMemory = CodecMemory()
     private(set) var account: Account = .unknown
     /// The last nav call failed (network, not a verdict), so `account` is still `.unknown`.
@@ -80,8 +81,8 @@ final class AppEnvironment {
 
     func playbackEnvironment(bvid: String, cid: Int64) -> PlaybackEnvironment {
         PlaybackEnvironment(provider: BiliPlayURLProvider(client: client, bvid: bvid, cid: cid), router: router, server: server,
-                            directLoader: directLoader, transport: transport, auto: auto, nodeMode: settings.nodeChoice.mode,
-                            policy: .bilibili, ripperConfig: RipperConfig(), codecMemory: codecMemory, mediaHeaders: BiliClient.mediaHeaders)
+                            directLoader: directLoader, transport: transport, directTransport: directTransport, auto: auto,
+                            nodeMode: settings.nodeChoice.mode, policy: .bilibili, ripperConfig: RipperConfig(), codecMemory: codecMemory, mediaHeaders: BiliClient.mediaHeaders)
     }
 
     /// Returns false when Bilibili could not be asked (network error); `account` then keeps its last value.

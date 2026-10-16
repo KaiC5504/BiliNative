@@ -42,14 +42,20 @@ struct PreparedPlayback {
     let audio: PreparedTrack
     /// True when the served init segment was renamed from hev1 to hvc1.
     let rewroteHEV1: Bool
+    /// The video sample entry in Bilibili's own bytes, which can be hvc1 under a hev1 label.
+    let sourceEntry: String?
 }
 
 enum PlaybackBuilder {
+    /// Both tracks' headers are fetched at once, as in direct mode, so the modes start on equal terms.
     static func prepare(choice: TrackChoice,
-                        fetchHeaders: (TrackKind, DashStream) async throws -> (bytes: [UInt8], total: Int64)) async throws -> PreparedPlayback {
-        try await assemble(choice) { kind, stream in
-            let fetched = try await fetchHeaders(kind, stream)
-            return (fetched.bytes, fetched.total, stream.baseURL)
+                        fetchHeaders: @escaping @Sendable (TrackKind, DashStream) async throws -> (bytes: [UInt8], total: Int64)) async throws -> PreparedPlayback {
+        async let video = fetchHeaders(.video, choice.video)
+        async let audio = fetchHeaders(.audio, choice.audio)
+        let fetched = try await (video: video, audio: audio)
+        return try await assemble(choice) { kind, stream in
+            let headers = kind == .video ? fetched.video : fetched.audio
+            return (headers.bytes, headers.total, stream.baseURL)
         }
     }
 
@@ -92,7 +98,8 @@ enum PlaybackBuilder {
         }
         let (video, rewrote) = try await track(.video, choice.video)
         let (audio, _) = try await track(.audio, choice.audio)
-        return PreparedPlayback(video: video, audio: audio, rewroteHEV1: rewrote)
+        let sourceEntry = rewrote ? "hev1" : InitSegmentFixer.sampleEntry(video.headers)
+        return PreparedPlayback(video: video, audio: audio, rewroteHEV1: rewrote, sourceEntry: sourceEntry)
     }
 
     private static func hasCompleteMoov(_ bytes: [UInt8], initRange: ByteRange) -> Bool {
@@ -102,25 +109,25 @@ enum PlaybackBuilder {
 
     static func ripperAssets(_ prepared: PreparedPlayback, session: RipperSession) -> PlaybackAssets {
         let playlists = playlists(prepared, videoURI: "v.mp4", audioURI: "a.mp4", videoPlaylist: "v.m3u8", audioPlaylist: "a.m3u8",
-                                  rewriteHEV1: prepared.rewroteHEV1)
+                                  sampleEntry: prepared.rewroteHEV1 ? "hvc1" : prepared.sourceEntry)
         func resource(_ kind: TrackKind, _ track: PreparedTrack) -> MediaResource {
             MediaResource(totalSize: track.totalSize, prefix: track.headers) { range in session.read(kind, range) }
         }
         return PlaybackAssets(playlists: playlists, media: ["v.mp4": resource(.video, prepared.video), "a.mp4": resource(.audio, prepared.audio)])
     }
 
-    /// AVPlayer reads Bilibili's original bytes in direct mode, so the codec string stays as given.
+    /// AVPlayer reads Bilibili's original bytes in direct mode, so the codec declared is the one in them.
     static func directPlaylists(_ prepared: PreparedPlayback, token: String) -> [String: String] {
         playlists(prepared, videoURI: prepared.video.mediaURL, audioURI: prepared.audio.mediaURL,
                   videoPlaylist: DirectPlaylistLoader.url(token: token, name: "v.m3u8").absoluteString,
-                  audioPlaylist: DirectPlaylistLoader.url(token: token, name: "a.m3u8").absoluteString, rewriteHEV1: false)
+                  audioPlaylist: DirectPlaylistLoader.url(token: token, name: "a.m3u8").absoluteString, sampleEntry: prepared.sourceEntry)
     }
 
     private static func playlists(_ prepared: PreparedPlayback, videoURI: String, audioURI: String, videoPlaylist: String,
-                                  audioPlaylist: String, rewriteHEV1: Bool) -> [String: String] {
+                                  audioPlaylist: String, sampleEntry: String?) -> [String: String] {
         let video = prepared.video.stream
         let audio = prepared.audio.stream
-        let variant = HLSVariant(codec: CodecMapper.video(codecs: video.codecs, qualityID: video.id, rewriteHEV1: rewriteHEV1),
+        let variant = HLSVariant(codec: CodecMapper.video(codecs: video.codecs, qualityID: video.id, sampleEntry: sampleEntry),
                                  audioCodecs: audio.codecs.isEmpty ? "mp4a.40.2" : audio.codecs,
                                  averageBandwidth: video.bandwidth + audio.bandwidth,
                                  width: video.width, height: video.height, frameRate: CodecMapper.frameRate(video.frameRate))

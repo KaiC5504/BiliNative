@@ -7,6 +7,12 @@ public final class Resolver: @unchecked Sendable {
         public let node: String
         public let state: String
         public let bps: Double
+
+        /// A node has one status per address it serves (one can be refused while another works); this is the best.
+        public static func best(of node: String, in states: [NodeStatus]) -> NodeStatus? {
+            let rank = ["healthy": 0, "untested": 1, "blocked": 2, "banned": 3]
+            return states.filter { $0.node == node }.min { (rank[$0.state] ?? 9, -$0.bps) < (rank[$1.state] ?? 9, -$1.bps) }
+        }
     }
 
     struct Health {

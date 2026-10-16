@@ -28,6 +28,12 @@ public enum InitSegmentFixer {
         return rewrote ? .rewritten(output) : .unchanged
     }
 
+    /// The type of the first sample entry in the first moov, or nil when there is none.
+    public static func sampleEntry(_ bytes: [UInt8]) -> String? {
+        guard let moov = BoxReader.boxes(in: bytes, from: 0, to: bytes.count).first(where: { $0.type == "moov" }) else { return nil }
+        return sampleEntries(bytes, moov).entries.first?.type
+    }
+
     private static func startsWithFtyp(_ bytes: [UInt8]) -> Bool {
         bytes.count >= 8 && BoxReader.type(bytes, 4) == "ftyp"
     }

@@ -19,6 +19,13 @@ final class InitSegmentFixerTests: XCTestCase {
         }
     }
 
+    func testReadsTheSampleEntryAsServed() {
+        XCTAssertEqual(InitSegmentFixer.sampleEntry(MP4Builder.initSegment(entryType: "hvc1", nalTypes: [32, 33, 34])), "hvc1")
+        XCTAssertEqual(InitSegmentFixer.sampleEntry(MP4Builder.initSegment(entryType: "avc1", nalTypes: []) + MP4Builder.box("sidx", [1])), "avc1")
+        XCTAssertEqual(InitSegmentFixer.sampleEntry(RealHEV1InitSegment.bytes), "hev1")
+        XCTAssertNil(InitSegmentFixer.sampleEntry([0, 1, 2]))
+    }
+
     func testLeavesOtherEntriesAlone() {
         XCTAssertEqual(InitSegmentFixer.fixHEV1(MP4Builder.initSegment(entryType: "hvc1", nalTypes: [32, 33, 34])), .unchanged)
         XCTAssertEqual(InitSegmentFixer.fixHEV1(MP4Builder.initSegment(entryType: "avc1", nalTypes: [])), .unchanged)
