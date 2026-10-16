@@ -45,9 +45,9 @@ final class PageLifecycleTests: XCTestCase {
         let below = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         let top = makePage(VideoRoute(bvid: F.bvidC, startSeconds: 0))
 
-        navigator.show(below.model)
+        try await navigate { navigator.show(below.model) }
         let belowFake = try await playing(below)
-        navigator.show(top.model)
+        try await navigate { navigator.show(top.model) }
         let topFake = try await playing(top)
         try await waitUntil { below.model.covered }
         XCTAssertFalse(belowFake.isPlaying)
@@ -57,14 +57,14 @@ final class PageLifecycleTests: XCTestCase {
         XCTAssertTrue(below.model.controller === belowFake)
         XCTAssertTrue(OrientationController.shared.owner === top.model, "the covered page's late end took the top page's orientation")
 
-        navigator.path.removeLast()
+        try await navigate { navigator.path.removeLast() }
         try await waitUntil { top.model.closed && belowFake.isPlaying }
         XCTAssertTrue(topFake.stopped)
         XCTAssertNil(top.model.controller)
         XCTAssertEqual(belowFake.starts.count, 1, "going back does not reload")
         XCTAssertTrue(OrientationController.shared.owner === below.model)
 
-        navigator.path = []
+        try await navigate { navigator.path = [] }
         try await waitUntil { below.model.closed }
         XCTAssertTrue(belowFake.stopped)
         XCTAssertNil(OrientationController.shared.owner)
@@ -74,13 +74,13 @@ final class PageLifecycleTests: XCTestCase {
         try await showStack()
         let below = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         let top = makePage(VideoRoute(bvid: F.bvidC, startSeconds: 0))
-        navigator.show(below.model)
+        try await navigate { navigator.show(below.model) }
         let belowFake = try await playing(below)
-        navigator.show(top.model)
+        try await navigate { navigator.show(top.model) }
         let topFake = try await playing(top)
         try await waitUntil { below.model.covered }
 
-        navigator.path = []
+        try await navigate { navigator.path = [] }
         try await waitUntil { below.model.closed && top.model.closed }
         XCTAssertTrue(belowFake.stopped)
         XCTAssertTrue(topFake.stopped)
@@ -89,7 +89,7 @@ final class PageLifecycleTests: XCTestCase {
     func testPartSwitchKeepsTheSamePlayer() async throws {
         try await showStack()
         let page = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
-        navigator.show(page.model)
+        try await navigate { navigator.show(page.model) }
         let first = try await playing(page)
         let host = try XCTUnwrap(page.model.host)
         XCTAssertTrue(first.player === page.model.player)
@@ -108,12 +108,12 @@ final class PageLifecycleTests: XCTestCase {
     func testPageLeftDuringPiPIsKeptAndRestoredWithItsHostView() async throws {
         try await showStack()
         let page = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
-        navigator.show(page.model)
+        try await navigate { navigator.show(page.model) }
         let fake = try await playing(page)
         let host = try XCTUnwrap(page.model.host)
         page.model.pipChanged(true)
 
-        navigator.path = []
+        try await navigate { navigator.path = [] }
         try await waitUntil { PiPKeeper.shared.kept === page.model && host.window == nil }
         XCTAssertFalse(fake.stopped)
         XCTAssertTrue(fake.isPlaying, "the small window goes on playing after the page closed")
@@ -140,14 +140,14 @@ final class PageLifecycleTests: XCTestCase {
         try await showStack()
         let below = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         let top = makePage(VideoRoute(bvid: F.bvidC, startSeconds: 0))
-        navigator.show(below.model)
+        try await navigate { navigator.show(below.model) }
         let belowFake = try await playing(below)
-        navigator.show(top.model)
+        try await navigate { navigator.show(top.model) }
         let topFake = try await playing(top)
         try await waitUntil { below.model.covered }
         top.model.pipChanged(true)
 
-        navigator.path.removeLast()
+        try await navigate { navigator.path.removeLast() }
         try await waitUntil { PiPKeeper.shared.kept === top.model && !below.model.covered }
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertFalse(belowFake.isPlaying, "two videos play at once")
@@ -160,14 +160,14 @@ final class PageLifecycleTests: XCTestCase {
         try await showStack()
         let below = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
         let top = makePage(VideoRoute(bvid: F.bvidC, startSeconds: 0))
-        navigator.show(below.model)
+        try await navigate { navigator.show(below.model) }
         let belowFake = try await playing(below)
-        navigator.show(top.model)
+        try await navigate { navigator.show(top.model) }
         let topFake = try await playing(top)
         let host = try XCTUnwrap(top.model.host)
         try await waitUntil { below.model.covered }
         top.model.pipChanged(true)
-        navigator.path.removeLast()
+        try await navigate { navigator.path.removeLast() }
         try await waitUntil { PiPKeeper.shared.kept === top.model && host.window == nil && !below.model.covered }
 
         var restored: Bool?
@@ -183,7 +183,7 @@ final class PageLifecycleTests: XCTestCase {
 
         // The window finishes closing once it is back in the page.
         top.model.pipChanged(false)
-        navigator.path.removeLast()
+        try await navigate { navigator.path.removeLast() }
         try await waitUntil { top.model.closed }
         XCTAssertTrue(top.model.closed, "kept \(PiPKeeper.shared.kept === top.model), covered \(top.model.covered), "
                       + "PiP \(top.model.pipActive), lifecycle: "
@@ -196,10 +196,10 @@ final class PageLifecycleTests: XCTestCase {
     func testClosingTheSmallWindowOfAKeptPageStopsIt() async throws {
         try await showStack()
         let page = makePage(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 0))
-        navigator.show(page.model)
+        try await navigate { navigator.show(page.model) }
         let fake = try await playing(page)
         page.model.pipChanged(true)
-        navigator.path = []
+        try await navigate { navigator.path = [] }
         try await waitUntil { PiPKeeper.shared.kept === page.model }
 
         page.model.pipChanged(false)
@@ -268,6 +268,28 @@ final class PageLifecycleTests: XCTestCase {
     private func playing(_ page: Page) async throws -> FakePlayback {
         try await waitUntil { page.fakes.all.first?.isPlaying == true }
         return try XCTUnwrap(page.fakes.all.first)
+    }
+
+    /// Changes the path once UIKit's stack matches it and no transition runs. SwiftUI drops a path change made
+    /// while a push or pop still animates, and the page states this test waits on can settle before the
+    /// animation ends (a page covered at once, a heavy page still sliding in).
+    private func navigate(_ change: () -> Void, file: StaticString = #filePath, line: UInt = #line) async throws {
+        try await waitUntil(8, { self.stackMatchesPath }, file: file, line: line)
+        change()
+    }
+
+    private var stackMatchesPath: Bool {
+        guard let navigation = Self.navigationController(in: window?.rootViewController) else { return false }
+        return navigation.transitionCoordinator == nil && navigation.viewControllers.count == navigator.path.count + 1
+    }
+
+    private static func navigationController(in controller: UIViewController?) -> UINavigationController? {
+        guard let controller else { return nil }
+        if let navigation = controller as? UINavigationController { return navigation }
+        for child in controller.children {
+            if let found = navigationController(in: child) { return found }
+        }
+        return nil
     }
 
     private func showStack() async throws {
