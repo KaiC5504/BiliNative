@@ -203,7 +203,7 @@ final class DanmakuControllerTests: XCTestCase {
 }
 
 /// Answers seg.so through `answer(index, attempt)`, counting attempts from 1; everything else from the fixtures.
-private final class SegmentHTTP: FixtureHTTP {
+private final class SegmentHTTP: FixtureHTTP, @unchecked Sendable {
     private let lock = NSLock()
     private var attempts = 0
     private let answerSegment: (Int, Int) -> (Int, Data)

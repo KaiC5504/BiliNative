@@ -60,7 +60,7 @@ final class DanmakuView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// Live danmaku and where they are (tests).
-    var visibleFrames: [(kind: LaneLayout.Kind, frame: CGRect)] { items.map { ($0.kind, $0.layer.frame) } }
+    var visibleFrames: [(kind: LaneLayout.Kind, frame: CGRect)] { items.map { (kind: $0.kind, frame: $0.layer.frame) } }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
