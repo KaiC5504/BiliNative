@@ -148,6 +148,12 @@ final class ActionsModelTests: XCTestCase {
         XCTAssertTrue(rig.model.liked)
     }
 
+    func testShareLinkNamesThePartAfterTheFirst() {
+        XCTAssertEqual(ShareLinks.video("BV1Dm4y1A7aa").absoluteString, "https://www.bilibili.com/video/BV1Dm4y1A7aa")
+        XCTAssertEqual(ShareLinks.video("BV1Dm4y1A7aa", part: 1).absoluteString, "https://www.bilibili.com/video/BV1Dm4y1A7aa")
+        XCTAssertEqual(ShareLinks.video("BV1Dm4y1A7aa", part: 2).absoluteString, "https://www.bilibili.com/video/BV1Dm4y1A7aa?p=2")
+    }
+
     // MARK: helpers
 
     private final class Recorder {

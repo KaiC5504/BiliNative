@@ -181,6 +181,8 @@ jobs:
           shoot sheet-collection 13 -DemoData YES -DemoScreen sheet-collection
           shoot page-collapsed 13 -DemoData YES -DemoScreen page-collapsed
           shoot danmaku-send-inline 12 -DemoData YES -DemoScreen danmaku-send-inline
+          shoot page-actions-active 11 -DemoData YES -DemoScreen page-actions-active
+          shoot player-landscape-actions 12 -DemoData YES -DemoScreen player-landscape-actions
 
       - name: Release build (no tests)
         if: env.FULL_RUN == 'true'

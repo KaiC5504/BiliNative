@@ -9,7 +9,8 @@ struct LandscapeChrome: View {
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
     let insets: EdgeInsets
-    let showsActions: Bool
+    /// The page's actions; nil until the video's details arrive.
+    let actions: ActionsModel?
     let danmakuEnabled: Bool
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
@@ -88,10 +89,14 @@ struct LandscapeChrome: View {
                         RemoteImage(owner.face)
                             .frame(width: 22, height: 22)
                             .clipShape(Circle())
-                        if showsActions {
-                            Text("+ 关注")
-                                .font(Theme.Chrome.labelFont)
-                                .foregroundStyle(.white)
+                        if let actions {
+                            Button { actions.tapFollow() } label: {
+                                Text(actions.following ? "已关注" : "+ 关注")
+                                    .font(Theme.Chrome.labelFont)
+                                    .foregroundStyle(actions.following ? Theme.Chrome.secondary : .white)
+                                    .frame(height: 24)
+                                    .contentShape(Rectangle())
+                            }
                         } else {
                             Text(owner.name)
                                 .font(Theme.Chrome.labelFont)
@@ -108,12 +113,24 @@ struct LandscapeChrome: View {
             .padding(.leading, insets.leading + 5)
             Spacer(minLength: 24)
             HStack(spacing: 8) {
-                if showsActions, let stat = model.detail?.stat {
-                    ActionIcon(systemName: "hand.thumbsup", count: stat.like)
+                if let actions {
+                    Button { Task { await actions.toggleLike() } } label: {
+                        ActionIcon(systemName: "hand.thumbsup", active: actions.liked, count: actions.likeCount)
+                    }
+                    .accessibilityLabel("点赞")
                     ActionIcon(systemName: "text.bubble", count: nil)
-                    ActionIcon(systemName: "star", count: stat.favorite)
-                    ActionIcon(coin: true, count: nil)
-                    ActionIcon(systemName: "arrowshape.turn.up.right", count: nil)
+                    Button { actions.ask(.favourites) } label: {
+                        ActionIcon(systemName: "star", active: actions.favorited, count: actions.favCount)
+                    }
+                    .accessibilityLabel("收藏")
+                    Button { actions.ask(.coin) } label: {
+                        ActionIcon(coin: true, active: actions.coins > 0, count: nil)
+                    }
+                    .accessibilityLabel("投币")
+                    Button { actions.ask(.share) } label: {
+                        ActionIcon(systemName: "arrowshape.turn.up.right", count: nil)
+                    }
+                    .accessibilityLabel("分享")
                 }
                 MoreButton { panel = .more }
             }
@@ -245,20 +262,22 @@ struct OnlineLabel: View {
     }
 }
 
-/// A top-bar action with its count as a superscript (04), behind `showsActions`.
+/// A top-bar action with its count as a superscript (04); filled and pink when on.
 struct ActionIcon: View {
     var systemName: String = ""
     var coin = false
+    var active = false
     let count: Int64?
 
     var body: some View {
         Group {
             if coin {
-                CoinGlyph(filled: false)
+                CoinGlyph(filled: active, tint: active ? Theme.pink : .white)
                     .frame(width: 21, height: 21)
             } else {
-                Image(systemName: systemName)
+                Image(systemName: active ? systemName + ".fill" : systemName)
                     .font(.system(size: 20))
+                    .foregroundStyle(active ? Theme.pink : .white)
             }
         }
         .foregroundStyle(.white)
@@ -275,24 +294,27 @@ struct ActionIcon: View {
     }
 }
 
-/// 投币's coin: a circle with 币 in it, outlined in the top bar and filled in the 竖屏 column.
+/// 投币's coin: a circle with 币 in it, outlined in the top bar and filled in the 竖屏 column and on the page.
 struct CoinGlyph: View {
     let filled: Bool
+    var tint: Color = .white
+    /// The 币 on a filled coin.
+    var ink: Color = .black
 
     var body: some View {
         GeometryReader { geometry in
             let side = min(geometry.size.width, geometry.size.height)
             ZStack {
                 if filled {
-                    Circle().fill(.white)
+                    Circle().fill(tint)
                     Text("币")
                         .font(.system(size: side * 0.6, weight: .bold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(ink)
                 } else {
-                    Circle().stroke(.white, lineWidth: side * 0.09)
+                    Circle().stroke(tint, lineWidth: side * 0.09)
                     Text("币")
                         .font(.system(size: side * 0.55, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(tint)
                 }
             }
             .frame(width: side, height: side)

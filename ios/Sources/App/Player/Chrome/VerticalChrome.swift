@@ -8,7 +8,8 @@ struct VerticalChrome: View {
     let chrome: ChromeState
     @Binding var panel: PlayerPanel?
     let insets: EdgeInsets
-    let showsActions: Bool
+    /// The page's actions; nil until the video's details arrive.
+    let actions: ActionsModel?
     let danmakuEnabled: Bool
     let onToggleDanmaku: () -> Void
     let onSendDanmaku: () -> Void
@@ -27,10 +28,10 @@ struct VerticalChrome: View {
                     HStack(alignment: .bottom, spacing: 0) {
                         info
                             .padding(.leading, 12)
-                            .padding(.trailing, showsActions ? 12 : 82)
+                            .padding(.trailing, actions != nil ? 12 : 82)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        if showsActions, let stat = model.detail?.stat {
-                            actionColumn(stat)
+                        if let actions, let stat = model.detail?.stat {
+                            actionColumn(actions, replies: stat.reply)
                                 .padding(.trailing, 6)
                         }
                     }
@@ -76,13 +77,16 @@ struct VerticalChrome: View {
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(Theme.pink)
                         .lineLimit(1)
-                    if showsActions {
-                        Text("+ 关注")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .frame(height: 24)
-                            .background(Theme.pink, in: Capsule())
+                    if let actions {
+                        Button { actions.tapFollow() } label: {
+                            Text(actions.following ? "已关注" : "+ 关注")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(actions.following ? Theme.Chrome.secondary : .white)
+                                .padding(.horizontal, 10)
+                                .frame(height: 24)
+                                .background(actions.following ? Theme.Chrome.darkField : Theme.pink, in: Capsule())
+                                .contentShape(Capsule())
+                        }
                     }
                 }
                 titleLine(detail)
@@ -106,29 +110,43 @@ struct VerticalChrome: View {
         return Text("\(title)\(views)\(chevron)")
     }
 
-    private func actionColumn(_ stat: VideoStat) -> some View {
+    private func actionColumn(_ actions: ActionsModel, replies: Int64) -> some View {
         VStack(spacing: 15) {
-            columnItem(Image(systemName: "hand.thumbsup.fill"), stat.like)
-            columnItem(Image(systemName: "ellipsis.bubble.fill"), stat.reply)
-            VStack(spacing: 6) {
-                CoinGlyph(filled: true)
-                    .frame(width: 30, height: 30)
-                countText(stat.coin)
+            Button { Task { await actions.toggleLike() } } label: {
+                columnItem(Image(systemName: "hand.thumbsup.fill"), actions.likeCount, active: actions.liked)
             }
-            columnItem(Image(systemName: "star.fill"), stat.favorite)
-            columnItem(Image(systemName: "arrowshape.turn.up.right.fill"), stat.share)
+            .accessibilityLabel("点赞")
+            columnItem(Image(systemName: "ellipsis.bubble.fill"), replies)
+            Button { actions.ask(.coin) } label: {
+                VStack(spacing: 6) {
+                    CoinGlyph(filled: true, tint: actions.coins > 0 ? Theme.pink : .white)
+                        .frame(width: 30, height: 30)
+                    countText(actions.coinCount)
+                }
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("投币")
+            Button { actions.ask(.favourites) } label: {
+                columnItem(Image(systemName: "star.fill"), actions.favCount, active: actions.favorited)
+            }
+            .accessibilityLabel("收藏")
+            Button { actions.ask(.share) } label: {
+                columnItem(Image(systemName: "arrowshape.turn.up.right.fill"), actions.shareCount)
+            }
+            .accessibilityLabel("分享")
         }
         .frame(width: 44)
     }
 
-    private func columnItem(_ icon: Image, _ count: Int64) -> some View {
+    private func columnItem(_ icon: Image, _ count: Int64, active: Bool = false) -> some View {
         VStack(spacing: 6) {
             icon
                 .font(.system(size: 28))
-                .foregroundStyle(.white)
+                .foregroundStyle(active ? Theme.pink : .white)
                 .frame(height: 30)
             countText(count)
         }
+        .contentShape(Rectangle())
     }
 
     private func countText(_ count: Int64) -> some View {

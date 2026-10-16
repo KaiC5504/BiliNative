@@ -2,15 +2,10 @@ import SwiftUI
 import AppLogic
 import BiliAPI
 
-enum ShareLinks {
-    static func video(_ bvid: String) -> URL {
-        URL(string: "https://www.bilibili.com/video/\(bvid)") ?? URL(string: "https://www.bilibili.com")!
-    }
-}
-
 /// The end of a video in the small player (26): 推荐视频 with the first related video, 立即播放, 重播 and 分享.
 struct EndScreenPortrait: View {
     let model: VideoPageModel
+    let actions: ActionsModel?
     @Binding var panel: PlayerPanel?
     let onBack: () -> Void
     let onOpen: (VideoCard) -> Void
@@ -74,8 +69,8 @@ struct EndScreenPortrait: View {
                         Label { Text("重播") } icon: { Image(systemName: "arrow.clockwise") }
                             .labelStyle(EndActionLabelStyle())
                     }
-                    if let bvid = model.detail?.bvid {
-                        ShareLink(item: ShareLinks.video(bvid)) {
+                    if let actions {
+                        Button { actions.ask(.share) } label: {
                             Label { Text("分享") } icon: { Image(systemName: "arrowshape.turn.up.right") }
                                 .labelStyle(EndActionLabelStyle())
                         }
@@ -95,7 +90,7 @@ struct EndScreenPortrait: View {
 struct EndScreenLandscape: View {
     let model: VideoPageModel
     let insets: EdgeInsets
-    let showsActions: Bool
+    let actions: ActionsModel?
     let onBack: () -> Void
     let onOpen: (VideoCard) -> Void
 
@@ -153,12 +148,15 @@ struct EndScreenLandscape: View {
                         .font(.system(size: 17))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                    if showsActions {
-                        Text("+ 关注")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.white)
-                            .frame(width: 88, height: 29)
-                            .background(Theme.pink, in: Capsule())
+                    if let actions {
+                        Button { actions.tapFollow() } label: {
+                            Text(actions.following ? "已关注" : "+ 关注")
+                                .font(.system(size: 16))
+                                .foregroundStyle(actions.following ? Theme.Chrome.secondary : .white)
+                                .frame(width: 88, height: 29)
+                                .background(actions.following ? Theme.Chrome.endButton : Theme.pink, in: Capsule())
+                                .contentShape(Capsule())
+                        }
                     }
                 }
                 .padding(.leading, 14)
@@ -169,24 +167,21 @@ struct EndScreenLandscape: View {
                 .fill(Theme.Chrome.divider)
                 .frame(width: 0.5, height: 60)
                 .padding(.horizontal, 20)
-            if showsActions {
-                endAction("点赞", systemName: "hand.thumbsup") {}
-                endAction("投币", coin: true) {}
-                endAction("收藏", systemName: "star") {}
-            }
-            if let bvid = model.detail?.bvid {
-                ShareLink(item: ShareLinks.video(bvid)) {
-                    EndActionCell(title: "分享", systemName: "arrowshape.turn.up.right")
-                }
+            if let actions {
+                endAction("点赞", systemName: "hand.thumbsup", active: actions.liked) { Task { await actions.toggleLike() } }
+                endAction("投币", coin: true, active: actions.coins > 0) { actions.ask(.coin) }
+                endAction("收藏", systemName: "star", active: actions.favorited) { actions.ask(.favourites) }
+                endAction("分享", systemName: "arrowshape.turn.up.right") { actions.ask(.share) }
             }
         }
         .padding(.leading, insets.leading + 13)
         .padding(.trailing, insets.trailing)
     }
 
-    private func endAction(_ title: String, systemName: String = "", coin: Bool = false, action: @escaping () -> Void) -> some View {
+    private func endAction(_ title: String, systemName: String = "", coin: Bool = false, active: Bool = false,
+                           action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            EndActionCell(title: title, systemName: systemName, coin: coin)
+            EndActionCell(title: title, systemName: systemName, coin: coin, active: active)
         }
     }
 }
@@ -195,14 +190,17 @@ private struct EndActionCell: View {
     let title: String
     var systemName = ""
     var coin = false
+    var active = false
 
     var body: some View {
         VStack(spacing: 12) {
             Group {
                 if coin {
-                    CoinGlyph(filled: false).frame(width: 21, height: 21)
+                    CoinGlyph(filled: active, tint: active ? Theme.pink : .white).frame(width: 21, height: 21)
                 } else {
-                    Image(systemName: systemName).font(.system(size: 21))
+                    Image(systemName: active ? systemName + ".fill" : systemName)
+                        .font(.system(size: 21))
+                        .foregroundStyle(active ? Theme.pink : .white)
                 }
             }
             .frame(height: 22)

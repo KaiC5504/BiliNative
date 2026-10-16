@@ -1,7 +1,7 @@
 #if DEBUG
 import Foundation
 
-/// Invented answers for the actions: every write succeeds, 三连 spends two coins, and `page-actions-active` opens
+/// Invented answers for the actions: every write succeeds, 三连 spends two coins, and the actions demo screens open
 /// a video this account has already liked, coined and favourited.
 enum ActionsFixtures {
     static let activeScreen = "page-actions-active"
@@ -11,7 +11,7 @@ enum ActionsFixtures {
         switch url.path {
         case "/x/web-interface/archive/relation":
             // Listed before the 简介's fixtures, which answer the relation of every other demo screen.
-            guard UserDefaults.standard.string(forKey: "DemoScreen") == activeScreen else { return nil }
+            guard let screen = UserDefaults.standard.string(forKey: "DemoScreen"), ActionsDemo.screens.contains(screen) else { return nil }
             return DemoFixtures.ok(#"{"attention":false,"favorite":true,"season_fav":false,"like":true,"dislike":false,"coin":1}"#)
         case "/x/web-interface/archive/like", "/x/relation/modify":
             return DemoFixtures.ok("null")

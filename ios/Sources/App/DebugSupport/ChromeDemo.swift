@@ -10,7 +10,7 @@ enum ChromeDemo {
 
     /// The demo screens that open a video page and are not listed in HomeView.
     static func route(for name: String?) -> VideoRoute? {
-        chromeRoute(for: name) ?? IntroDemo.route(for: name) ?? DanmakuSendDemo.route(for: name)
+        chromeRoute(for: name) ?? IntroDemo.route(for: name) ?? DanmakuSendDemo.route(for: name) ?? ActionsDemo.route(for: name)
     }
 
     private static func chromeRoute(for name: String?) -> VideoRoute? {

@@ -52,6 +52,10 @@ final class ActionsModel {
 
     func apply(_ relation: VideoRelation) {
         guard !touched else { return }
+        set(relation)
+    }
+
+    private func set(_ relation: VideoRelation) {
         liked = relation.like
         disliked = relation.dislike
         favorited = relation.favorite
@@ -64,11 +68,11 @@ final class ActionsModel {
         following = uploader.following
     }
 
-    /// After a login the page asks again, so the buttons show this account's state.
+    /// After a login the page asks again, so the buttons show this account's state, whatever was tapped before.
     func refreshRelation() async {
         do {
             let relation = try await client.relation(aid: detail.aid, bvid: detail.bvid)
-            apply(relation)
+            set(relation)
         } catch {
             Logger.shared.warn(.api, "relation failed", ["error": .init(String(describing: error))])
         }
