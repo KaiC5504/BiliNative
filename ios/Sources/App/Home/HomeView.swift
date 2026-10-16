@@ -97,6 +97,14 @@ struct HomeView: View {
                 switch UserDefaults.standard.string(forKey: "DemoScreen") {
                 case "settings": showSettings = true
                 case "page": route = VideoRoute(bvid: VideoPageFixtures.bvidA)
+                case "danmaku-portrait":
+                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+                case "danmaku-landscape":
+                    route = VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20)
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        OrientationController.shared.enterLandscape()
+                    }
                 case let name:
                     if let demo = ChromeDemo.route(for: name) { route = demo }
                 }

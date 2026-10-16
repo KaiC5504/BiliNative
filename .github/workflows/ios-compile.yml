@@ -129,6 +129,8 @@ jobs:
           shoot 07-hud-speed 9 -DemoData YES -DemoScreen hud-speed
           shoot 08-end-portrait 12 -DemoData YES -DemoScreen end-portrait
           shoot 09-end-landscape 12 -DemoData YES -DemoScreen end-landscape
+          shoot danmaku-portrait 14 -DemoData YES -DemoScreen danmaku-portrait -DemoPauseAt 26
+          shoot danmaku-landscape 14 -DemoData YES -DemoScreen danmaku-landscape -DemoPauseAt 26
 
       - name: Release build (no tests)
         run: |

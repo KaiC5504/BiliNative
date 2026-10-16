@@ -10,14 +10,14 @@ struct VideoPageView: View {
     @State private var model: VideoPageModel?
     @State private var chrome = ChromeState()
     @State private var panel: PlayerPanel?
-    /// Stands in until Task 12's danmaku settings own the switch.
-    @State private var danmakuEnabled = true
+    @State private var danmakuSlot = DanmakuSlot()
 
     var body: some View {
         ZStack {
             if let model {
                 PageLayout(model: model, chrome: chrome, panel: $panel, danmaku: danmakuView(for: model),
-                           danmakuEnabled: danmakuEnabled, onToggleDanmaku: { danmakuEnabled.toggle() }, onSendDanmaku: {})
+                           danmakuEnabled: env.settings.danmaku.enabled,
+                           onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: {})
             } else {
                 Color.black.ignoresSafeArea()
             }
@@ -47,9 +47,8 @@ struct VideoPageView: View {
         }
     }
 
-    /// The danmaku renderer goes into the player here (Task 12); nil draws none.
     private func danmakuView(for model: VideoPageModel) -> UIView? {
-        nil
+        danmakuSlot.view(for: model, settings: env.settings)
     }
 }
 
