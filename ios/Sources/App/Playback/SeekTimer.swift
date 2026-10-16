@@ -54,10 +54,10 @@ struct SeekTimer {
 }
 
 /// AVPlayer reports a stall for the wait after a drag too, sometimes just before the jump itself is reported.
-/// A stall counts only when no jump came within a second before it or a quarter second after.
+/// A stall counts only when no jump came within a second before it or 0.75 s after.
 struct StallFilter {
     static let before: TimeInterval = 1.0
-    static let after: TimeInterval = 0.25
+    static let after: TimeInterval = 0.75
     private var lastJump: Date?
 
     mutating func jumped(at now: Date) {
