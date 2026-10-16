@@ -261,21 +261,21 @@ public struct VideoDetail: Decodable, Sendable, Equatable {
         duration = try container.first(Int.self, "duration") ?? 0
         let desc = try container.first(String.self, "desc") ?? ""
         self.desc = desc
-        let parts = try container.first([Lossy<DescEntry>].self, "desc_v2")?.compactMap { $0.value?.part } ?? []
+        let parts = (try? container.first([Lossy<DescEntry>].self, "desc_v2"))?.compactMap { $0.value?.part } ?? []
         descParts = parts.isEmpty && !desc.isEmpty ? [DescPart(text: desc)] : parts
         copyright = try container.first(Int.self, "copyright") ?? 0
         owner = (try? container.first(VideoOwner.self, "owner")) ?? VideoOwner(mid: 0, name: "", face: "")
         stat = (try? container.first(VideoStat.self, "stat")) ?? VideoStat(view: 0, danmaku: 0, reply: 0, favorite: 0, coin: 0, share: 0, like: 0)
         pages = try container.first([Lossy<VideoPage>].self, "pages")?.compactMap(\.value) ?? []
         season = try? container.first(UgcSeason.self, "ugc_season")
-        staff = try container.first([Lossy<StaffMember>].self, "staff")?.compactMap(\.value) ?? []
+        staff = (try? container.first([Lossy<StaffMember>].self, "staff"))?.compactMap(\.value) ?? []
         let dimension = container.nested("dimension")
         let rawWidth = try dimension?.first(Int.self, "width") ?? 0
         let rawHeight = try dimension?.first(Int.self, "height") ?? 0
         let rotated = try dimension?.first(Int.self, "rotate") == 1
         width = rotated ? rawHeight : rawWidth
         height = rotated ? rawWidth : rawHeight
-        let honors = try container.nested("honor_reply")?.first([Lossy<HonorEntry>].self, "honor")?.compactMap(\.value) ?? []
+        let honors = (try? container.nested("honor_reply")?.first([Lossy<HonorEntry>].self, "honor"))?.compactMap(\.value) ?? []
         honor = honors.first { !$0.desc.isEmpty }?.desc
         let redirect = try container.first(String.self, "redirect_url")
         redirectURL = (redirect ?? "").isEmpty ? nil : redirect
