@@ -114,7 +114,7 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   `bash tools/mac-test.sh` syncs this checkout, uncommitted changes included, builds and runs the
   AppTests on an iPhone 17 Pro Max simulator (KaiC's phone) in a few minutes without a push.
   `--tests A,B`, `--build-only`, `--launch` (opens the app for KaiC to watch over RustDesk), `--sim NAME`.
-  One run at a time across sessions. Its Xcode can lag CI's, so CI stays the gate before TestFlight.
+  One run at a time across sessions. It is the TestFlight gate while it is rented (see "Building and shipping").
   The Mac is someone else's machine: no `BILI_APP_KEYS`, cookies or Apple ID on it.
 - On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (M1) and `docs/m2-phone-checklist.md` (M2).
 
@@ -155,13 +155,16 @@ Identity: display name `BiliFast`, app target and scheme `BiliNative`, bundle id
 (extensions: none). Repo `KaiC5504/BiliNative` (public). App Store Connect name:
 `BiliFast`, Apple ID: `6823476667` (`ASC_APP_ID` in `testflight.yml`).
 
-1. Work on `main` (this repo has no `dev` branch). Push. Wait for the compile check
-   (`gh run list --limit 1`, then `gh run watch <id> --exit-status`), and look at the
-   `simulator-screenshots` artifact for every screen you touched.
+1. Work on `main` (this repo has no `dev` branch). While the rented Mac is up (`ssh macrent true`), the gate is
+   `bash tools/mac-test.sh` (every AppTest, about 2 minutes) plus `bash tools/check-app.sh --release`: when both
+   pass, push and start the signed build at once, with the compile check running alongside as a backstop. Without
+   the Mac, wait for the compile check (`gh run list --limit 1`, then `gh run watch <id> --exit-status`) and look
+   at the `simulator-screenshots` artifact for every screen you touched.
 2. `python scripts/testflight.py start`, then `python scripts/testflight.py watch <id>` in
    the background. Green means Apple has processed the build. After any change to
    `testflight.yml`, run `start --dry-run` first.
 3. Report the TestFlight build number, what changed and test steps for the phone.
 
-The owner has authorised commit, push and Actions runs without asking. Never start a
-signed build before the compile check is green.
+The owner has authorised commit, push and Actions runs without asking. Never start a signed build before the gate
+above is green. KaiC's call on 2026-10-17: speed first. Ship to his phone and let him report rather than wait on
+slow checks (the iOS 27 runner included); fix what he finds in the next build.
