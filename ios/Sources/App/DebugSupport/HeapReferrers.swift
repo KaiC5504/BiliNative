@@ -62,10 +62,12 @@ enum HeapReferrers {
         var count: UInt32 = 0
         guard let list = objc_copyClassList(&count) else { return [:] }
         defer { free(UnsafeMutableRawPointer(list)) }
+        // Read as plain addresses: touching some classes as Swift values sends them messages they forward and trap on.
+        let raw = UnsafeRawPointer(list)
         var names: [UInt: String] = [:]
         for index in 0..<Int(count) {
-            let cls: AnyClass = list[index]
-            names[UInt(bitPattern: unsafeBitCast(cls, to: Int.self))] = String(cString: class_getName(cls))
+            let address = raw.load(fromByteOffset: index * MemoryLayout<UInt>.size, as: UInt.self)
+            names[address] = String(cString: class_getName(unsafeBitCast(address, to: AnyClass.self)))
         }
         return names
     }
