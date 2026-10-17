@@ -41,20 +41,12 @@ struct PlayerSurface: UIViewRepresentable {
         // Level gestures are only on in full screen, which is also where the edges belong to the system.
         view.gestureView.ignoresEdges = allowsLevelGestures
         view.gestureView.onEvent = onGesture
-        if LeakProbe.omits("noset") {
-        } else if LeakProbe.omits("asyncdanmaku") {
-            let danmaku = danmaku
-            DispatchQueue.main.async { [weak view] in view?.setDanmaku(danmaku) }
-        } else {
-            view.setDanmaku(danmaku)
-        }
+        view.setDanmaku(danmaku)
     }
 }
 
-/// SwiftUI's own view around the page's host view. The host outlives its page for picture in picture, so it is
-/// never handed to SwiftUI itself: a page's view tree stayed reachable from a host the page model kept, and no
-/// closed page was ever freed. The host leaves the container, and drops the page's closures and danmaku view,
-/// when SwiftUI tears the container down.
+/// SwiftUI's own view around the page's host view, which outlives the page for picture in picture. The host leaves
+/// it, with the page's gesture handler and danmaku view, when SwiftUI tears the page down.
 final class SurfaceContainer: UIView {
     private(set) var host: PlayerHostView?
 

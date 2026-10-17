@@ -59,6 +59,8 @@ final class VideoPageModel {
             }
         }
     }
+    /// Made on first use by `danmakuView()`.
+    @ObservationIgnored private var danmakuRenderer: DanmakuView?
     /// Picture in picture is playing this page's video.
     @ObservationIgnored private(set) var pipActive = false
     /// The lifecycle of the page view showing this model; an earlier page's late teardown checks it.
@@ -429,7 +431,22 @@ final class VideoPageModel {
         stopPiP()
         if let controller { keptPosition = controller.position }
         stopController()
-        if host?.window == nil, !LeakProbe.omits("keephost") { host = nil }
+        // A UIKit view that has been inside the page keeps the page's whole SwiftUI state alive (bisected with
+        // PageReleaseTests: any view added to the host did it), so a closed page lets go of its views.
+        danmakuRenderer = nil
+        if host?.window == nil { host = nil }
+    }
+
+    /// The danmaku renderer inside the host view; nil once the page has closed, so a late redraw cannot make one again.
+    func danmakuView() -> DanmakuView? {
+        guard !closed else { return nil }
+        if let danmakuRenderer { return danmakuRenderer }
+        let view = DanmakuView(controller: danmaku, settings: settings, player: { [weak self] in
+            // While the next part loads, the page's player still shows the last part's final frame.
+            self?.controller.flatMap { $0.phase == .playing ? $0.player : nil }
+        })
+        danmakuRenderer = view
+        return view
     }
 
     /// The page closed while picture in picture plays its video: playback goes on without a page.

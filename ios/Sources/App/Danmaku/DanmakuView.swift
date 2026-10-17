@@ -73,7 +73,7 @@ final class DanmakuView: UIView {
             link = nil
             clear()
             lastTime = nil
-        } else if link == nil, !LeakProbe.omits("link") {
+        } else if link == nil {
             let link = CADisplayLink(target: LinkTarget(self), selector: #selector(LinkTarget.step(_:)))
             link.add(to: .main, forMode: .common)
             self.link = link
@@ -306,21 +306,5 @@ private final class LinkTarget: NSObject {
             return
         }
         view.step()
-    }
-}
-
-/// Keeps one renderer per page across SwiftUI updates.
-@MainActor
-final class DanmakuSlot {
-    private var made: DanmakuView?
-
-    func view(for model: VideoPageModel, settings: AppSettings) -> DanmakuView {
-        if let made { return made }
-        // While the next part loads, the page's player still shows the last part's final frame.
-        let view = DanmakuView(controller: model.danmaku, settings: settings, player: { [weak model] in
-            model?.controller.flatMap { $0.phase == .playing ? $0.player : nil }
-        })
-        made = view
-        return view
     }
 }

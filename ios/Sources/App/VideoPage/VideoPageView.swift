@@ -16,7 +16,6 @@ struct VideoPageView: View {
     @State private var lifecycle = PageLifecycle()
     @State private var chrome = ChromeState()
     @State private var ownPanel: PlayerPanel?
-    @State private var danmakuSlot = DanmakuSlot()
     @State private var sender: DanmakuSendModel?
     @State private var sendBarOpen = false
     @State private var tabs = PageTabsState()
@@ -53,17 +52,13 @@ struct VideoPageView: View {
     var body: some View {
         ZStack {
             if let model {
-                if !LeakProbe.omits("layout") {
                 PageLayout(model: model, chrome: chrome, panel: panel, tabs: tabs, comments: comments, danmaku: danmakuView(for: model),
                            danmakuEnabled: env.settings.danmaku.enabled, ignoresKeyboard: sendBarOpen || composer != nil,
                            onToggleDanmaku: { env.settings.danmaku.enabled.toggle() }, onSendDanmaku: openSendBar,
                            onNeedLogin: presentLogin, onCompose: compose, onComments: showComments)
                     .environment(actions)
-                }
-                if !LeakProbe.omits("panels") {
                 PanelLayer(panel: panel, model: model, onNeedLogin: presentLogin)
                     .ignoresSafeArea()
-                }
                 actionOverlay
                     .ignoresSafeArea()
                     .zIndex(1)
@@ -84,25 +79,20 @@ struct VideoPageView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: comments?.viewing)
-        .leakProbe("toasts") { $0.toast(Binding(get: { comments?.toast }, set: { comments?.toast = $0 })) }
+        .toast(Binding(get: { comments?.toast }, set: { comments?.toast = $0 }))
         .background { PageProbe(lifecycle: lifecycle) }
         .toolbar(.hidden, for: .navigationBar)
-        .leakProbe("toasts") { $0.toast($signals.actionToast) }
-        .leakProbe("gates") { $0.loginGate($loginRequested) }
-        .leakProbe("alert") {
-            $0.alert("确定不再关注？", isPresented: Binding(get: { prompts.unfollowAsked }, set: { prompts.unfollowAsked = $0 })) {
-                Button("取消", role: .cancel) {}
-                Button("确定") {
-                    guard let actions else { return }
-                    Task { await actions.toggleFollow() }
-                }
+        .toast($signals.actionToast)
+        .loginGate($loginRequested)
+        .alert("确定不再关注？", isPresented: Binding(get: { prompts.unfollowAsked }, set: { prompts.unfollowAsked = $0 })) {
+            Button("取消", role: .cancel) {}
+            Button("确定") {
+                guard let actions else { return }
+                Task { await actions.toggleFollow() }
             }
         }
-        .leakProbe("gates") {
-            $0.tvLoginGate($tvLoginRequested, makeModel: { TVLoginModel(client: env.client, signer: .tv) },
-                           onDone: { if let actions { Task { await actions.toggleDislike(freshToken: true) } } })
-        }
-        .leakProbe("changes", watching)
+        .tvLoginGate($tvLoginRequested, makeModel: { TVLoginModel(client: env.client, signer: .tv) },
+                     onDone: { if let actions { Task { await actions.toggleDislike(freshToken: true) } } })
         .onAppear {
             let page = model ?? env.makeVideoPageModel(route: route)
             model = page
@@ -126,18 +116,6 @@ struct VideoPageView: View {
             composer = nil
             lifecycle.disappeared()
         }
-        .onChange(of: model?.detail?.aid, initial: true) { _, aid in
-            guard let aid, let detail = model?.detail, comments?.aid != aid else { return }
-            composer = nil
-            comments = makeComments(aid: aid, upMid: detail.owner.mid)
-            prompts.comments = comments
-        }
-        .onChange(of: model?.detail?.bvid, initial: true) { makeActions() }
-        .task { await openDemoPanel() }
-    }
-
-    private func watching<V: View>(_ content: V) -> some View {
-        content
         .onChange(of: env.navigator.path) { lifecycle.stackChanged() }
         .onChange(of: sender?.needsLogin) { _, needsLogin in
             if needsLogin == true { presentLogin() }
@@ -149,10 +127,17 @@ struct VideoPageView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { model?.backgrounded() }
         }
+        .onChange(of: model?.detail?.aid, initial: true) { _, aid in
+            guard let aid, let detail = model?.detail, comments?.aid != aid else { return }
+            composer = nil
+            comments = makeComments(aid: aid, upMid: detail.owner.mid)
+            prompts.comments = comments
+        }
         .onChange(of: model?.detail?.isVertical) { _, vertical in
             guard let model else { return }
             OrientationController.shared.setVideoIsVertical(vertical ?? false, owner: model)
         }
+        .onChange(of: model?.detail?.bvid, initial: true) { makeActions() }
         .onChange(of: model?.relation) { _, relation in
             if let relation { actions?.apply(relation) }
         }
@@ -180,6 +165,7 @@ struct VideoPageView: View {
         .onChange(of: panel.wrappedValue == nil) { _, closed in
             chrome.panelOpen = !closed || sendBarOpen
         }
+        .task { await openDemoPanel() }
     }
 
     private func openDemoPanel() async {
@@ -195,8 +181,7 @@ struct VideoPageView: View {
     }
 
     private func danmakuView(for model: VideoPageModel) -> UIView? {
-        if LeakProbe.omits("realdanmaku") { return LeakProbe.plain }
-        return danmakuSlot.view(for: model, settings: env.settings)
+        model.danmakuView()
     }
 
     private func makeComments(aid: Int64, upMid: Int64) -> CommentsModel {
@@ -359,22 +344,6 @@ private final class PageSignals {
     var actionToast: String?
 }
 
-/// Temporary: leaves parts of the page out, to find what keeps a closed page alive.
-@MainActor
-enum LeakProbe {
-    static var omit: Set<String> = []
-
-    static func omits(_ part: String) -> Bool { omit.contains(part) }
-    static let plain = UIView()
-}
-
-extension View {
-    @ViewBuilder
-    func leakProbe<V: View>(_ part: String, _ apply: (Self) -> V) -> some View {
-        if LeakProbe.omits(part) { self } else { apply(self) }
-    }
-}
-
 private struct PageLayout: View {
     let model: VideoPageModel
     let chrome: ChromeState
@@ -398,7 +367,7 @@ private struct PageLayout: View {
         GeometryReader { geometry in
             let collapsing = CollapsingPlayer(fullHeight: inline ? geometry.size.width * 9 / 16 : geometry.size.height)
             ZStack(alignment: .top) {
-                if inline, !LeakProbe.omits("tabs") {
+                if inline {
                     // Laid out as if the player were already the bar; each tab leaves the rest of its height free.
                     PageTabs(state: tabs, reserve: collapsing.reserve) {
                         IntroTab(model: model, state: tabs, following: actions?.following, onFollow: { actions?.tapFollow() },
@@ -417,13 +386,11 @@ private struct PageLayout: View {
                     .padding(.top, CollapsingPlayer.barHeight + Theme.Page.tabRowHeight)
                     .ignoresSafeArea(.container, edges: .bottom)
                 }
-                if !LeakProbe.omits("player") {
                 PlayerArea(model: model, chrome: chrome, panel: $panel, tabs: tabs, comments: comments, danmaku: danmaku,
                            width: geometry.size.width, collapsing: collapsing, presentation: presentation,
                            insets: ScreenInsets.current(merging: geometry.safeAreaInsets), danmakuEnabled: danmakuEnabled,
                            onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onCompose: onCompose,
                            onComments: onComments)
-                }
             }
         }
         .ignoresSafeArea(inline ? .keyboard : .all, edges: inline && !ignoresKeyboard ? [] : .all)
@@ -499,7 +466,7 @@ private struct PlayerArea: View {
                                                onMore: { panel = .more })
                         }
                     }
-                if inline, !LeakProbe.omits("tabrow") {
+                if inline {
                     PageTabRow(state: tabs, replyCount: model.detail?.stat.reply, danmakuEnabled: danmakuEnabled,
                                danmakuClosed: model.danmaku.closed, onToggleDanmaku: onToggleDanmaku,
                                onSendDanmaku: onSendDanmaku)
@@ -580,20 +547,18 @@ private struct PlayerBox: View {
         ZStack {
             Color.black
             // The page's one player and host view, so picture in picture stays on one layer across parts.
-            if !LeakProbe.omits("surface") {
-            PlayerSurface(player: LeakProbe.omits("avplayer") ? nil : model.player, fit: env.settings.fit, mirrored: model.mirrored,
+            PlayerSurface(player: model.player, fit: env.settings.fit, mirrored: model.mirrored,
                           allowsLevelGestures: !inline,
                           // Weak: the model holds the host view, which holds this closure.
-                          onGesture: LeakProbe.omits("gesture") ? { _ in } : { [weak model, chrome, size] event in
+                          onGesture: { [weak model, chrome, size] event in
                               if let model { chrome.handle(event, page: model, size: size) }
                           },
                           // The end screens (26, 27) show no danmaku over the last frame.
-                          danmaku: model.ended || shrunk || LeakProbe.omits("danmaku") ? nil : danmaku,
-                          host: LeakProbe.omits("hostparam") ? nil : model.host,
-                          onHost: LeakProbe.omits("hostparam") ? nil : { [weak model] in model?.host = $0 })
+                          danmaku: model.ended || shrunk ? nil : danmaku,
+                          host: model.host,
+                          onHost: { [weak model] in model?.host = $0 })
                 .frame(height: surfaceHeight)
                 .frame(maxHeight: .infinity, alignment: .top)
-            }
             if let controller = model.controller {
                 if env.settings.showOverlay {
                     StatsOverlay(stats: controller.overlay, mode: controller.mode, quality: qualityLine(controller))
@@ -602,12 +567,10 @@ private struct PlayerBox: View {
                         .transition(.opacity)
                 }
             }
-            if !LeakProbe.omits("chromelayer") {
             ChromeLayer(model: model, chrome: chrome, panel: $panel, insets: insets, danmakuEnabled: danmakuEnabled,
                         onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onComments: onComments)
                 .opacity(shrunk ? 0 : 1)
                 .allowsHitTesting(!shrunk)
-            }
             status
         }
         .clipped()
