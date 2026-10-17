@@ -79,8 +79,8 @@ final class PageReleaseTests: XCTestCase {
     }
 
     func testDiagBisect() async throws {
-        let parts: [Set<String>] = [[], ["keephost"], ["keephost", "surface"], ["keephost", "danmaku"], ["keephost", "chromelayer"],
-                                    ["keephost", "tabrow"], ["keephost", "player"]]
+        let parts: [Set<String>] = [[], ["surface"], ["gesture"], ["hostparam"], ["avplayer"], ["avplayer", "hostparam"],
+                                    ["gesture", "hostparam"], ["danmaku", "gesture", "hostparam", "avplayer"]]
         var lines: [String] = []
         for omit in parts {
             LeakProbe.omit = omit

@@ -579,16 +579,16 @@ private struct PlayerBox: View {
             Color.black
             // The page's one player and host view, so picture in picture stays on one layer across parts.
             if !LeakProbe.omits("surface") {
-            PlayerSurface(player: model.player, fit: env.settings.fit, mirrored: model.mirrored,
+            PlayerSurface(player: LeakProbe.omits("avplayer") ? nil : model.player, fit: env.settings.fit, mirrored: model.mirrored,
                           allowsLevelGestures: !inline,
                           // Weak: the model holds the host view, which holds this closure.
-                          onGesture: { [weak model, chrome, size] event in
+                          onGesture: LeakProbe.omits("gesture") ? { _ in } : { [weak model, chrome, size] event in
                               if let model { chrome.handle(event, page: model, size: size) }
                           },
                           // The end screens (26, 27) show no danmaku over the last frame.
                           danmaku: model.ended || shrunk || LeakProbe.omits("danmaku") ? nil : danmaku,
-                          host: model.host,
-                          onHost: { [weak model] in model?.host = $0 })
+                          host: LeakProbe.omits("hostparam") ? nil : model.host,
+                          onHost: LeakProbe.omits("hostparam") ? nil : { [weak model] in model?.host = $0 })
                 .frame(height: surfaceHeight)
                 .frame(maxHeight: .infinity, alignment: .top)
             }
