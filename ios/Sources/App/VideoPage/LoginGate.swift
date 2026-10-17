@@ -27,9 +27,15 @@ enum InlineFirst {
         }
         for window in scene.windows {
             guard let coordinator = window.rootViewController?.transitionCoordinator else { continue }
+            // UIKit can accept the completion and never call it, so a timer resumes too.
             await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                let queued = coordinator.animate(alongsideTransition: nil) { _ in done.resume() }
-                if !queued { done.resume() }
+                let once = Once()
+                let queued = coordinator.animate(alongsideTransition: nil) { _ in if once.claim() { done.resume() } }
+                if !queued, once.claim() { done.resume() }
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    if once.claim() { done.resume() }
+                }
             }
         }
     }
