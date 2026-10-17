@@ -82,6 +82,7 @@ enum HeapReferrers {
         let high = all.map { $0.start + UInt($0.size) }.max() ?? 0
 
         func name(of block: Block) -> String {
+            guard malloc_size(UnsafeRawPointer(bitPattern: block.start)) >= 8 else { return "freed" }
             let isa = UnsafePointer<UInt>(bitPattern: block.start)!.pointee
             for mask: UInt in [~0, 0x0000_000f_ffff_fff8, 0x0000_7fff_ffff_fff8] {
                 if let name = names[isa & mask] { return name }
@@ -95,8 +96,11 @@ enum HeapReferrers {
         for _ in 0..<depth where !frontier.isEmpty {
             var found: [UInt: [Block]] = [:]
             for block in all {
+                // Freed since the enumeration, and perhaps unmapped: skip it.
+                let live = malloc_size(UnsafeRawPointer(bitPattern: block.start))
+                guard live >= 8 else { continue }
                 let words = UnsafePointer<UInt>(bitPattern: block.start)!
-                for index in 0..<(block.size / 8) {
+                for index in 0..<(min(block.size, live) / 8) {
                     let word = words[index]
                     guard word >= low, word < high, frontier.contains(word), word != block.start else { continue }
                     if found[word, default: []].count < fanout, !(found[word]?.contains { $0.start == block.start } ?? false) {
