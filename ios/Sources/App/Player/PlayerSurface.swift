@@ -41,7 +41,13 @@ struct PlayerSurface: UIViewRepresentable {
         // Level gestures are only on in full screen, which is also where the edges belong to the system.
         view.gestureView.ignoresEdges = allowsLevelGestures
         view.gestureView.onEvent = onGesture
-        view.setDanmaku(danmaku)
+        if LeakProbe.omits("noset") {
+        } else if LeakProbe.omits("asyncdanmaku") {
+            let danmaku = danmaku
+            DispatchQueue.main.async { [weak view] in view?.setDanmaku(danmaku) }
+        } else {
+            view.setDanmaku(danmaku)
+        }
     }
 }
 
