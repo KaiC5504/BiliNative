@@ -44,7 +44,14 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   Shipped to TestFlight; phone test pending (`docs/m2-phone-checklist.md`, Build A). Deferred to build B: PiP
   that survives leaving the page, one AVPlayer per page (autoplay inside PiP), an owner token for
   `OrientationController` before stacked video pages.
-- Next: KaiC's build A phone test, then build B (Tasks 16-27; KaiC adds the `BILI_APP_KEYS` secret first).
+- 2026-10-17: build B (Tasks 15b-27) built overnight by parallel subagents: the panel look KaiC asked for, the
+  player carry-overs (orientation owner, covered pages pause, PiP survives leaving the page, one AVPlayer per
+  page), 简介/评论 page, actions with 三连 and the coin dialog, favourites, 不喜欢 via a TV-login token,
+  comments with threads and the composer, the 推荐 首页 and 历史记录. Three batch reviews and a fix round; the
+  fix round's release test found that closed video pages never freed (build A too), now fixed and tested
+  (`PageReleaseTests`). Phone test pending (`docs/m2-phone-checklist.md`, Build B). `BILI_APP_KEYS` not set
+  yet, so 不喜欢 ships greyed; unverified calls are listed in `docs/background.md`, "Known environment limits".
+- Next: KaiC's build A and B phone tests, then milestone 3.
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.
@@ -92,6 +99,10 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - App code, everything else: only in CI ("iOS compile check" workflow: simulator build, unit and integration
   tests, screenshots as the `simulator-screenshots` artifact). There is no Mac. On `main` it also runs
   the BiliCore tests and a Release build; other branches skip both, since the PC already runs `swift test`.
+  For a quick run while debugging, dispatch it by hand: `gh workflow run ios-compile.yml --ref <branch> -f
+  tests=<TestClass>[,<TestClass>] -f shots=false` (about 9 min instead of 15), and push the commits with
+  `[skip ci]`. `-f leaks=true` runs the DEBUG `HeapReferrers` scan on `-DemoScreen leak-check` and prints what
+  still holds a closed video page (macOS `leaks` can't read simulator processes on the runner).
   Debug builds take `-DemoData YES` (invented fixtures, no network or account) and `-DemoScreen <name>` to open
   any screen for screenshots; the `shoot` list in `.github/workflows/ios-compile.yml` names them all.
 - On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (M1) and `docs/m2-phone-checklist.md` (M2).

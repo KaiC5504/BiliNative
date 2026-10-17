@@ -175,3 +175,10 @@ listed under "Deviations from BTR". `RipperConfig.hurry` switches all of it off,
   playurl response.
 - Signed media URLs carry a `deadline` query parameter (Unix seconds) and stop working after it; the app
   refreshes them five minutes before.
+- 不喜欢 (build B) is an APP-signed call (`app.bilibili.com/x/v2/view/dislike`) that needs an access token. The app
+  gets one through the TV client's QR login (a one-time 确认登录 in a web view that holds the M1 login cookies) and
+  signs with the TV key pair from the `BILI_APP_KEYS` secret. Not yet tried on the phone. If the server refuses it,
+  try the same call with only `access_key` (no `appkey`/`sign`), and the TV-login calls as query parameters with
+  `platform=android` and `mobi_app=android_hd` as PiliPlus sends them; record what worked here.
+- Unverified until the phone test: favourites `batch-deal` (sends both `rid`/`type` and `resources`), follow from a
+  www Origin with a space.bilibili.com referer, and history's `type=archive`.

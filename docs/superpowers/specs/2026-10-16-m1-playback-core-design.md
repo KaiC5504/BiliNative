@@ -355,6 +355,8 @@ understood from evidence instead of guess-and-retry. Claude reads the files dire
 - No code copied from ATV-Bilibili (GPL-2.0) or PiliPlus (GPL-3.0); they are references for
   endpoints and formats only. BTR (MIT) is ported with its licence text kept.
 - Dev log network sink compiled out of public builds.
+- Decide about the borrowed PiliPlus coin dialog art and icon font in `ios/Resources/Borrowed/` (KaiC's call for
+  personal use, 2026-10-17): replace them before any public release.
 
 ## References
 
