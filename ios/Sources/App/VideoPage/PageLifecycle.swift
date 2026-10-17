@@ -175,6 +175,7 @@ final class PageLifecycle {
             if let controller = current as? UIViewController, let navigation = controller.parent as? UINavigationController {
                 page = controller
                 self.navigation = navigation
+                BackSwipe.install(on: navigation)
                 return
             }
             responder = current.next

@@ -139,3 +139,13 @@ Build B adds the 首页 feed, 历史记录, the full video page (简介, actions
 67. Open 10 or so videos one after another from related videos and go back to the first each time. The app stays smooth and nothing keeps playing in the background.
 
 Tell Claude which steps failed and roughly when; the logs have the rest.
+
+## Build 6: build 5's 推荐 fixes
+
+Build 5 on iOS 27 froze the layout of every page opened from 推荐. Repeat these on a video opened from 推荐, then on one opened from 历史记录.
+
+68. 评论: the comments load (no endless spinner).
+69. Full-screen button, then back; turn the phone sideways and upright; 竖屏, then 竖屏's back button. Each time the player fills the screen (or the top band in 竖屏), and back in the small player a tap on the video shows and hides back, ⋮, the bar and the full-screen buttons.
+70. Swipe right from the left edge of the screen, on the player and on 简介 or 评论: the page goes back. In full screen the same swipe does nothing to the page.
+71. Open a video, go to 评论, come back to 简介: the back button is still at the top left of the player (tap the video if the controls have hidden).
+72. During playback the progress bar under the small player moves.

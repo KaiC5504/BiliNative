@@ -2,9 +2,22 @@ import SwiftUI
 import XCTest
 @testable import BiliNative
 
-/// The real home screen in a window, with demo data (logged in), and a video page pushed the two ways KaiC opens
-/// one: straight from the 推荐 feed, the root of the stack, and from 历史记录. Build 5 on iOS 27 broke only the
-/// first: the page never loaded its comments and kept its portrait layout after turning.
+/// A bare stack bound to the navigator, so a test can push before the stack has finished appearing.
+private struct BareStack: View {
+    @Bindable var navigator: AppNavigator
+
+    var body: some View {
+        NavigationStack(path: $navigator.path) {
+            Color.clear
+                .videoPageDestinations()
+        }
+    }
+}
+
+/// Video pages pushed the ways KaiC opens them, with demo data (logged in): from the real home screen's 推荐 feed,
+/// from 历史记录, and onto a stack that has only just appeared. On build 5 a page opened from 推荐 on iOS 27 kept
+/// its first layout: 评论 never left its spinner, and full screen and 竖屏 drew the small player. A page pushed as
+/// the stack appears does the same on iOS 26.
 @MainActor
 final class HomeFlowTests: XCTestCase {
     private typealias F = VideoPageFixtures
@@ -33,7 +46,7 @@ final class HomeFlowTests: XCTestCase {
     }
 
     func testPageOpenedFromTheFeed() async throws {
-        let window = try await showHome()
+        let window = try await show(HomeView())
         let fed = await waitUntil(5) { !self.http.requests(to: "/x/web-interface/wbi/index/top/feed/rcmd").isEmpty }
         XCTAssertTrue(fed, "the feed never loaded")
         // What a 推荐 card does.
@@ -42,13 +55,19 @@ final class HomeFlowTests: XCTestCase {
     }
 
     func testPageOpenedFromHistory() async throws {
-        let window = try await showHome()
+        let window = try await show(HomeView())
         env.navigator.open(.history)
         let listed = await waitUntil(5) { !self.http.requests(to: "/x/web-interface/history/cursor").isEmpty }
         XCTAssertTrue(listed, "历史记录 never loaded")
-        _ = await waitUntil(3) { self.stackDepth(in: window) == 2 }
+        _ = await waitUntil(3) { self.stackDepth(in: window) == 2 && self.settled(window) }
         env.navigator.open(VideoRoute(bvid: F.bvidA, cid: F.cidA1, startSeconds: 20))
         try await checkPage(in: window, depth: 3)
+    }
+
+    func testPagePushedAsTheStackAppears() async throws {
+        let window = try await show(BareStack(navigator: env.navigator))
+        env.navigator.open(VideoRoute(bvid: F.bvidA))
+        try await checkPage(in: window, depth: 2)
     }
 
     // MARK: helpers
@@ -60,8 +79,8 @@ final class HomeFlowTests: XCTestCase {
         XCTAssertTrue(playing, "the page never played", file: file, line: line)
         let model = try XCTUnwrap(OrientationController.shared.owner as? VideoPageModel, file: file, line: line)
         let host = try XCTUnwrap(Self.find(PlayerHostView.self, in: window), "no player", file: file, line: line)
-        try await expectInline(host, in: window, "on opening", file: file, line: line)
-
+        await expectInline(host, in: window, "on opening", file: file, line: line)
+        await expectTapsReachThePlayer(host, in: window, "on opening", file: file, line: line)
         // A swipe to 评论 shows the list, which loads.
         let pager = try XCTUnwrap(Self.pager(in: window), "no 简介/评论 pager", file: file, line: line)
         pager.setContentOffset(CGPoint(x: pager.bounds.width, y: 0), animated: false)
@@ -69,41 +88,70 @@ final class HomeFlowTests: XCTestCase {
         XCTAssertTrue(loaded, "评论 never asked for the comments", file: file, line: line)
         pager.setContentOffset(.zero, animated: false)
 
+        // The edge swipe back goes first: the pager and the player's seek drag wait for it to fail.
+        let pop = try XCTUnwrap(Self.navigationController(in: window.rootViewController)?.interactivePopGestureRecognizer)
+        let swipe = try XCTUnwrap(pop.delegate as? BackSwipe, "the page did not take over the swipe back", file: file, line: line)
+        XCTAssertTrue(pop.isEnabled, file: file, line: line)
+        XCTAssertTrue(swipe.gestureRecognizerShouldBegin(pop), "no swipe back on the page", file: file, line: line)
+        XCTAssertTrue(swipe.gestureRecognizer(pop, shouldBeRequiredToFailBy: pager.panGestureRecognizer), file: file, line: line)
+        XCTAssertTrue(swipe.gestureRecognizer(pop, shouldBeRequiredToFailBy: host.gestureView.pan), file: file, line: line)
+
+        // UIKit refuses a rotation while the push still animates.
+        _ = await waitUntil(5) { self.settled(window) }
         let scene = try XCTUnwrap(Self.scene)
         OrientationController.shared.enterLandscape()
         let turned = await waitUntil(8) { scene.effectiveGeometry.interfaceOrientation.isLandscape && window.bounds.width > window.bounds.height }
         XCTAssertTrue(turned, "never turned", file: file, line: line)
         let filled = await waitUntil(5) { Self.close(self.frame(of: host, in: window), window.bounds) }
         XCTAssertTrue(filled, "landscape: the player is \(frame(of: host, in: window)) in \(window.bounds)", file: file, line: line)
+        XCTAssertFalse(swipe.gestureRecognizerShouldBegin(pop), "full screen swiped back", file: file, line: line)
+        await expectTapsReachThePlayer(host, in: window, "landscape", file: file, line: line)
 
         OrientationController.shared.exitToInline()
         let upright = await waitUntil(8) { scene.effectiveGeometry.interfaceOrientation == .portrait && window.bounds.width < window.bounds.height }
         XCTAssertTrue(upright, "never turned back", file: file, line: line)
-        try await expectInline(host, in: window, "after landscape", file: file, line: line)
+        await expectInline(host, in: window, "after landscape", file: file, line: line)
+        await expectTapsReachThePlayer(host, in: window, "after landscape", file: file, line: line)
 
         OrientationController.shared.enterVertical()
-        // 竖屏 sets a landscape video above the middle, the page's whole height given to the player.
+        // 竖屏 gives the player the page's whole height and sets a landscape video above the middle.
         let tall = await waitUntil(5) {
             let frame = self.frame(of: host, in: window)
             return abs(frame.width - window.bounds.width) < 1 && abs(frame.height - window.bounds.height * VerticalLayout.videoCentre * 2) < 1
         }
         XCTAssertTrue(tall, "竖屏: the player is \(frame(of: host, in: window)) in \(window.bounds)", file: file, line: line)
+        await expectTapsReachThePlayer(host, in: window, "竖屏", file: file, line: line)
+        // 竖屏's back button.
         OrientationController.shared.exitToInline()
-        try await expectInline(host, in: window, "after 竖屏", file: file, line: line)
+        await expectInline(host, in: window, "after 竖屏", file: file, line: line)
+        await expectTapsReachThePlayer(host, in: window, "after 竖屏", file: file, line: line)
         XCTAssertFalse(model.closed)
     }
 
     /// Under the status bar, the window's width, 16:9.
     private func expectInline(_ host: UIView, in window: UIWindow, _ when: String,
-                              file: StaticString = #filePath, line: UInt = #line) async throws {
+                              file: StaticString = #filePath, line: UInt = #line) async {
         let width = window.bounds.width
         let placed = await waitUntil(5) {
-            let frame = self.frame(of: host, in: window)
-            return abs(frame.minX) < 1 && abs(frame.width - width) < 1 && abs(frame.height - width * 9 / 16) < 1
-                && abs(frame.minY - window.safeAreaInsets.top) < 1
+            Self.close(self.frame(of: host, in: window), CGRect(x: 0, y: window.safeAreaInsets.top, width: width, height: width * 9 / 16))
         }
         XCTAssertTrue(placed, "\(when): the player is \(frame(of: host, in: window)) in \(window.bounds), "
                       + "safe area \(window.safeAreaInsets)", file: file, line: line)
+    }
+
+    /// A tap on the video, clear of the controls, lands on the player's gesture view, which shows and hides them.
+    private func expectTapsReachThePlayer(_ host: PlayerHostView, in window: UIWindow, _ when: String,
+                                          file: StaticString = #filePath, line: UInt = #line) async {
+        var hit: UIView?
+        var point = CGPoint.zero
+        let reached = await waitUntil(3) {
+            let frame = self.frame(of: host, in: window)
+            point = CGPoint(x: frame.midX, y: frame.minY + frame.height * 0.4)
+            hit = window.hitTest(point, with: nil)
+            return hit?.isDescendant(of: host.gestureView) == true
+        }
+        XCTAssertTrue(reached, "\(when): a tap at \(point) reaches \(hit.map { String(describing: type(of: $0)) } ?? "nothing")",
+                      file: file, line: line)
     }
 
     private static func close(_ a: CGRect, _ b: CGRect) -> Bool {
@@ -115,19 +163,23 @@ final class HomeFlowTests: XCTestCase {
         return view.convert(view.bounds, to: window)
     }
 
-    private func showHome() async throws -> UIWindow {
+    private func show(_ root: some View) async throws -> UIWindow {
         let scene = try XCTUnwrap(Self.scene)
         let window = UIWindow(windowScene: scene)
-        window.rootViewController = UIHostingController(rootView: HomeView().environment(env))
+        window.rootViewController = UIHostingController(rootView: root.environment(env))
         window.makeKeyAndVisible()
         self.window = window
         let laidOut = await waitUntil(5) { (window.rootViewController?.view.bounds.width ?? 0) > 0 }
-        XCTAssertTrue(laidOut, "home never laid out")
+        XCTAssertTrue(laidOut, "the stack never laid out")
         return window
     }
 
     private func stackDepth(in window: UIWindow) -> Int {
         Self.navigationController(in: window.rootViewController)?.viewControllers.count ?? 0
+    }
+
+    private func settled(_ window: UIWindow) -> Bool {
+        Self.navigationController(in: window.rootViewController)?.transitionCoordinator == nil
     }
 
     private func waitUntil(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
@@ -158,7 +210,7 @@ final class HomeFlowTests: XCTestCase {
         return first(in: page) { $0 is View } as? View
     }
 
-    /// The paging scroll view under the top page's tab row.
+    /// The paging scroll view of the top page's 简介 and 评论.
     private static func pager(in window: UIWindow) -> UIScrollView? {
         guard let page = navigationController(in: window.rootViewController)?.topViewController?.view else { return nil }
         return first(in: page) { ($0 as? UIScrollView)?.isPagingEnabled == true } as? UIScrollView

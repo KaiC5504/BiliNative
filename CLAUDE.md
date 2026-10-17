@@ -106,6 +106,8 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   tests=<TestClass>[,<TestClass>] -f shots=false` (about 9 min instead of 15), and push the commits with
   `[skip ci]`. `-f leaks=true` runs the DEBUG `HeapReferrers` scan on `-DemoScreen leak-check` and prints what
   still holds a closed video page (macOS `leaks` can't read simulator processes on the runner).
+  `-f runner=xcode-27` runs on GitHub's Xcode 27 preview image with an iOS 27 simulator, the iOS KaiC's phone runs
+  (the default image and the rented Mac stop at iOS 26.5). Build 5's 推荐 page bug showed only on iOS 27.
   Debug builds take `-DemoData YES` (invented fixtures, no network or account) and `-DemoScreen <name>` to open
   any screen for screenshots; the `shoot` list in `.github/workflows/ios-compile.yml` names them all.
 - App code on a real Mac, when KaiC has one rented (SSH alias `macrent`; check with `ssh macrent true`):

@@ -182,3 +182,18 @@ listed under "Deviations from BTR". `RipperConfig.hurry` switches all of it off,
   `platform=android` and `mobi_app=android_hd` as PiliPlus sends them; record what worked here.
 - Unverified until the phone test: favourites `batch-deal` (sends both `rid`/`type` and `resources`), follow from a
   www Origin with a space.bilibili.com referer, and history's `type=archive`.
+
+## iOS behaviour the app works around
+
+Found on KaiC's phone (iOS 27) with build 5, reproduced in `HomeFlowTests`:
+
+- A video page opened from the 推荐 feed (the root of the stack) never ran its GeometryReader's content again after
+  the first frame: 评论 kept its spinner, so comments were never asked for, and landscape and 竖屏 drew the small
+  player in the middle of the turned screen. Pages opened from 历史记录 were fine. The same happens on iOS 26 when a
+  page is pushed as the stack first appears. The page now measures itself (`onGeometryChange` into state) and lays
+  out in its body; only iOS 27 shows the 推荐 case, so run `HomeFlowTests` with `-f runner=xcode-27` after touching
+  the page's layout.
+- UIKit refuses a rotation asked for while a push still animates (error 101, "supported: portrait", although every
+  controller allows landscape). `OrientationController` puts the presentation back; tests wait for the push.
+- The left-edge swipe back is on even with the navigation bar hidden, but the 简介/评论 pager and the player's seek
+  drag took it. `BackSwipe` makes every other drag wait for it, and turns it off in full screen.

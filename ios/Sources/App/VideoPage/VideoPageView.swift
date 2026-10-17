@@ -360,54 +360,74 @@ private struct PageLayout: View {
     let onCompose: (ReplyTarget, _ emotes: Bool) -> Void
     let onComments: () -> Void
     @Environment(ActionsModel.self) private var actions: ActionsModel?
+    /// The page's size and safe area, measured rather than read inside a GeometryReader. On iOS 27 a page pushed from
+    /// 推荐, the root of the stack, never ran a GeometryReader's content again (build 5: the portrait layout stayed
+    /// through every turn, and 评论 never left its spinner); on iOS 26 so did one pushed as the stack appeared.
+    @State private var space: Space?
+
+    private struct Space: Equatable {
+        var size: CGSize
+        var insets: EdgeInsets
+    }
 
     var body: some View {
         let presentation = OrientationController.shared.presentation
         let inline = presentation == .inline
-        GeometryReader { geometry in
-            let collapsing = CollapsingPlayer(fullHeight: inline ? geometry.size.width * 9 / 16 : geometry.size.height)
-            ZStack(alignment: .top) {
-                if inline {
-                    // Laid out as if the player were already the bar; each tab leaves the rest of its height free.
-                    PageTabs(state: tabs, reserve: collapsing.reserve) {
-                        IntroTab(model: model, state: tabs, following: actions?.following, onFollow: { actions?.tapFollow() },
-                                 onNeedLogin: onNeedLogin) {
-                            if let actions {
-                                ActionRow(actions: actions, onDislike: { Task { await actions.toggleDislike() } })
-                            }
-                        }
-                    } comments: {
-                        if let comments {
-                            CommentsTab(model: comments, tabs: tabs, onCompose: onCompose)
-                        } else {
-                            CommentsSlot(state: tabs)
+        // The content goes in an overlay, so like a GeometryReader the page is exactly the space offered and an
+        // oversized player cannot feed back into the measurement.
+        Color.clear
+            .onGeometryChange(for: Space.self) { Space(size: $0.size, insets: $0.safeAreaInsets) } action: { space = $0 }
+            .overlay(alignment: .top) {
+                if let space {
+                    content(space, presentation: presentation)
+                }
+            }
+            .ignoresSafeArea(inline ? .keyboard : .all, edges: inline && !ignoresKeyboard ? [] : .all)
+            .background((inline ? Theme.Page.background : Color.black).ignoresSafeArea())
+            // 09 keeps the status bar, light on black; landscape hides it (04).
+            .statusBarHidden(presentation == .landscape)
+            .preferredColorScheme(presentation == .vertical ? .dark : nil)
+            .persistentSystemOverlays(inline ? .automatic : .hidden)
+            // Timestamps seek and video ids open a page, from the description and from every comment.
+            // Weak, and nothing else captured: UIKit views inside the page (the host, the danmaku layer) keep the
+            // environment in their traits, and a closure holding this view's values would hold the page through them.
+            .environment(\.richTextActions, RichTextActions(
+                seek: { [weak model] seconds in Task { await model?.activate(.timestamp(label: "", seconds: seconds)) } },
+                openVideo: { [weak model] id in Task { await model?.activate(.video(id: id)) } }))
+            #if DEBUG
+            .task { IntroDemo.stage(page: model, tabs: tabs) }
+            #endif
+    }
+
+    private func content(_ space: Space, presentation: OrientationController.Presentation) -> some View {
+        let inline = presentation == .inline
+        let collapsing = CollapsingPlayer(fullHeight: inline ? space.size.width * 9 / 16 : space.size.height)
+        return ZStack(alignment: .top) {
+            if inline {
+                // Laid out as if the player were already the bar; each tab leaves the rest of its height free.
+                PageTabs(state: tabs, reserve: collapsing.reserve) {
+                    IntroTab(model: model, state: tabs, following: actions?.following, onFollow: { actions?.tapFollow() },
+                             onNeedLogin: onNeedLogin) {
+                        if let actions {
+                            ActionRow(actions: actions, onDislike: { Task { await actions.toggleDislike() } })
                         }
                     }
-                    .padding(.top, CollapsingPlayer.barHeight + Theme.Page.tabRowHeight)
-                    .ignoresSafeArea(.container, edges: .bottom)
+                } comments: {
+                    if let comments {
+                        CommentsTab(model: comments, tabs: tabs, onCompose: onCompose)
+                    } else {
+                        CommentsSlot(state: tabs)
+                    }
                 }
-                PlayerArea(model: model, chrome: chrome, panel: $panel, tabs: tabs, comments: comments, danmaku: danmaku,
-                           width: geometry.size.width, collapsing: collapsing, presentation: presentation,
-                           insets: ScreenInsets.current(merging: geometry.safeAreaInsets), danmakuEnabled: danmakuEnabled,
-                           onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onCompose: onCompose,
-                           onComments: onComments)
+                .padding(.top, CollapsingPlayer.barHeight + Theme.Page.tabRowHeight)
+                .ignoresSafeArea(.container, edges: .bottom)
             }
+            PlayerArea(model: model, chrome: chrome, panel: $panel, tabs: tabs, comments: comments, danmaku: danmaku,
+                       width: space.size.width, collapsing: collapsing, presentation: presentation,
+                       insets: ScreenInsets.current(merging: space.insets), danmakuEnabled: danmakuEnabled,
+                       onToggleDanmaku: onToggleDanmaku, onSendDanmaku: onSendDanmaku, onCompose: onCompose,
+                       onComments: onComments)
         }
-        .ignoresSafeArea(inline ? .keyboard : .all, edges: inline && !ignoresKeyboard ? [] : .all)
-        .background((inline ? Theme.Page.background : Color.black).ignoresSafeArea())
-        // 09 keeps the status bar, light on black; landscape hides it (04).
-        .statusBarHidden(presentation == .landscape)
-        .preferredColorScheme(presentation == .vertical ? .dark : nil)
-        .persistentSystemOverlays(inline ? .automatic : .hidden)
-        // Timestamps seek and video ids open a page, from the description and from every comment.
-        // Weak, and nothing else captured: UIKit views inside the page (the host, the danmaku layer) keep the
-        // environment in their traits, and a closure holding this view's values would hold the page through them.
-        .environment(\.richTextActions, RichTextActions(
-            seek: { [weak model] seconds in Task { await model?.activate(.timestamp(label: "", seconds: seconds)) } },
-            openVideo: { [weak model] id in Task { await model?.activate(.video(id: id)) } }))
-        #if DEBUG
-        .task { IntroDemo.stage(page: model, tabs: tabs) }
-        #endif
     }
 }
 
