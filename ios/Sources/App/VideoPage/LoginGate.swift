@@ -22,7 +22,12 @@ enum InlineFirst {
         let deadline = clock.now + limit
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else { return }
-        while scene.effectiveGeometry.interfaceOrientation != .portrait, clock.now < deadline {
+        // The scene reports portrait before its windows are laid out upright, so both are waited for.
+        func upright() -> Bool {
+            scene.effectiveGeometry.interfaceOrientation == .portrait
+                && scene.windows.allSatisfy { $0.bounds.width <= $0.bounds.height }
+        }
+        while !upright(), clock.now < deadline {
             try? await Task.sleep(for: .milliseconds(20))
         }
         for window in scene.windows {
@@ -33,7 +38,7 @@ enum InlineFirst {
                 let queued = coordinator.animate(alongsideTransition: nil) { _ in if once.claim() { done.resume() } }
                 if !queued, once.claim() { done.resume() }
                 Task {
-                    try? await Task.sleep(for: .seconds(1))
+                    try? await Task.sleep(for: .seconds(2))
                     if once.claim() { done.resume() }
                 }
             }
