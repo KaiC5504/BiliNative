@@ -431,8 +431,8 @@ final class VideoPageModel {
         stopPiP()
         if let controller { keptPosition = controller.position }
         stopController()
-        // A UIKit view that has been inside the page keeps the page's whole SwiftUI state alive (bisected with
-        // PageReleaseTests: any view added to the host did it), so a closed page lets go of its views.
+        // UIKit views that were inside the page carry its SwiftUI environment in their trait collections, so
+        // anything a closure in that environment captures lives as long as they do; a closed page drops them.
         danmakuRenderer = nil
         if host?.window == nil { host = nil }
     }

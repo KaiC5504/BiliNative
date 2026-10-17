@@ -15,22 +15,15 @@ struct PlayerSurface: UIViewRepresentable {
     /// Hands out the host view once, for callers that drive it directly (小窗播放 calls `startPiP`).
     var onHost: ((PlayerHostView) -> Void)? = nil
 
-    func makeUIView(context: Context) -> SurfaceContainer {
-        let container = SurfaceContainer()
+    func makeUIView(context: Context) -> PlayerHostView {
         let view = host ?? PlayerHostView()
-        container.show(view)
         apply(to: view)
         onHost?(view)
-        return container
+        return view
     }
 
-    func updateUIView(_ container: SurfaceContainer, context: Context) {
-        guard let view = container.host else { return }
+    func updateUIView(_ view: PlayerHostView, context: Context) {
         apply(to: view)
-    }
-
-    static func dismantleUIView(_ container: SurfaceContainer, coordinator: ()) {
-        container.release()
     }
 
     @MainActor private func apply(to view: PlayerHostView) {
@@ -42,30 +35,5 @@ struct PlayerSurface: UIViewRepresentable {
         view.gestureView.ignoresEdges = allowsLevelGestures
         view.gestureView.onEvent = onGesture
         view.setDanmaku(danmaku)
-    }
-}
-
-/// SwiftUI's own view around the page's host view, which outlives the page for picture in picture. The host leaves
-/// it, with the page's gesture handler and danmaku view, when SwiftUI tears the page down.
-final class SurfaceContainer: UIView {
-    private(set) var host: PlayerHostView?
-
-    func show(_ view: PlayerHostView) {
-        host?.removeFromSuperview()
-        view.removeFromSuperview()
-        view.frame = bounds
-        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        addSubview(view)
-        host = view
-    }
-
-    /// A page brought back from the small window may already have moved the host into its own container.
-    func release() {
-        guard let host else { return }
-        self.host = nil
-        guard host.superview === self else { return }
-        host.gestureView.onEvent = { _ in }
-        host.setDanmaku(nil)
-        host.removeFromSuperview()
     }
 }
