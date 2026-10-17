@@ -195,7 +195,8 @@ struct VideoPageView: View {
     }
 
     private func danmakuView(for model: VideoPageModel) -> UIView? {
-        danmakuSlot.view(for: model, settings: env.settings)
+        if LeakProbe.omits("realdanmaku") { return LeakProbe.plain }
+        return danmakuSlot.view(for: model, settings: env.settings)
     }
 
     private func makeComments(aid: Int64, upMid: Int64) -> CommentsModel {
@@ -364,6 +365,7 @@ enum LeakProbe {
     static var omit: Set<String> = []
 
     static func omits(_ part: String) -> Bool { omit.contains(part) }
+    static let plain = UIView()
 }
 
 extension View {

@@ -73,7 +73,7 @@ final class DanmakuView: UIView {
             link = nil
             clear()
             lastTime = nil
-        } else if link == nil {
+        } else if link == nil, !LeakProbe.omits("link") {
             let link = CADisplayLink(target: LinkTarget(self), selector: #selector(LinkTarget.step(_:)))
             link.add(to: .main, forMode: .common)
             self.link = link
