@@ -54,7 +54,14 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
 - 2026-10-17: a rented Mac mini M4 (macrent, Paris; Xcode 26.5) set up for builds and tests over SSH
   (`tools/mac-test.sh`). First full run there: 240 AppTests passed on the iPhone 17 Pro Max simulator, with one
   skip (PiP is not supported on the simulator).
-- Next: KaiC's build A and B phone tests, then milestone 3.
+- 2026-10-17: KaiC's phone tests of builds A and B: "pretty much all is good". Decision: BiliFast moves to Flutter,
+  with Apple's player kept in a native view. The Flutter app is its own public repo, `KaiC5504/BiliFast`
+  (`D:\Repos\Apps\BiliFast`); its spec is `docs/flutter-move-spec.md` there. Same bundle id and App Store record, so
+  its TestFlight builds (numbered from 100) replace this app on the phone and keep the keychain login. The Swift
+  builds stay under TestFlight → Previous Builds.
+- This repo is now the reference for every behaviour: no new Swift features; fix Swift only if something blocks daily
+  use. Milestone 3 continues in Flutter.
+- The rented Mac (macrent) is no longer used; `tools/mac-test.sh` stays for the record.
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
 - Update this section when a task or milestone finishes.

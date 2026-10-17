@@ -13,13 +13,18 @@ Options tried or rejected, in order:
 
 1. **Sideloading PiliPlus** (open-source Flutter client) with BTR built in: `lemonteaau/PiliPlus` (daily
    upstream sync, unsigned IPA) and `nishuodedui1145-del/PiliPlus`. Fast, but rejected by KaiC after using
-   it: Flutter feels like the web version, much worse than the official app (rotation, layout, overall feel).
-2. **Re-skinning PiliPlus in Flutter**: rejected for the same reason; the problem is the feel, not only the look.
+   it, for PiliPlus's design: its layout and look are far from the official app's. (This note used to blame
+   Flutter's feel; KaiC corrected that on 2026-10-17. It was PiliPlus's design, not Flutter.)
+2. **Re-skinning PiliPlus in Flutter**: not pursued; PiliPlus is GPL and its structure follows its own design.
 3. **Speeding up the official app**: only possible at the network level (a VPN-style proxy app that
    intercepts the CDN traffic with a user-installed root certificate). `xirenjie0101/btr-ios` does this as a
    Loon script. Its real-device notes are the best evidence about the official app (see below). Not chosen:
    needs a MITM certificate, takes the phone's only VPN slot, and the gain was unproven.
 4. **Native Swift client** (this repo): chosen. Real iOS feel, Apple's player, BTR engine underneath.
+5. **Flutter, with Apple's player kept** (2026-10-17, after milestones 1 and 2): a spike showed Flutter can draw the
+   official app's custom look closely, and the iPhone keeps AVPlayer in a native view for HDR, Dolby Vision and PiP.
+   The app moves screen by screen to `KaiC5504/BiliFast` (`D:\Repos\Apps\BiliFast`); this repo stays the Swift
+   reference until cutover.
 
 ## Prior art and what it is good for
 
