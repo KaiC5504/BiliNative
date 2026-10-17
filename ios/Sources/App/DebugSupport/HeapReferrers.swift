@@ -72,14 +72,16 @@ enum HeapReferrers {
         return names
     }
 
-    /// A tree of who points at `target`, `depth` levels up, at most `fanout` holders per level.
-    static func report(for target: AnyObject, depth: Int = 7, fanout: Int = 6) -> String {
+    /// A tree of who points at `target`, `depth` levels up, at most `fanout` holders each. One pass over the heap
+    /// per level.
+    static func report(for target: AnyObject, depth: Int = 8, fanout: Int = 5) -> String {
         let names = classNames()
-        let all = blocks().sorted { $0.start < $1.start }
+        let all = blocks().filter { $0.size >= 8 && $0.size < 64 << 20 }
         let targetAddress = UInt(bitPattern: Unmanaged.passUnretained(target).toOpaque())
+        let low = all.map(\.start).min() ?? 0
+        let high = all.map { $0.start + UInt($0.size) }.max() ?? 0
 
         func name(of block: Block) -> String {
-            guard block.size >= 8 else { return "block" }
             let isa = UnsafePointer<UInt>(bitPattern: block.start)!.pointee
             for mask: UInt in [~0, 0x0000_000f_ffff_fff8, 0x0000_7fff_ffff_fff8] {
                 if let name = names[isa & mask] { return name }
@@ -87,39 +89,49 @@ enum HeapReferrers {
             return "block"
         }
 
-        func holders(of address: UInt) -> [Block] {
-            var found: [Block] = []
-            for block in all where block.start != address && block.size >= 8 && block.size < 64 << 20 {
+        var holders: [UInt: [Block]] = [:]
+        var seen: Set<UInt> = [targetAddress]
+        var frontier: Set<UInt> = [targetAddress]
+        for _ in 0..<depth where !frontier.isEmpty {
+            var found: [UInt: [Block]] = [:]
+            for block in all {
                 let words = UnsafePointer<UInt>(bitPattern: block.start)!
-                for index in 0..<(block.size / 8) where words[index] == address {
-                    found.append(block)
-                    break
+                for index in 0..<(block.size / 8) {
+                    let word = words[index]
+                    guard word >= low, word < high, frontier.contains(word), word != block.start else { continue }
+                    if found[word, default: []].count < fanout, !(found[word]?.contains { $0.start == block.start } ?? false) {
+                        found[word, default: []].append(block)
+                    }
                 }
-                if found.count >= fanout { break }
             }
-            return found
+            var next: Set<UInt> = []
+            for (address, blocks) in found {
+                holders[address] = blocks
+                for block in blocks where !seen.contains(block.start) {
+                    seen.insert(block.start)
+                    next.insert(block.start)
+                }
+            }
+            frontier = next
         }
 
         var lines = ["\(String(describing: type(of: target))) \(String(targetAddress, radix: 16)), \(all.count) heap blocks"]
-        var seen: Set<UInt> = [targetAddress]
-        var budget = 80
-        func walk(_ address: UInt, level: Int) {
-            guard level < depth, budget > 0 else { return }
-            budget -= 1
-            let found = holders(of: address)
-            if found.isEmpty {
-                lines.append(String(repeating: "  ", count: level + 1) + "(no heap holder: a global, a static, the stack or a run loop)")
+        var printed: Set<UInt> = []
+        func emit(_ address: UInt, level: Int) {
+            let indent = String(repeating: "  ", count: level + 1)
+            guard let found = holders[address], !found.isEmpty else {
+                if level < depth { lines.append(indent + "(no heap holder: a global, a static, the stack or a run loop)") }
+                return
             }
             for block in found {
-                let indent = String(repeating: "  ", count: level + 1)
-                let repeated = seen.contains(block.start)
-                lines.append("\(indent)<- \(name(of: block)) \(String(block.start, radix: 16)) size \(block.size)\(repeated ? " (seen)" : "")")
-                guard !repeated else { continue }
-                seen.insert(block.start)
-                walk(block.start, level: level + 1)
+                let again = printed.contains(block.start)
+                lines.append("\(indent)<- \(name(of: block)) \(String(block.start, radix: 16)) size \(block.size)\(again ? " (above)" : "")")
+                guard !again else { continue }
+                printed.insert(block.start)
+                emit(block.start, level: level + 1)
             }
         }
-        walk(targetAddress, level: 0)
+        emit(targetAddress, level: 0)
         return lines.joined(separator: "\n")
     }
 }

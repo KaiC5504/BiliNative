@@ -27,12 +27,9 @@ enum LeakCheckDemo {
                 lines.append("\(name) \(Unmanaged.passUnretained(object).toOpaque())")
             }
             let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            var report: [String] = []
-            for object in [page as AnyObject?, danmaku] {
-                if let object { report.append(HeapReferrers.report(for: object)) }
-            }
-            try? report.joined(separator: "\n\n").write(to: documents.appendingPathComponent(reportName), atomically: true, encoding: .utf8)
             try? (lines.joined(separator: "\n") + "\n").write(to: documents.appendingPathComponent(fileName), atomically: true, encoding: .utf8)
+            let report = (page as AnyObject?).map { HeapReferrers.report(for: $0) } ?? "nothing left alive"
+            try? report.write(to: documents.appendingPathComponent(reportName), atomically: true, encoding: .utf8)
         }
     }
 }
