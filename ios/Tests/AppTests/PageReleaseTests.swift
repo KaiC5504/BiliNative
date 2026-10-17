@@ -79,7 +79,7 @@ final class PageReleaseTests: XCTestCase {
     }
 
     func testDiagBisect() async throws {
-        let parts: [Set<String>] = [[], ["keephost"], ["surface"]]
+        let parts: [Set<String>] = [[], ["danmaku"], ["gesture"], ["avplayer"], ["chromelayer"], ["surface"]]
         var lines: [String] = []
         for omit in parts {
             LeakProbe.omit = omit
@@ -107,23 +107,42 @@ final class PageReleaseTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(800))
         weak var host = page?.host
         weak var danmaku = page?.host?.danmakuContainer.subviews.first
+        weak var hosting = window.rootViewController
+        weak var container = Self.find(SurfaceContainer.self, in: window)
+        weak var player = page?.player
+        weak var controller = page?.controller as AnyObject?
         window.rootViewController = UIViewController()
         window.isHidden = true
         self.window = nil
         _ = await wait(5) { page?.closed ?? true }
         prompts.actions = nil
         _ = await wait(5) { page == nil && actions == nil && comments == nil }
-        var result = "page \(page != nil), actions \(actions != nil), comments \(comments != nil), host \(host != nil), danmaku \(danmaku != nil)"
+        func state() -> String {
+            "page \(page != nil), actions \(actions != nil), comments \(comments != nil), host \(host != nil), "
+                + "danmaku \(danmaku != nil), hosting \(hosting != nil), container \(container != nil), "
+                + "player \(player != nil), controller \(controller != nil)"
+        }
+        var result = state()
         if page != nil || actions != nil || comments != nil {
-            let orientation = OrientationController.shared
-            orientation.enterLandscape()
-            try await Task.sleep(for: .milliseconds(800))
-            orientation.exitToInline()
-            _ = await wait(5) { page == nil && actions == nil && comments == nil }
-            result += "; after a turn: page \(page != nil), actions \(actions != nil), comments \(comments != nil)"
-            try await Task.sleep(for: .milliseconds(800))
+            PiPKeeper.shared.release()
+            _ = await wait(2) { page == nil }
+            result += "; after keeper release: " + state()
+            player?.replaceCurrentItem(with: nil)
+            _ = await wait(2) { page == nil }
+            result += "; after emptying the player: " + state()
+            NotificationCenter.default.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+            _ = await wait(2) { page == nil }
+            result += "; after a memory warning: " + state()
         }
         return result
+    }
+
+    private static func find<T: UIView>(_ type: T.Type, in view: UIView) -> T? {
+        if let found = view as? T { return found }
+        for subview in view.subviews {
+            if let found = find(type, in: subview) { return found }
+        }
+        return nil
     }
 
     private func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
