@@ -79,8 +79,7 @@ final class PageReleaseTests: XCTestCase {
     }
 
     func testDiagBisect() async throws {
-        let parts: [Set<String>] = [[], ["surface"], ["gesture"], ["hostparam"], ["avplayer"], ["avplayer", "hostparam"],
-                                    ["gesture", "hostparam"], ["danmaku", "gesture", "hostparam", "avplayer"]]
+        let parts: [Set<String>] = [[], ["keephost"], ["surface"]]
         var lines: [String] = []
         for omit in parts {
             LeakProbe.omit = omit
@@ -106,13 +105,15 @@ final class PageReleaseTests: XCTestCase {
         weak var actions = prompts.actions
         weak var comments = prompts.comments
         try await Task.sleep(for: .milliseconds(800))
+        weak var host = page?.host
+        weak var danmaku = page?.host?.danmakuContainer.subviews.first
         window.rootViewController = UIViewController()
         window.isHidden = true
         self.window = nil
         _ = await wait(5) { page?.closed ?? true }
         prompts.actions = nil
         _ = await wait(5) { page == nil && actions == nil && comments == nil }
-        var result = "page \(page != nil), actions \(actions != nil), comments \(comments != nil)"
+        var result = "page \(page != nil), actions \(actions != nil), comments \(comments != nil), host \(host != nil), danmaku \(danmaku != nil)"
         if page != nil || actions != nil || comments != nil {
             let orientation = OrientationController.shared
             orientation.enterLandscape()
