@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-compile-${{ github.ref }}
+  group: ios-compile-${{ github.ref }}-${{ inputs.runner || 'macos-26' }}
   cancel-in-progress: true
 
 jobs:
