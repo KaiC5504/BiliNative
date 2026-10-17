@@ -175,10 +175,11 @@ jobs:
           while read -r name addr; do
             [ -n "$addr" ] || continue
             echo "=== $name $addr"
-            leaks --traceTree="$addr" "$PID" 2>&1 | head -200 || sudo leaks --traceTree="$addr" "$PID" 2>&1 | head -200 || true
+            # Reading another process's memory needs root on the runner.
+            sudo leaks --traceTree="$addr" "$PID" 2>&1 | head -250 || true
           done < "$DATA/Documents/leak-check.txt"
           echo "=== leaks summary"
-          leaks "$PID" 2>&1 | head -60 || true
+          sudo leaks "$PID" 2>&1 | head -60 || true
 
       # The screenshots mostly wait, so the Release build compiles alongside them.
       - name: Start the Release build
