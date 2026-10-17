@@ -160,9 +160,10 @@ Identity: display name `BiliFast`, app target and scheme `BiliNative`, bundle id
    pass, push and start the signed build at once, with the compile check running alongside as a backstop. Without
    the Mac, wait for the compile check (`gh run list --limit 1`, then `gh run watch <id> --exit-status`) and look
    at the `simulator-screenshots` artifact for every screen you touched.
-2. `python scripts/testflight.py start`, then `python scripts/testflight.py watch <id>` in
-   the background. Green means Apple has processed the build. After any change to
-   `testflight.yml`, run `start --dry-run` first.
+2. `python scripts/testflight.py start`. Don't watch it: it takes about 20 minutes, and one
+   `gh run view <id>` afterwards says whether Apple has processed it. Never `gh run watch` or poll
+   GitHub in a loop; on 2026-10-17 that tripped GitHub's rate limit and blocked KaiC's own requests.
+   After any change to `testflight.yml`, run `start --dry-run` first.
 3. Report the TestFlight build number, what changed and test steps for the phone.
 
 The owner has authorised commit, push and Actions runs without asking. Never start a signed build before the gate

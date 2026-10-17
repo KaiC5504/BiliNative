@@ -88,6 +88,8 @@ final class HomeFlowTests: XCTestCase {
         XCTAssertTrue(loaded, "评论 never asked for the comments", file: file, line: line)
         pager.setContentOffset(.zero, animated: false)
 
+        // UIKit refuses a rotation while the push still animates, and the swipe back waits for it too.
+        _ = await waitUntil(5) { self.settled(window) }
         // The edge swipe back goes first: the pager and the player's seek drag wait for it to fail.
         let pop = try XCTUnwrap(Self.navigationController(in: window.rootViewController)?.interactivePopGestureRecognizer)
         let swipe = try XCTUnwrap(pop.delegate as? BackSwipe, "the page did not take over the swipe back", file: file, line: line)
@@ -96,8 +98,6 @@ final class HomeFlowTests: XCTestCase {
         XCTAssertTrue(swipe.gestureRecognizer(pop, shouldBeRequiredToFailBy: pager.panGestureRecognizer), file: file, line: line)
         XCTAssertTrue(swipe.gestureRecognizer(pop, shouldBeRequiredToFailBy: host.gestureView.pan), file: file, line: line)
 
-        // UIKit refuses a rotation while the push still animates.
-        _ = await waitUntil(5) { self.settled(window) }
         let scene = try XCTUnwrap(Self.scene)
         OrientationController.shared.enterLandscape()
         let turned = await waitUntil(8) { scene.effectiveGeometry.interfaceOrientation.isLandscape && window.bounds.width > window.bounds.height }

@@ -453,6 +453,8 @@ private struct PlayerArea: View {
     /// Where the tab stood when playback paused: the player shrinks only by what is scrolled after that, so a pause
     /// halfway down the page does not snap it to the bar.
     @State private var collapseFrom: CGFloat = 0
+    /// How far the edge swipe has pulled 评论详情 to the right.
+    @State private var threadDrag: CGFloat = 0
 
     private var inline: Bool { presentation == .inline }
 
@@ -498,7 +500,13 @@ private struct PlayerArea: View {
             if inline, let comments, let thread = comments.thread {
                 ThreadView(model: comments, thread: thread, onCompose: onCompose)
                     .padding(.top, height)
+                    .offset(x: threadDrag)
                     .transition(.move(edge: .bottom))
+                    // The swipe from the left edge closes the thread before it leaves the page.
+                    .onAppear { claimSwipe(for: comments) }
+                    .onDisappear {
+                        if BackSwipe.claim?.owner == ObjectIdentifier(comments) { BackSwipe.claim = nil }
+                    }
             }
             if inline, let sheet = tabs.sheet, let detail = model.detail {
                 sheetView(sheet, detail: detail)
@@ -530,6 +538,34 @@ private struct PlayerArea: View {
             PartList(detail: detail, current: model.current, onChoose: { page in
                 Task { await model.play(PlayItem(bvid: detail.bvid, cid: page.cid), at: nil) }
             }, onClose: { tabs.sheet = nil })
+        }
+    }
+
+    /// The claim holds the drag's binding and the comments weakly, never this view: a static holding the page's
+    /// values would keep a closed page alive.
+    private func claimSwipe(for comments: CommentsModel) {
+        let offset = $threadDrag
+        let width = width
+        BackSwipe.claim = BackSwipe.Claim(owner: ObjectIdentifier(comments)) { [weak comments] drag in
+            guard let comments else { return }
+            switch drag {
+            case .moved(let x):
+                offset.wrappedValue = x
+            case .ended(let close) where close:
+                withAnimation(.smooth(duration: 0.25)) {
+                    offset.wrappedValue = width
+                } completion: {
+                    // Gone off the right edge: closing must not also slide it down.
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        comments.closeThread()
+                        offset.wrappedValue = 0
+                    }
+                }
+            case .ended:
+                withAnimation(.smooth(duration: 0.25)) { offset.wrappedValue = 0 }
+            }
         }
     }
 
