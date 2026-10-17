@@ -72,29 +72,62 @@ enum HeapReferrers {
         return names
     }
 
-    /// A tree of who points at `target`, `depth` levels up, at most `fanout` holders each. One pass over the heap
-    /// per level.
-    static func report(for target: AnyObject, depth: Int = 8, fanout: Int = 5) -> String {
+    /// The symbol `value` points at, if it points into a loaded image: a type's metadata, a function.
+    private static func symbol(_ value: UInt) -> String? {
+        guard value > 0x1000, let pointer = UnsafeRawPointer(bitPattern: value) else { return nil }
+        var info = Dl_info()
+        guard dladdr(pointer, &info) != 0, let name = info.dli_sname else { return nil }
+        return String(cString: name)
+    }
+
+    /// A tree of who points at the object at `targetAddress`, `depth` levels up, at most `fanout` holders each. One
+    /// pass over the heap per level. Each holder shows its class, or the symbol its first word points at, and the
+    /// symbols beside the reference (a Swift closure keeps its function next to its context).
+    static func report(forAddress targetAddress: UInt, label: String, depth: Int = 8, fanout: Int = 5) -> String {
         let names = classNames()
         let all = blocks().filter { $0.size >= 8 && $0.size < 64 << 20 }
-        let targetAddress = UInt(bitPattern: Unmanaged.passUnretained(target).toOpaque())
         let low = all.map(\.start).min() ?? 0
         let high = all.map { $0.start + UInt($0.size) }.max() ?? 0
 
         func name(of block: Block) -> String {
             guard malloc_size(UnsafeRawPointer(bitPattern: block.start)) >= 8 else { return "freed" }
-            let isa = UnsafePointer<UInt>(bitPattern: block.start)!.pointee
+            let words = UnsafePointer<UInt>(bitPattern: block.start)!
+            let isa = words[0]
             for mask: UInt in [~0, 0x0000_000f_ffff_fff8, 0x0000_7fff_ffff_fff8] {
-                if let name = names[isa & mask] { return name }
+                if let name = names[isa & mask] {
+                    // A heap ObjC block: its function says whose closure it is.
+                    if name.hasPrefix("__NSMallocBlock"), block.size >= 24, let invoke = symbol(words[2]) {
+                        return "\(name) invoke=\(invoke)"
+                    }
+                    return name
+                }
             }
+            if let metadata = symbol(isa) { return "isa=\(metadata)" }
             return "block"
         }
 
-        var holders: [UInt: [Block]] = [:]
+        struct Hit {
+            let block: Block
+            let index: Int
+        }
+
+        func neighbours(_ hit: Hit) -> String {
+            let words = UnsafePointer<UInt>(bitPattern: hit.block.start)!
+            let live = malloc_size(UnsafeRawPointer(bitPattern: hit.block.start)) / 8
+            var parts: [String] = []
+            for offset in [-1, 1] {
+                let index = hit.index + offset
+                guard index >= 0, index < live, let found = symbol(words[index]) else { continue }
+                parts.append("[\(offset > 0 ? "+" : "")\(offset)] \(found)")
+            }
+            return parts.isEmpty ? "" : "  {" + parts.joined(separator: "; ") + "}"
+        }
+
+        var holders: [UInt: [Hit]] = [:]
         var seen: Set<UInt> = [targetAddress]
         var frontier: Set<UInt> = [targetAddress]
         for _ in 0..<depth where !frontier.isEmpty {
-            var found: [UInt: [Block]] = [:]
+            var found: [UInt: [Hit]] = [:]
             for block in all {
                 // Freed since the enumeration, and perhaps unmapped: skip it.
                 let live = malloc_size(UnsafeRawPointer(bitPattern: block.start))
@@ -103,36 +136,37 @@ enum HeapReferrers {
                 for index in 0..<(min(block.size, live) / 8) {
                     let word = words[index]
                     guard word >= low, word < high, frontier.contains(word), word != block.start else { continue }
-                    if found[word, default: []].count < fanout, !(found[word]?.contains { $0.start == block.start } ?? false) {
-                        found[word, default: []].append(block)
+                    if found[word, default: []].count < fanout, !(found[word]?.contains { $0.block.start == block.start } ?? false) {
+                        found[word, default: []].append(Hit(block: block, index: index))
                     }
                 }
             }
             var next: Set<UInt> = []
-            for (address, blocks) in found {
-                holders[address] = blocks
-                for block in blocks where !seen.contains(block.start) {
-                    seen.insert(block.start)
-                    next.insert(block.start)
+            for (address, hits) in found {
+                holders[address] = hits
+                for hit in hits where !seen.contains(hit.block.start) {
+                    seen.insert(hit.block.start)
+                    next.insert(hit.block.start)
                 }
             }
             frontier = next
         }
 
-        var lines = ["\(String(describing: type(of: target))) \(String(targetAddress, radix: 16)), \(all.count) heap blocks"]
+        var lines = ["\(label) \(String(targetAddress, radix: 16)), \(all.count) heap blocks"]
         var printed: Set<UInt> = []
         func emit(_ address: UInt, level: Int) {
             let indent = String(repeating: "  ", count: level + 1)
-            guard let found = holders[address], !found.isEmpty else {
+            guard let hits = holders[address], !hits.isEmpty else {
                 if level < depth { lines.append(indent + "(no heap holder: a global, a static, the stack or a run loop)") }
                 return
             }
-            for block in found {
-                let again = printed.contains(block.start)
-                lines.append("\(indent)<- \(name(of: block)) \(String(block.start, radix: 16)) size \(block.size)\(again ? " (above)" : "")")
+            for hit in hits {
+                let again = printed.contains(hit.block.start)
+                lines.append("\(indent)<- \(name(of: hit.block)) \(String(hit.block.start, radix: 16)) size \(hit.block.size) "
+                             + "at word \(hit.index)\(again ? " (above)" : "")\(neighbours(hit))")
                 guard !again else { continue }
-                printed.insert(block.start)
-                emit(block.start, level: level + 1)
+                printed.insert(hit.block.start)
+                emit(hit.block.start, level: level + 1)
             }
         }
         emit(targetAddress, level: 0)

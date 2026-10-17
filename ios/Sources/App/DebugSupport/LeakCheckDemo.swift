@@ -3,13 +3,17 @@ import Foundation
 import UIKit
 
 /// `-DemoScreen leak-check`: opens a video page, goes back after it has played a while, and writes the addresses
-/// of whatever from that page is still alive to Documents/leak-check.txt. The compile workflow's leak step runs
-/// macOS `leaks --traceTree` on each address, which shows what holds it.
+/// of whatever from that page is still alive to Documents/leak-check.txt, and who holds the page to
+/// Documents/leak-report.txt (`HeapReferrers`). The compile workflow's leak step prints both.
 @MainActor
 enum LeakCheckDemo {
     static let screen = "leak-check"
     static let fileName = "leak-check.txt"
     static let reportName = "leak-report.txt"
+
+    private static func address(_ object: AnyObject?) -> UInt? {
+        object.map { UInt(bitPattern: Unmanaged.passUnretained($0).toOpaque()) }
+    }
 
     static func stage(navigator: AppNavigator) {
         guard UserDefaults.standard.string(forKey: "DemoScreen") == screen else { return }
@@ -20,15 +24,18 @@ enum LeakCheckDemo {
             weak var host = page?.host
             weak var danmaku = page?.host?.danmakuContainer.subviews.first
             navigator.path = []
-            try? await Task.sleep(for: .seconds(5))
+            // Past PageLifecycle's settle retries (up to 10 s), which hold the page while a transition runs.
+            try? await Task.sleep(for: .seconds(12))
             var lines: [String] = []
-            for (name, object) in [("VideoPageModel", page as AnyObject?), ("PlayerHostView", host), ("DanmakuView", danmaku)] {
-                guard let object else { continue }
-                lines.append("\(name) \(Unmanaged.passUnretained(object).toOpaque())")
+            for (name, address) in [("VideoPageModel", address(page)), ("PlayerHostView", address(host)),
+                                    ("DanmakuView", address(danmaku))] {
+                guard let address else { continue }
+                lines.append("\(name) 0x\(String(address, radix: 16))")
             }
             let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             try? (lines.joined(separator: "\n") + "\n").write(to: documents.appendingPathComponent(fileName), atomically: true, encoding: .utf8)
-            let report = (page as AnyObject?).map { HeapReferrers.report(for: $0) } ?? "nothing left alive"
+            // Only the address goes on: a reference held here would show up as a holder.
+            let report = address(page).map { HeapReferrers.report(forAddress: $0, label: "VideoPageModel") } ?? "nothing left alive"
             try? report.write(to: documents.appendingPathComponent(reportName), atomically: true, encoding: .utf8)
         }
     }
