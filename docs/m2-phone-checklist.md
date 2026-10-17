@@ -149,3 +149,16 @@ Build 5 on iOS 27 froze the layout of every page opened from 推荐. Repeat thes
 70. Swipe right from the left edge of the screen, on the player and on 简介 or 评论: the page goes back. In full screen the same swipe does nothing to the page.
 71. Open a video, go to 评论, come back to 简介: the back button is still at the top left of the player (tap the video if the controls have hidden).
 72. During playback the progress bar under the small player moves.
+
+## Build 8: the swipe back, for real
+
+Builds 6 and 7 never let the swipe back begin on the video page. Build 8 was checked with real swipes on the Mac's
+simulator first. Use a video opened from 推荐.
+
+73. On 简介, swipe right from the middle of the screen (not the edge): the page goes back to 首页. Same from the very
+    left edge, on the player and on 简介.
+74. On 评论, swipe right from the middle: it pages back to 简介 first; the next swipe goes back to 首页.
+75. Drag sideways in the middle of the small player: it seeks, the page stays.
+76. Open a reply thread (共N条回复): swipe right from the middle or the edge. The thread follows your finger
+    downwards and closes; you stay on the video. A short swipe let go early springs it back.
+77. Scroll 简介, the related videos and 评论 up and down: they scroll as before.

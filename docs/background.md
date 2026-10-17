@@ -195,5 +195,14 @@ Found on KaiC's phone (iOS 27) with build 5, reproduced in `HomeFlowTests`:
   the page's layout.
 - UIKit refuses a rotation asked for while a push still animates (error 101, "supported: portrait", although every
   controller allows landscape). `OrientationController` puts the presentation back; tests wait for the push.
-- The left-edge swipe back is on even with the navigation bar hidden, but the 简介/评论 pager and the player's seek
-  drag took it. `BackSwipe` makes every other drag wait for it, and turns it off in full screen.
+- With the navigation bar hidden, UIKit's own delegate for both swipes back (the left edge, and iOS 26's swipe from
+  anywhere in the content) refuses them in a private `_gestureRecognizer:shouldReceiveEvent:`, asked before any
+  public delegate method, so the touch never reaches them. Builds 6 and 7 forwarded that question to UIKit and
+  failed on the phone while app tests that asked the public methods passed. `BackSwipe` answers every receive and
+  begin question itself, makes the drags inside the page wait for both swipes, lets the content swipe give way to
+  the player's seek and to a sideways scroller that can still scroll back (评论 pages to 简介 first), and turns
+  both off in full screen. UIKit asks the content swipe whether to begin before its translation and velocity are
+  set on a quick flick, so the direction comes from where the touch landed.
+- Gestures need real touches: `SwipeBackUITests` (the `BiliNativeUI` scheme, `tools/mac-test.sh --ui`) drives
+  swipes through the system at thumb speed (about 1500 pt/s; XCTest's `.fast` is about 400, slow enough that
+  UIKit cancels a back swipe over half the screen). Run it after touching any gesture.

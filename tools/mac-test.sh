@@ -5,6 +5,7 @@
 #
 #   bash tools/mac-test.sh                        build, then run every test
 #   bash tools/mac-test.sh --tests A,B/testC      only these (same syntax as the workflow's `tests` input)
+#   bash tools/mac-test.sh --ui                  the real-touch UI tests (BiliNativeUI scheme)
 #   bash tools/mac-test.sh --build-only           compile app + tests, no run
 #   bash tools/mac-test.sh --launch               build, then install and open the app in the simulator
 #   bash tools/mac-test.sh --sim "iPhone 17"      another simulator (default: KaiC's iPhone 17 Pro Max)
@@ -19,9 +20,11 @@ sim="iPhone 17 Pro Max"
 mode=test
 tests=
 repo=
+scheme=BiliNative
 while [ $# -gt 0 ]; do
     case "$1" in
         --tests) tests=$2; shift ;;
+        --ui) scheme=BiliNativeUI ;;
         --build-only) mode=build ;;
         --launch) mode=launch ;;
         --sim) sim=$2; shift ;;
@@ -44,9 +47,9 @@ git -C "$repo" ls-files -co --exclude-standard -z \
     | ssh "$host" 'mkdir -p ~/src && cat > ~/src/stage.tgz'
 
 # ssh joins its arguments into one command line, so they are quoted for the remote shell.
-ssh "$host" "bash -s -- $(printf '%q ' "$sim" "$mode" "$tests")" <<'REMOTE'
+ssh "$host" "bash -s -- $(printf '%q ' "$sim" "$mode" "$tests" "$scheme")" <<'REMOTE'
 set -euo pipefail
-sim=$1; mode=$2; tests=$3
+sim=$1; mode=$2; tests=$3; scheme=$4
 src=~/src/BiliNative
 
 lock=~/.mac-test.lock
@@ -81,7 +84,7 @@ xcrun simctl boot "$udid" 2>/dev/null || true
 open -a Simulator --args -CurrentDeviceUDID "$udid"
 
 strip_paths() { sed "s#$src/##g"; }
-common=(-project ios/BiliNative.xcodeproj -scheme BiliNative -destination "id=$udid" -configuration Debug -derivedDataPath build)
+common=(-project ios/BiliNative.xcodeproj -scheme "$scheme" -destination "id=$udid" -configuration Debug -derivedDataPath build)
 
 echo "Building on $sim..."
 start=$(date +%s)
@@ -102,12 +105,14 @@ case "$mode" in
         exit 0 ;;
 esac
 
+target=BiliNativeTests
+[ "$scheme" = BiliNativeUI ] && target=BiliNativeUITests
 only=()
 if [ -n "$tests" ]; then
     IFS=',' read -ra items <<< "$tests"
     for item in "${items[@]}"; do
         item=$(echo "$item" | xargs)
-        [ -n "$item" ] && only+=("-only-testing:BiliNativeTests/$item")
+        [ -n "$item" ] && only+=("-only-testing:$target/$item")
     done
 fi
 xcrun simctl bootstatus "$udid" -b >/dev/null

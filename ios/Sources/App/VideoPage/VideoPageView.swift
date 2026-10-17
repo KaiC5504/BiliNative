@@ -455,6 +455,7 @@ private struct PlayerArea: View {
     @State private var collapseFrom: CGFloat = 0
     /// How far the edge swipe has pulled 评论详情 to the right.
     @State private var threadDrag: CGFloat = 0
+    @State private var threadHeight: CGFloat = 0
 
     private var inline: Bool { presentation == .inline }
 
@@ -500,9 +501,11 @@ private struct PlayerArea: View {
             if inline, let comments, let thread = comments.thread {
                 ThreadView(model: comments, thread: thread, onCompose: onCompose)
                     .padding(.top, height)
-                    .offset(x: threadDrag)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { threadHeight = $0 }
+                    // It opened upwards, so the swipe back slides it down (KaiC's call), finger for finger.
+                    .offset(y: threadDrag)
                     .transition(.move(edge: .bottom))
-                    // The swipe from the left edge closes the thread before it leaves the page.
+                    // The swipe back closes the thread before it leaves the page.
                     .onAppear { claimSwipe(for: comments) }
                     .onDisappear {
                         if BackSwipe.claim?.owner == ObjectIdentifier(comments) { BackSwipe.claim = nil }
@@ -545,7 +548,7 @@ private struct PlayerArea: View {
     /// values would keep a closed page alive.
     private func claimSwipe(for comments: CommentsModel) {
         let offset = $threadDrag
-        let width = width
+        let height = $threadHeight
         BackSwipe.claim = BackSwipe.Claim(owner: ObjectIdentifier(comments)) { [weak comments] drag in
             guard let comments else { return }
             switch drag {
@@ -553,9 +556,9 @@ private struct PlayerArea: View {
                 offset.wrappedValue = x
             case .ended(let close) where close:
                 withAnimation(.smooth(duration: 0.25)) {
-                    offset.wrappedValue = width
+                    offset.wrappedValue = height.wrappedValue
                 } completion: {
-                    // Gone off the right edge: closing must not also slide it down.
+                    // Already gone off the bottom: closing must not slide it again.
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {

@@ -114,6 +114,10 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   `bash tools/mac-test.sh` syncs this checkout, uncommitted changes included, builds and runs the
   AppTests on an iPhone 17 Pro Max simulator (KaiC's phone) in a few minutes without a push.
   `--tests A,B`, `--build-only`, `--launch` (opens the app for KaiC to watch over RustDesk), `--sim NAME`.
+  `--ui` runs the real-touch UI tests instead (`ios/Tests/UITests`, about 2 minutes): swipes and drags driven
+  through the system at a thumb's speed. Any change to a gesture needs one there before it ships; the AppTests can
+  only ask gesture delegates what they would answer, which is how builds 6 and 7 shipped a swipe back that never
+  began.
   One run at a time across sessions. It is the TestFlight gate while it is rented (see "Building and shipping").
   The Mac is someone else's machine: no `BILI_APP_KEYS`, cookies or Apple ID on it.
 - On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (M1) and `docs/m2-phone-checklist.md` (M2).
@@ -156,7 +160,8 @@ Identity: display name `BiliFast`, app target and scheme `BiliNative`, bundle id
 `BiliFast`, Apple ID: `6823476667` (`ASC_APP_ID` in `testflight.yml`).
 
 1. Work on `main` (this repo has no `dev` branch). While the rented Mac is up (`ssh macrent true`), the gate is
-   `bash tools/mac-test.sh` (every AppTest, about 2 minutes) plus `bash tools/check-app.sh --release`: when both
+   `bash tools/mac-test.sh` (every AppTest, about 2 minutes), `bash tools/mac-test.sh --ui` when a gesture changed,
+   plus `bash tools/check-app.sh --release`: when they
    pass, push and start the signed build at once, with the compile check running alongside as a backstop. Without
    the Mac, wait for the compile check (`gh run list --limit 1`, then `gh run watch <id> --exit-status`) and look
    at the `simulator-screenshots` artifact for every screen you touched.

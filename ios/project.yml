@@ -94,7 +94,29 @@ targets:
         Release:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEV_TOOLS"
 
+  BiliNativeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/UITests
+    dependencies:
+      - target: BiliNative
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.kaichuan.bilifast.uitests
+        TEST_TARGET_NAME: BiliNative
+
 schemes:
+  # Real touches through the system; slow, so out of the main scheme and CI. tools/mac-test.sh --ui runs it.
+  BiliNativeUI:
+    build:
+      targets:
+        BiliNativeUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - BiliNativeUITests
   BiliNative:
     build:
       targets:
