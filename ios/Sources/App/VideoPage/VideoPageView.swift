@@ -400,9 +400,11 @@ private struct PageLayout: View {
         .preferredColorScheme(presentation == .vertical ? .dark : nil)
         .persistentSystemOverlays(inline ? .automatic : .hidden)
         // Timestamps seek and video ids open a page, from the description and from every comment.
+        // Weak, and nothing else captured: UIKit views inside the page (the host, the danmaku layer) keep the
+        // environment in their traits, and a closure holding this view's values would hold the page through them.
         .environment(\.richTextActions, RichTextActions(
-            seek: { seconds in Task { await model.activate(.timestamp(label: "", seconds: seconds)) } },
-            openVideo: { id in Task { await model.activate(.video(id: id)) } }))
+            seek: { [weak model] seconds in Task { await model?.activate(.timestamp(label: "", seconds: seconds)) } },
+            openVideo: { [weak model] id in Task { await model?.activate(.video(id: id)) } }))
         #if DEBUG
         .task { IntroDemo.stage(page: model, tabs: tabs) }
         #endif
