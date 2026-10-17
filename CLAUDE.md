@@ -51,6 +51,9 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   fix round's release test found that closed video pages never freed (build A too), now fixed and tested
   (`PageReleaseTests`). Phone test pending (`docs/m2-phone-checklist.md`, Build B). `BILI_APP_KEYS` not set
   yet, so 不喜欢 ships greyed; unverified calls are listed in `docs/background.md`, "Known environment limits".
+- 2026-10-17: a rented Mac mini M4 (macrent, Paris; Xcode 26.5) set up for builds and tests over SSH
+  (`tools/mac-test.sh`). First full run there: 240 AppTests passed on the iPhone 17 Pro Max simulator, with one
+  skip (PiP is not supported on the simulator).
 - Next: KaiC's build A and B phone tests, then milestone 3.
 - Milestone 1 is a go/no-go gate: if BTR mode is not clearly faster than direct mode on KaiC's phone,
   stop before building more screens (spec section 5).
@@ -96,8 +99,8 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   It does not run tests, build assets/xcstrings/Info.plist or sign, and it compiles with Xcode 27.1
   (Swift 6.4) while CI uses Xcode 26.6 (Swift 6.3), so CI stays the gate. Warnings show only for files
   recompiled in that run. Setup and the manifest it compiles with: `tools/app-check/README.md`.
-- App code, everything else: only in CI ("iOS compile check" workflow: simulator build, unit and integration
-  tests, screenshots as the `simulator-screenshots` artifact). There is no Mac. On `main` it also runs
+- App code, everything else: in CI ("iOS compile check" workflow: simulator build, unit and integration
+  tests, screenshots as the `simulator-screenshots` artifact). KaiC owns no Mac (see the rented one below). On `main` it also runs
   the BiliCore tests and a Release build; other branches skip both, since the PC already runs `swift test`.
   For a quick run while debugging, dispatch it by hand: `gh workflow run ios-compile.yml --ref <branch> -f
   tests=<TestClass>[,<TestClass>] -f shots=false` (about 9 min instead of 15), and push the commits with
@@ -105,6 +108,12 @@ Display name BiliFast and the pink Bolt icon (concept 2), picked by KaiC on 2026
   still holds a closed video page (macOS `leaks` can't read simulator processes on the runner).
   Debug builds take `-DemoData YES` (invented fixtures, no network or account) and `-DemoScreen <name>` to open
   any screen for screenshots; the `shoot` list in `.github/workflows/ios-compile.yml` names them all.
+- App code on a real Mac, when KaiC has one rented (SSH alias `macrent`; check with `ssh macrent true`):
+  `bash tools/mac-test.sh` syncs this checkout, uncommitted changes included, builds and runs the
+  AppTests on an iPhone 17 Pro Max simulator (KaiC's phone) in a few minutes without a push.
+  `--tests A,B`, `--build-only`, `--launch` (opens the app for KaiC to watch over RustDesk), `--sim NAME`.
+  One run at a time across sessions. Its Xcode can lag CI's, so CI stays the gate before TestFlight.
+  The Mac is someone else's machine: no `BILI_APP_KEYS`, cookies or Apple ID on it.
 - On the phone: TestFlight build plus `docs/m1-phone-checklist.md` (M1) and `docs/m2-phone-checklist.md` (M2).
 
 ## Debugging from evidence
