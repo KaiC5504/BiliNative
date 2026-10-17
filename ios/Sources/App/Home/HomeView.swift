@@ -95,6 +95,7 @@ struct HomeView: View {
         case "settings": showSettings = true
         case "history": env.navigator.open(.history)
         case "home-menu": menuOpen = true
+        case "leak-check": LeakCheckDemo.stage(navigator: env.navigator)
         case "page": openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA))
         case "danmaku-send", "danmaku-style":
             openVideo(VideoRoute(bvid: VideoPageFixtures.bvidA, cid: VideoPageFixtures.cidA1, startSeconds: 20))

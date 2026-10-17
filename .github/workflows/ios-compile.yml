@@ -9,7 +9,22 @@ on:
       - "ios/**"
       - "tools/write_app_keys.py"
       - ".github/workflows/ios-compile.yml"
+  # A dispatch can narrow the run while debugging: `gh workflow run ios-compile.yml --ref <branch>
+  # -f tests=PageReleaseTests -f shots=false` takes about a third of a full run.
   workflow_dispatch:
+    inputs:
+      tests:
+        description: "Only these tests: classes or Class/method, comma-separated (empty runs all)"
+        type: string
+        default: ""
+      shots:
+        description: "Take the screenshots (and on main build Release)"
+        type: boolean
+        default: true
+      leaks:
+        description: "Run -DemoScreen leak-check and print leaks' trace tree for what a closed page left alive"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,6 +40,7 @@ jobs:
       # main gets everything. Task branches skip what the PC already checks (the BiliCore tests) and the
       # Release build, which main checks before every TestFlight build.
       FULL_RUN: ${{ github.ref == 'refs/heads/main' }}
+      SHOTS: ${{ github.event_name != 'workflow_dispatch' || inputs.shots }}
       # Homebrew's self-update took over two minutes before installing XcodeGen.
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
@@ -116,20 +132,57 @@ jobs:
         env:
           # xcodebuild hands TEST_RUNNER_-prefixed variables to the tests without the prefix.
           TEST_RUNNER_MEDIA_DIR: ${{ runner.temp }}/media
+          ONLY_TESTS: ${{ inputs.tests }}
         run: |
           set -o pipefail
           xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+          only=()
+          if [ -n "$ONLY_TESTS" ]; then
+            IFS=',' read -ra items <<< "$ONLY_TESTS"
+            for item in "${items[@]}"; do
+              item=$(echo "$item" | xargs)
+              [ -n "$item" ] && only+=("-only-testing:BiliNativeTests/$item")
+            done
+          fi
           xcodebuild \
             -project ios/BiliNative.xcodeproj \
             -scheme BiliNative \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -configuration Debug \
             -derivedDataPath build \
+            "${only[@]}" \
             test-without-building
+
+      # Prints, for each object a closed page left alive, the chain of references that holds it.
+      - name: Leak check
+        if: always() && inputs.leaks
+        env:
+          SIMCTL_CHILD_MallocStackLogging: "1"
+          SIMCTL_CHILD_MEDIA_DIR: ${{ runner.temp }}/media
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          APP=com.kaichuan.bilifast
+          xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/BiliNative.app
+          xcrun simctl terminate "$UDID" $APP || true
+          DATA=$(xcrun simctl get_app_container "$UDID" $APP data)
+          rm -f "$DATA/Documents/leak-check.txt"
+          OUT=$(xcrun simctl launch "$UDID" $APP -DemoData YES -DemoScreen leak-check)
+          echo "$OUT"
+          PID=$(echo "$OUT" | awk -F': ' '{print $NF}' | tr -d ' ')
+          for i in $(seq 1 60); do [ -f "$DATA/Documents/leak-check.txt" ] && break; sleep 1; done
+          echo "--- still alive after the page closed:"
+          cat "$DATA/Documents/leak-check.txt" || { echo "no leak-check file"; exit 0; }
+          while read -r name addr; do
+            [ -n "$addr" ] || continue
+            echo "=== $name $addr"
+            leaks --traceTree="$addr" "$PID" 2>&1 | head -200 || sudo leaks --traceTree="$addr" "$PID" 2>&1 | head -200 || true
+          done < "$DATA/Documents/leak-check.txt"
+          echo "=== leaks summary"
+          leaks "$PID" 2>&1 | head -60 || true
 
       # The screenshots mostly wait, so the Release build compiles alongside them.
       - name: Start the Release build
-        if: env.FULL_RUN == 'true'
+        if: env.FULL_RUN == 'true' && env.SHOTS == 'true'
         run: |
           (
             xcodebuild \
@@ -144,6 +197,7 @@ jobs:
           ) &
 
       - name: Install, launch and screenshot
+        if: env.SHOTS == 'true'
         env:
           # simctl hands SIMCTL_CHILD_-prefixed variables to the launched app without the prefix.
           SIMCTL_CHILD_MEDIA_DIR: ${{ runner.temp }}/media
@@ -201,7 +255,7 @@ jobs:
           shoot composer-emotes 15 -DemoData YES -DemoScreen composer-emotes
 
       - name: Release build (no tests)
-        if: env.FULL_RUN == 'true'
+        if: env.FULL_RUN == 'true' && env.SHOTS == 'true'
         run: |
           while [ ! -f "$RUNNER_TEMP/release.exit" ]; do sleep 5; done
           status=$(cat "$RUNNER_TEMP/release.exit")
