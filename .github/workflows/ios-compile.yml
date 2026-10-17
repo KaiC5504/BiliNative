@@ -169,9 +169,11 @@ jobs:
           OUT=$(xcrun simctl launch "$UDID" $APP -DemoData YES -DemoScreen leak-check)
           echo "$OUT"
           PID=$(echo "$OUT" | awk -F': ' '{print $NF}' | tr -d ' ')
-          for i in $(seq 1 60); do [ -f "$DATA/Documents/leak-check.txt" ] && break; sleep 1; done
+          for i in $(seq 1 180); do [ -f "$DATA/Documents/leak-check.txt" ] && break; sleep 1; done
           echo "--- still alive after the page closed:"
           cat "$DATA/Documents/leak-check.txt" || { echo "no leak-check file"; exit 0; }
+          echo "--- who holds them (in-process heap scan):"
+          cat "$DATA/Documents/leak-report.txt" || true
           while read -r name addr; do
             [ -n "$addr" ] || continue
             echo "=== $name $addr"

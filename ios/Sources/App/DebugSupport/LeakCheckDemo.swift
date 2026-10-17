@@ -9,6 +9,7 @@ import UIKit
 enum LeakCheckDemo {
     static let screen = "leak-check"
     static let fileName = "leak-check.txt"
+    static let reportName = "leak-report.txt"
 
     static func stage(navigator: AppNavigator) {
         guard UserDefaults.standard.string(forKey: "DemoScreen") == screen else { return }
@@ -25,8 +26,13 @@ enum LeakCheckDemo {
                 guard let object else { continue }
                 lines.append("\(name) \(Unmanaged.passUnretained(object).toOpaque())")
             }
-            let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
-            try? (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            var report: [String] = []
+            for object in [page as AnyObject?, danmaku] {
+                if let object { report.append(HeapReferrers.report(for: object)) }
+            }
+            try? report.joined(separator: "\n\n").write(to: documents.appendingPathComponent(reportName), atomically: true, encoding: .utf8)
+            try? (lines.joined(separator: "\n") + "\n").write(to: documents.appendingPathComponent(fileName), atomically: true, encoding: .utf8)
         }
     }
 }
